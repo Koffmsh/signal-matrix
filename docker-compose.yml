@@ -1,6 +1,7 @@
 version: '3.8'
+
 services:
-  app:
+  frontend:
     image: node:lts
     working_dir: /app
     volumes:
@@ -10,4 +11,20 @@ services:
     environment:
       - CI=true
       - WATCHPACK_POLLING=true
+      - REACT_APP_API_URL=http://localhost:8000
     command: npm start
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped

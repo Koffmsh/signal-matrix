@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { fetchBatchMarketData } from "./services/api";
 import tickersData from "./data/tickers";
 import AdminPanel from "./components/Admin/AdminPanel";
 
@@ -102,6 +103,27 @@ function generateMockData(ticker) {
   };
 }
 
+// ── Merge real data over mock ─────────────────────────────────────────────────
+function mergeRealData(mockRow, realDataMap) {
+  const real = realDataMap.get(mockRow.ticker);
+  if (!real) return mockRow; // No real data — keep mock entirely
+
+  return {
+    ...mockRow,
+    close:       real.close        ?? mockRow.close,
+    sparkPrices: real.spark_prices?.length === 60
+                   ? real.spark_prices
+                   : mockRow.sparkPrices,
+    relIV:       real.rel_iv       ?? mockRow.relIV,
+    volume:      real.volume       ?? 0,
+    ma20:        real.ma20         ?? null,
+    ma50:        real.ma50         ?? null,
+    ma100:       real.ma100        ?? null,
+    updated:     real.updated      ?? mockRow.updated,
+    dataSource:  "live",
+  };
+}
+
 // ── Sort helpers ─────────────────────────────────────────────────────────────
 const ASSET_CLASS_ORDER = [
   "Domestic Equities", "Domestic Fixed Income", "Commodities",
@@ -133,15 +155,6 @@ const sparkColor= (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 const TICKERS = loadTickers();
-const ALL_DATA = TICKERS.filter(t => t.active).map(generateMockData);
-const DATA = ALL_DATA.filter(t => t.tier === 1);
-const TIER2_DATA = ALL_DATA.filter(t => t.tier === 2);
-const TIER2_BY_PARENT = TIER2_DATA.reduce((acc, row) => {
-  const p = row.parentTicker;
-  if (!acc[p]) acc[p] = [];
-  acc[p].push(row);
-  return acc;
-}, {});
 
 const CLASSES    = ["All", "Domestic Equities", "Domestic Fixed Income", "Digital Assets", "Foreign Exchange", "International Equities", "Commodities"];
 const VIEWPOINTS = ["All", "Bullish", "Bearish", "Neutral"];
@@ -157,6 +170,39 @@ function Dashboard() {
   const [sortDir,     setSortDir]     = useState(1);
   const [selected,    setSelected]    = useState(null);
   const [expandedTickers, setExpandedTickers] = useState(new Set());
+
+  const [realDataMap, setRealDataMap] = useState(new Map());
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError,   setDataError]   = useState(false);
+
+  useEffect(() => {
+    fetchBatchMarketData()
+      .then(map => {
+        setRealDataMap(map);
+        setDataLoading(false);
+        if (map.size === 0) setDataError(true);
+      })
+      .catch(() => {
+        setDataLoading(false);
+        setDataError(true);
+      });
+  }, []);
+
+  // Merge real data over mock — reruns whenever realDataMap updates
+  const ALL_DATA = useMemo(() =>
+    TICKERS.filter(t => t.active).map(t =>
+      mergeRealData(generateMockData(t), realDataMap)
+    ),
+    [realDataMap]
+  );
+  const DATA    = ALL_DATA.filter(t => t.tier === 1);
+  const TIER2_DATA = ALL_DATA.filter(t => t.tier === 2);
+  const TIER2_BY_PARENT = TIER2_DATA.reduce((acc, row) => {
+    const p = row.parentTicker;
+    if (!acc[p]) acc[p] = [];
+    acc[p].push(row);
+    return acc;
+  }, {});
 
   const toggleExpand = (ticker, e) => {
     e.stopPropagation();
@@ -182,7 +228,7 @@ function Dashboard() {
       const av = a[sortKey], bv = b[sortKey];
       return (typeof av === "string" ? av.localeCompare(bv) : av - bv) * sortDir;
     });
-  }, [classFilter, vpFilter, alignedOnly, alertOnly, search, sortKey, sortDir]);
+  }, [classFilter, vpFilter, alignedOnly, alertOnly, search, sortKey, sortDir, ALL_DATA]);
 
   const bullish = DATA.filter(x => x.viewpoint === "Bullish").length;
   const bearish = DATA.filter(x => x.viewpoint === "Bearish").length;
@@ -313,6 +359,18 @@ function Dashboard() {
         <button onClick={() => setAlertOnly(x => !x)} style={{ background: alertOnly ? "#1a1400" : "transparent", border: `1px solid ${alertOnly ? "#f0b429" : "#1a2e45"}`, color: alertOnly ? "#f0b429" : "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit" }}>⚡ ALERTS</button>
         <div style={{ marginLeft: "auto", fontSize: "10px", color: "#667788" }}>{filtered.length} of {DATA.length} instruments</div>
       </div>
+
+      {/* Data status banner */}
+      {dataLoading && (
+        <div style={{ padding: "10px 24px", fontSize: "10px", color: "#8899aa", letterSpacing: "0.1em", borderBottom: "1px solid #131f2e" }}>
+          ⟳ LOADING MARKET DATA...
+        </div>
+      )}
+      {!dataLoading && dataError && (
+        <div style={{ padding: "10px 24px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.1em", borderBottom: "1px solid #131f2e" }}>
+          ⚠ LIVE DATA UNAVAILABLE — DISPLAYING MOCK DATA
+        </div>
+      )}
 
       {/* Table */}
       <div style={{ overflowX: "auto", padding: "0 24px 24px" }}>
