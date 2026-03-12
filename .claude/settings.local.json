@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"docker exec signal-matrix-app-1 cat //app/src/App.js\")"
+    ]
+  }
+}
