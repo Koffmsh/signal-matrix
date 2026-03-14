@@ -347,7 +347,7 @@ Close, Viewpoint, Conviction, LT Dir, LT LRR, Trend LRR, Hurst(T), Rel IV%, Vol 
 ---
 
 ## Version Control
-- Git initialized at `C:\Projects\signal-matrix`
+- Git initialized at `C:\Users\shann\Projects\signal-matrix`
 - First commit: `42e6663` — "Phase 1 complete - Tasks 1-5 - Dashboard + Admin Panel"
 - `.env` excluded from Git via `.gitignore`
 
