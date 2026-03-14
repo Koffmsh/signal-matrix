@@ -1,9 +1,15 @@
+import time
 import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimitError(Exception):
+    """Raised when Yahoo Finance returns a 429 Too Many Requests."""
+    pass
 
 # Symbol mapping — dashboard ticker -> Yahoo Finance symbol
 YAHOO_SYMBOL_MAP = {
@@ -58,6 +64,8 @@ def fetch_ticker_data(ticker: str) -> dict | None:
 
         updated = datetime.now().strftime("%m/%d/%y %H:%M")
 
+        time.sleep(0.5)  # Rate limit: pause between Yahoo Finance fetches
+
         return {
             "ticker":        ticker,
             "yahoo_symbol":  yahoo_symbol,
@@ -72,6 +80,10 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         }
 
     except Exception as e:
+        err = str(e)
+        if "429" in err or "too many requests" in err.lower() or "rate limit" in err.lower():
+            logger.error(f"Rate limit (429) hit on {ticker} ({yahoo_symbol}) — stopping batch")
+            raise RateLimitError(f"429 on {ticker}")
         logger.error(f"Failed to fetch {ticker} ({yahoo_symbol}): {e}")
         return None
 

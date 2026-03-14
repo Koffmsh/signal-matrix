@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from models.price_cache import PriceCache
-from services.yahoo_finance import fetch_ticker_data
+from services.yahoo_finance import fetch_ticker_data, RateLimitError
 from datetime import date
 import json
 import logging
@@ -106,17 +106,23 @@ def get_batch(db: Session = Depends(get_db)):
     First call fetches all from Yahoo Finance (~30-60 seconds).
     Subsequent calls same day are served from SQLite cache (instant).
     """
-    today   = str(date.today())
-    results = []
+    today        = str(date.today())
+    results      = []
+    rate_limited = False
 
     for ticker in TIER1_TICKERS:
-        data = get_or_fetch(ticker, today, db)
+        try:
+            data = get_or_fetch(ticker, today, db)
+        except RateLimitError:
+            logger.warning(f"429 rate limit — stopping batch at {ticker}, returning {len(results)} results")
+            rate_limited = True
+            break
         if data:
             results.append(data)
         else:
             logger.warning(f"No data for {ticker} — React will use mock")
 
-    return {"data": results, "count": len(results), "date": today}
+    return {"data": results, "count": len(results), "date": today, "rate_limited": rate_limited}
 
 
 @router.get("/quote/{ticker}")

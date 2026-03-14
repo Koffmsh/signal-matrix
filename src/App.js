@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { fetchBatchMarketData } from "./services/api";
 import tickersData from "./data/tickers";
 import AdminPanel from "./components/Admin/AdminPanel";
@@ -171,22 +171,25 @@ function Dashboard() {
   const [selected,    setSelected]    = useState(null);
   const [expandedTickers, setExpandedTickers] = useState(new Set());
 
-  const [realDataMap, setRealDataMap] = useState(new Map());
-  const [dataLoading, setDataLoading] = useState(true);
-  const [dataError,   setDataError]   = useState(false);
+  const [realDataMap,  setRealDataMap]  = useState(new Map());
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [dataError,    setDataError]    = useState(false);
 
-  useEffect(() => {
+  const handleRefresh = () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    setDataError(false);
     fetchBatchMarketData()
       .then(map => {
         setRealDataMap(map);
-        setDataLoading(false);
+        setIsRefreshing(false);
         if (map.size === 0) setDataError(true);
       })
       .catch(() => {
-        setDataLoading(false);
+        setIsRefreshing(false);
         setDataError(true);
       });
-  }, []);
+  };
 
   // Merge real data over mock — reruns whenever realDataMap updates
   const ALL_DATA = useMemo(() =>
@@ -331,9 +334,25 @@ function Dashboard() {
             </div>
           ))}
         </div>
-        <div style={{ textAlign: "right", fontSize: "10px", color: "#667788" }}>
-          <div style={{ color: "#8899aa" }}>EOD · 03/11/26</div>
-          <div style={{ color: "#00e5a0", marginTop: "2px" }}>● LIVE</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            style={{
+              background: isRefreshing ? "transparent" : "#001a0f",
+              border: `1px solid ${isRefreshing ? "#1a2535" : "#00e5a0"}`,
+              color: isRefreshing ? "#445566" : "#00e5a0",
+              padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
+              cursor: isRefreshing ? "default" : "pointer",
+              fontFamily: "inherit", letterSpacing: "0.1em",
+            }}
+          >
+            {isRefreshing ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
+          </button>
+          <div style={{ textAlign: "right", fontSize: "10px", color: "#667788" }}>
+            <div style={{ color: "#8899aa" }}>EOD · 03/11/26</div>
+            <div style={{ color: "#00e5a0", marginTop: "2px" }}>● LIVE</div>
+          </div>
         </div>
       </div>
 
@@ -361,12 +380,12 @@ function Dashboard() {
       </div>
 
       {/* Data status banner */}
-      {dataLoading && (
+      {isRefreshing && (
         <div style={{ padding: "10px 24px", fontSize: "10px", color: "#8899aa", letterSpacing: "0.1em", borderBottom: "1px solid #131f2e" }}>
           ⟳ LOADING MARKET DATA...
         </div>
       )}
-      {!dataLoading && dataError && (
+      {!isRefreshing && dataError && (
         <div style={{ padding: "10px 24px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.1em", borderBottom: "1px solid #131f2e" }}>
           ⚠ LIVE DATA UNAVAILABLE — DISPLAYING MOCK DATA
         </div>
