@@ -217,7 +217,7 @@ function Dashboard() {
   };
 
   const filtered = useMemo(() => {
-    let d = DATA;
+    let d = ALL_DATA.filter(t => t.tier === 1);
     if (classFilter !== "All") d = d.filter(x => x.assetClass === classFilter);
     if (vpFilter !== "All")    d = d.filter(x => x.viewpoint === vpFilter);
     if (alignedOnly) d = d.filter(x => x.tradeDir === x.trendDir && x.tradeDir !== "Neutral");
@@ -231,6 +231,7 @@ function Dashboard() {
       const av = a[sortKey], bv = b[sortKey];
       return (typeof av === "string" ? av.localeCompare(bv) : av - bv) * sortDir;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classFilter, vpFilter, alignedOnly, alertOnly, search, sortKey, sortDir, ALL_DATA]);
 
   const bullish = DATA.filter(x => x.viewpoint === "Bullish").length;

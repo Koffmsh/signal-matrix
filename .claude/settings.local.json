@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cmd /c \"docker exec signal-matrix-app-1 cat //app/src/App.js\")"
+      "Bash(cmd /c \"docker exec signal-matrix-app-1 cat //app/src/App.js\")",
+      "Bash(netstat -ano)",
+      "Bash(docker-compose logs:*)"
     ]
   }
 }
