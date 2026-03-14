@@ -23,6 +23,7 @@ indicators.
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
 - **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
+- **Claude in Chrome extension:** enabled and operational. Set to allow access to all sites including localhost:3000. When "started debugging this browser" banner appears in Chrome, do not click Cancel — leave it open so the debugger can attach and complete screenshot/page verification.
 - **Yahoo Finance:** Manual REFRESH DATA button only — never auto-fetch on page load
 - **Git:** No worktrees or feature branches — all changes committed directly to master
 - **Version control:** Git initialized, first commit `42e6663` — "Phase 1 complete - Tasks 1-5"
