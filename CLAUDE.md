@@ -17,12 +17,14 @@ indicators.
 ## Current Tech Stack
 - **Frontend:** React (Create React App)
 - **Container:** Docker + docker-compose
-- **Data:** Mock/simulated — real data not yet connected
-- **Backend:** Not yet built (target: Python FastAPI)
-- **Database:** Not yet built (target: SQLite locally → Supabase/PostgreSQL in cloud)
+- **Data:** Real EOD prices via Yahoo Finance — FastAPI backend with SQLite cache
+- **Backend:** Python FastAPI running at localhost:8000
+- **Database:** SQLite cache at `backend/signal_matrix.db`
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
-- **Claude Code:** Preview auto-verify disabled (`autoVerify: false` in `.claude/launch.json`)
+- **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
+- **Yahoo Finance:** Manual REFRESH DATA button only — never auto-fetch on page load
+- **Git:** No worktrees or feature branches — all changes committed directly to master
 - **Version control:** Git initialized, first commit `42e6663` — "Phase 1 complete - Tasks 1-5"
 
 ## Project Folder Structure
@@ -49,6 +51,17 @@ signal-matrix/
 │   ├── App.js                     ← main app — all dashboard logic lives here
 │   ├── index.css
 │   └── index.js
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── main.py
+│   ├── database.py
+│   ├── models/
+│   │   └── price_cache.py
+│   ├── services/
+│   │   └── yahoo_finance.py
+│   └── routers/
+│       └── market_data.py
 ├── .env                           ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                     ← .env is excluded
 ├── CLAUDE.md                      ← this file
@@ -292,8 +305,14 @@ const tickers = [
 
 ## Dashboard — Current State
 - React app running at localhost:3000 via Docker
-- All Tier 1 tickers loaded with mock/simulated data
-- All data is mock — real data not yet connected
+- All Tier 1 tickers loaded with real + mock data merged
+- Close prices: real — from Yahoo Finance via FastAPI
+- Sparklines: real — 60-day price history
+- Rel IV: real — realized vol percentile proxy (Schwab IV Percentile in Phase 5)
+- Volume: real — daily volume from Yahoo Finance
+- MA20/50/100: computed and cached — not yet displayed in UI
+- Signal columns remain mock: Conviction, Trade Dir, LRR, HRR, Hurst, Vol Signal
+- REFRESH DATA button in header — manual fetch only, never auto on page load
 - Admin panel at localhost:3000/admin — password protected, localStorage backed
 
 ## Dashboard Columns (current, in order)
@@ -376,6 +395,10 @@ REACT_APP_ADMIN_PASSWORD=yourpassword
 11. **Do not implement signal calculations** until Phase 3 is explicitly started
 12. **Flag all [OPEN] items** before implementing — do not assume defaults
 13. **Commit to Git** after every confirmed working state
+14. **Neo = Claude Code** (VS Code extension) — all code changes go here
+15. **No worktrees or feature branches** — all changes committed directly to master
+16. **Never auto-fetch from Yahoo Finance** — REFRESH DATA button only
+17. **`backend/signal_matrix.db` must never be committed to Git**
 
 ---
 
@@ -384,18 +407,21 @@ REACT_APP_ADMIN_PASSWORD=yourpassword
 | Phase | Description | Status |
 |---|---|---|
 | Phase 1 | Dashboard Refinement | ✅ Complete |
-| Phase 2 | Real Data Integration | ⬜ Next — Yahoo Finance EOD, real prices |
+| Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ⬜ Hurst, Fractal Dimension, ABC pivots, LRR/HRR |
 | Phase 4 | Backend & Database | ⬜ Python FastAPI, SQLite, EOD scheduler |
 | Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
 | Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
 
-## Phase 2 — Next Session
-Real data integration:
-- Yahoo Finance EOD prices for all Tier 1 tickers
-- Real closing prices replace mock
-- Real moving averages (20/50/100)
-- Sparklines populated with actual price history
+## Phase 2 — COMPLETE ✅
+
+Real data integration delivered:
+- Yahoo Finance EOD prices for all Tier 1 tickers via Python FastAPI backend
+- Real closing prices, sparklines (60-day), Rel IV (realized vol percentile), volume
+- MA20/50/100 computed and cached in SQLite — not yet displayed in UI
+- REFRESH DATA button in header — manual trigger only, no auto-fetch on load
+- 429 rate limit handling — batch stops immediately and returns partial results
+- SQLite cache at `backend/signal_matrix.db` — same-day fetches served instantly
 
 ---
 
@@ -414,9 +440,8 @@ Real data integration:
 ---
 
 ## What Is NOT In Scope Yet
-- Real data feeds (Yahoo Finance, Schwab API)
 - Signal calculations (Hurst, Fractal Dimension, LRR/HRR engine)
-- Python FastAPI backend
-- SQLite or Supabase database
+- Schwab API (real-time streaming, options IV)
+- Supabase / PostgreSQL cloud database
 - Quad Tracker dashboard
 - Cloud deployment
