@@ -35,21 +35,21 @@ signal-matrix/
 │   ├── launch.json
 │   └── settings.local.json
 ├── Docs/
-│   ├── SignalMatrix_Spec_v1.2.docx
+│   ├── SignalMatrix_Spec_v1.3.docx        ← current spec
 │   └── QuadTracker_Spec_v1.1.docx
 ├── public/
 ├── src/
 │   ├── components/
 │   │   ├── Admin/
-│   │   │   └── AdminPanel.js      ← Task 5 — admin panel, password gated
-│   │   ├── Dashboard/             ← placeholder, logic still in App.js
-│   │   └── shared/                ← placeholder
+│   │   │   └── AdminPanel.js              ← Task 5 — admin panel, password gated
+│   │   ├── Dashboard/                     ← placeholder, logic still in App.js
+│   │   └── shared/                        ← placeholder
 │   ├── data/
-│   │   └── tickers.js             ← Tier 1 + Tier 2 seed tickers, source of truth
-│   ├── hooks/                     ← placeholder
-│   ├── utils/                     ← placeholder
+│   │   └── tickers.js                     ← Tier 1 + Tier 2 seed tickers, source of truth
+│   ├── hooks/                             ← placeholder
+│   ├── utils/                             ← placeholder
 │   ├── App.css
-│   ├── App.js                     ← main app — all dashboard logic lives here
+│   ├── App.js                             ← main app — all dashboard logic lives here
 │   ├── index.css
 │   └── index.js
 ├── backend/
@@ -60,12 +60,15 @@ signal-matrix/
 │   ├── models/
 │   │   └── price_cache.py
 │   ├── services/
-│   │   └── yahoo_finance.py
+│   │   ├── yahoo_finance.py
+│   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA)
+│   │   ├── pivot_engine.py                ← Task 3.2 — ABC Pivot Detector
+│   │   └── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine
 │   └── routers/
 │       └── market_data.py
-├── .env                           ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
-├── .gitignore                     ← .env is excluded
-├── CLAUDE.md                      ← this file
+├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
+├── .gitignore                             ← .env and signal_matrix.db excluded
+├── CLAUDE.md                              ← this file
 ├── docker-compose.yml
 ├── Dockerfile
 ├── package.json
@@ -99,13 +102,13 @@ All five tasks are built, deployed, and committed to Git.
 
 **Tier 2 seed tickers (5):**
 - USO → XOP, OIH
-- XLY → AMZN  
+- XLY → AMZN
 - XLK → SOXX
 - GLD → SGOL
 
 ### Task 4 — Sparklines + Column Cleanup ✅
 - Pure SVG sparkline component — no charting library
-- 60 mock daily prices via seeded RNG (seed offset +9999), last point anchors to close
+- 60-day real price history from Yahoo Finance
 - `Sparkline({ prices, color })`: 80×28px, 1.5px stroke, no axes
 - Spark color: Bullish `#00e5a0`, Bearish `#ff4d6d`, Neutral `#8899aa`
 - TREND column positioned after CLOSE
@@ -133,7 +136,7 @@ Close, Viewpoint, Conviction, LT Dir, LT LRR, Trend LRR, Hurst(T), Rel IV%, Vol 
 
 **Color conventions — locked:**
 - Neutral color: `#8899aa` grey everywhere
-- Amber `#f0b429` reserved for alerts/conviction bar only
+- Amber `#f0b429` reserved for alerts/conviction bar only — and WARNING state cells
 - `vpColor`, `dirColor` both use `#8899aa` for Neutral
 
 ### Task 5 — Admin Panel ✅
@@ -157,9 +160,208 @@ Close, Viewpoint, Conviction, LT Dir, LT LRR, Trend LRR, Hurst(T), Rel IV%, Vol 
 
 ---
 
+## Phase 2 — COMPLETE ✅
+
+Real data integration delivered:
+- Yahoo Finance EOD prices for all Tier 1 tickers via Python FastAPI backend
+- Real closing prices, sparklines (60-day), Rel IV (realized vol percentile), volume
+- MA20/50/100 computed and cached in SQLite — not yet displayed in UI
+- REFRESH DATA button in header — manual trigger only, no auto-fetch on load
+- 429 rate limit handling — batch stops immediately and returns partial results
+- SQLite cache at `backend/signal_matrix.db` — same-day fetches served instantly
+
+---
+
+## Phase 3 — IN PROGRESS 🔄
+
+Signal engine build. All decisions locked — see full spec in `Docs/SignalMatrix_Spec_v1.3.docx`.
+
+### Phase 3 Build Sequence
+
+| Task | Deliverable | File | Status |
+|---|---|---|---|
+| 3.1 | Hurst + Fractal Dimension (DFA) | `backend/services/signal_engine.py` | ✅ Complete |
+| 3.2 | ABC Pivot Detector | `backend/services/pivot_engine.py` | ⬜ Next |
+| 3.3 | LRR/HRR + Conviction Engine | `backend/services/conviction_engine.py` | ⬜ Pending 3.2 |
+| 3.4 | Wire to Dashboard | React frontend (App.js) | ⬜ Pending 3.3 |
+
+### New Button — CALCULATE SIGNALS
+- Added to dashboard header alongside REFRESH DATA
+- Manual trigger only — never auto-calculates on page load
+- Must be run AFTER REFRESH DATA (price history must be current)
+- Calls: `/api/signals/hurst` → `/api/signals/pivots` → `/api/signals/output` in sequence
+
+---
+
+## Signal Engine Math — Phase 3 (ALL DECISIONS LOCKED)
+
+### Hurst Exponent (H)
+- **Method: DFA (Detrended Fluctuation Analysis)** — robust for financial time series
+- **Lookback windows:**
+  - Trade: 63 trading days
+  - Trend: 252 trading days
+  - Long Term: 756 trading days
+- **Minimum bars required:** same as lookback — return null if insufficient, do not skip ticker
+- **D = 2 − H** (Fractal Dimension derived directly from H)
+
+### DFA Algorithm
+```python
+def dfa(prices, window):
+    # 1. Convert prices to log returns
+    # 2. Compute cumulative sum (integration)
+    # 3. Scales: log-spaced from 10 bars to window//4, ~20 points
+    # 4. For each scale n: fit linear trend per segment, compute RMS of residuals F(n)
+    # 5. H = slope of log(F(n)) vs log(n) via linear regression
+    # Returns H in [0, 1]
+    # H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk
+```
+
+### Conviction Score Formula
+```
+Base Score = weighted average:
+  Trade H (DFA, 63-day)   → 55%   primary signal
+  Trend H (DFA, 252-day)  → 25%   alignment filter
+  Rel IV% inverted        → 20%   IV Score = (100 - RelIV%) / 100
+
+Volume Multiplier (applied after base score):
+  Confirming  → × 1.15
+  Neutral     → × 1.00
+  Diverging   → × 0.80
+
+Final Conviction = Base Score × Volume Multiplier
+```
+
+**Long Term H (756-day):** calculated and stored, displayed in popup as context only.
+Not used in conviction formula.
+
+### Alert Flag ⚡ Trigger (ALL THREE must be true)
+1. Trade H > 0.55 AND Trend H > 0.55
+2. Trade direction and Trend direction both aligned (both Bullish or both Bearish)
+3. Final Conviction ≥ 70%
+
+### ABC Pivot Structure
+
+**Uptrend:**
+```
+A = pivot low   (e.g. $100)
+B = pivot high  (e.g. $110)  — higher high
+C = higher low  (e.g. $105)  — C > A confirms uptrend
+D = running high             — established when price closes above B, updates as price climbs
+```
+
+**Downtrend (mirror):**
+```
+A = pivot high  (e.g. $100)
+B = pivot low   (e.g. $90)   — lower low
+C = lower high  (e.g. $95)   — C < A confirms downtrend
+D = running low              — established when price closes below B, updates as price falls
+```
+
+**Key rules:**
+- D is established the moment price closes above B (uptrend) or below B (downtrend)
+- D is a running value — updates continuously until a new pullback forms a new C
+- The structure always references the most recent confirmed A/B/C pattern
+- Old pivot levels are irrelevant once new structure forms
+
+**Pivot detection bar windows:**
+- Trade: 3 bars
+- Trend: 20 bars
+- Long Term: 90 bars
+
+### LRR / HRR — Naming Convention
+- **LRR = always the lower price value** (entry zone in uptrend, profit target in downtrend)
+- **HRR = always the higher price value** (profit target in uptrend, entry zone in downtrend)
+
+### LRR Formula — Uptrend
+```
+Base LRR = C + (B − C) × H_factor
+
+H_factor lookup:
+  H > 0.65        →  0.95  (near B — strong trend)
+  H 0.55 – 0.65   →  0.50  (midpoint — moderate trend)
+  H 0.50 – 0.55   →  0.05  (near C — weak trend)
+  H < 0.50        →  no valid setup
+```
+
+### HRR Formula — Uptrend
+```
+Base HRR = D + (1σ of recent returns)
+```
+
+### Downtrend Mirror Formulas
+```
+Base HRR = C − (C − B) × H_factor   ← entry on bounce (higher price)
+Base LRR = D − (1σ of recent returns) ← profit target (lower price)
+```
+
+### Rel IV Scaling (ATR Equivalent)
+IV scales LRR/HRR width exactly as ATR expands and contracts with volatility.
+No hard floor or ceiling — IV can push LRR below C or HRR above C.
+When this occurs, WARNING state is flagged (amber cell in dashboard).
+
+| Rel IV% | LRR Adj (Uptrend) | HRR Adj (Uptrend) |
+|---|---|---|
+| 0–30% | × 0.99 (tight) | × 1.02 |
+| 31–60% | × 1.00 (neutral) | × 1.05 |
+| 61–80% | × 0.97 (wider) | × 1.10 |
+| > 80% | × 0.94 (max) | × 1.15 |
+
+Downtrend: HRR pushed up, LRR pulled down (same widening logic, mirrored).
+
+### Structural States
+
+| State | Uptrend Condition | Downtrend Condition | Display |
+|---|---|---|---|
+| UPTREND_VALID / DOWNTREND_VALID | C > A, price above LRR | C < A, price below HRR | Normal green/red |
+| FORMING | Pullback from D, no new C yet | Bounce from D, no new C yet | LRR/HRR update each close |
+| EXTENDED | Price above D, new C not formed | Price below D, new C not formed | LRR/HRR shown, context = awaiting reset |
+| WARNING | LRR drifted below C | HRR drifted above C | LRR or HRR cell → amber |
+| BREAK_OF_TRADE | Price closes below C (trade tf) | Price closes above C (trade tf) | Trade Dir flips, LRR/HRR cleared |
+| BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir flips, Trend LRR cleared |
+| NO_STRUCTURE | H < 0.50 or insufficient history | H < 0.50 or insufficient history | LRR/HRR blank |
+
+**Critical rules:**
+- **C is the line in the sand** — not LRR. Break of Trade/Trend fires on price closing through C.
+- **LRR = entry signal. C = invalidation level.** Different jobs.
+- Trade and Trend structural states are **independent** — a Trend break does not auto-flip Trade.
+- Diverging Trade/Trend states = diverging Viewpoint in dashboard. Useful, not an error.
+
+### New Database Tables (Phase 3)
+```sql
+signal_hurst:   ticker, h_trade, h_trend, h_lt, d_trade, d_trend, d_lt, calculated_at
+                UNIQUE(ticker)
+
+signal_pivots:  ticker, timeframe, bar_window,
+                pivot_a, pivot_b, pivot_c, pivot_d,
+                pivot_a_date, pivot_b_date, pivot_c_date, pivot_d_date,
+                structural_state, calculated_at
+                UNIQUE(ticker, timeframe)
+
+signal_output:  ticker, timeframe, lrr, hrr, structural_state,
+                conviction, trade_direction, h_value, calculated_at
+                UNIQUE(ticker, timeframe)
+```
+
+### New FastAPI Endpoints (Phase 3)
+```
+GET /api/signals/hurst    ← Task 3.1
+GET /api/signals/pivots   ← Task 3.2
+GET /api/signals/output   ← Task 3.3 — full signal set per ticker
+```
+
+### Sanity Checks After Task 3.1
+| Ticker | Expected H(Trade) | Rationale |
+|---|---|---|
+| SPY | 0.50–0.65 | Broad market — moderate trend |
+| GLD | 0.60–0.75 | Strong persistent trend last 12 months |
+| VIX | 0.30–0.45 | Mean-reverting by nature |
+| TLT | 0.45–0.60 | Range-bound recently |
+
+---
+
 ## Data Layer
 
-### Current: localStorage
+### Current: localStorage + FastAPI/SQLite
 - `localStorage.getItem("sm_tickers")` → parse → use
 - Falls back to `tickers.js` if nothing stored
 - Admin panel writes back via `saveTickers()`
@@ -177,24 +379,18 @@ Fields: `ticker, description, assetClass, sector, tier, parentTicker, active, di
 ### Timeframes
 - **Trade** — ≤ 3 weeks — entry/exit timing
 - **Trend** — ≤ 3 months — directional bias filter
-- **Long Term** — 3 years — macro structural context
+- **Long Term** — 3 years — macro structural context (display/context only)
 
 ### Signal Components
-1. **Fractal Dimension (D)** — D→1.0 trending, D→1.5 choppy, D→2.0 mean-reverting
-2. **Hurst Exponent (H)** — H>0.5 trending, H<0.5 mean-reverting, H=0.5 random walk. D+H=2.
-3. **Gaussian Component** — normal distribution of returns, foundation for LRR/HRR
+1. **Fractal Dimension (D)** — D→1.0 trending, D→1.5 choppy, D→2.0 mean-reverting. D = 2 − H.
+2. **Hurst Exponent (H)** — H>0.5 trending, H<0.5 mean-reverting, H=0.5 random walk. Method: DFA.
+3. **Gaussian Component** — normal distribution of returns, foundation for HRR (1σ above/below D)
 4. **Relative IV** — IV as percentile of its own 52-week range. Stock-specific, not vs VIX.
-5. **Volume Signal** — Confirming / Diverging / Neutral
+   Primary role: LRR/HRR width scaling (ATR equivalent). Secondary: conviction score component.
+5. **Volume Signal** — Confirming / Diverging / Neutral. Applied as multiplier to conviction score.
 
 ### Direction Values (ALL three timeframes)
 - **Bullish** / **Bearish** / **Neutral** — never Up / Down
-
-### LRR / HRR Logic
-- LRR = entry zone, anchored between B and C pivot points
-- HRR = profit target / partial exit zone (NOT URR — do not rename)
-- Range is NOT symmetrical — conviction determines asymmetry
-- HRR well above D → full position | HRR near D → reduced | HRR below D → pass | LRR below C → no trade
-- Primary filter: Trade AND Trend must be aligned before LRR/HRR is calculated
 
 ---
 
@@ -214,29 +410,130 @@ Fields: `ticker, description, assetClass, sector, tier, parentTicker, active, di
 
 ---
 
-## Signal Engine Math — Phase 3 Reference
+## Dashboard — Current State
+- React app running at localhost:3000 via Docker
+- All Tier 1 tickers loaded with real + mock data merged
+- Close prices: real — from Yahoo Finance via FastAPI
+- Sparklines: real — 60-day price history
+- Rel IV: real — realized vol percentile proxy (Schwab IV Percentile in Phase 5)
+- Volume: real — daily volume from Yahoo Finance
+- MA20/50/100: computed and cached — not yet displayed in UI
+- Signal columns remain mock: Conviction, Trade Dir, LRR, HRR, Hurst, Vol Signal
+- REFRESH DATA button in header — manual fetch only, never auto on page load
+- CALCULATE SIGNALS button — added in Phase 3, manual trigger only
+- Admin panel at localhost:3000/admin — password protected, localStorage backed
 
-> **Status:** These formulas define the target implementation for Phase 3.
-> Do NOT build any of this during Phase 2.
-> Parameters marked OPEN are not yet finalized — flag before implementing.
+## Dashboard Columns (current, in order)
+| Column | Description |
+|--------|-------------|
+| › | Tier 2 expand/collapse chevron |
+| ⚡ | Alert flag — high conviction aligned signal |
+| Ticker | Symbol |
+| Description | Asset name |
+| Asset Class | Classification |
+| Sector | GICS sector / type |
+| Close | Last closing price (real) |
+| Trend | SVG sparkline — 60-day real price history |
+| Viewpoint | Trade + Trend alignment summary |
+| Conviction % | Probability score 0-100% |
+| Trade Dir | Short-term direction |
+| Trade LRR | Lower risk range - trade timeframe |
+| Trade HRR | Higher risk range - trade timeframe |
+| Trend Dir | Medium-term direction |
+| Trend LRR | Support level - trend timeframe |
 
-### Hurst Exponent (H)
-Calculation method: [OPEN] — Recommended: DFA (Detrended Fluctuation Analysis)
+## Popup Fields (click any row)
+Close, Viewpoint, Conviction, LT Dir, LT LRR, Trend LRR, Hurst(T), Rel IV%, Vol Signal, Updated
 
-Lookback windows: [OPEN] — Suggested:
-- Trade: 63 trading days
-- Trend: 252 trading days
-- Long Term: 756 trading days
-
-### Conviction Score
-Weighting scheme: [OPEN] — Recommended: H-dominant (H: 40%, others: 20% each)
+## Color Coding
+- **`#00e5a0` green** — Bullish, high conviction, trending
+- **`#ff4d6d` red** — Bearish, low conviction, mean-reverting
+- **`#8899aa` grey** — Neutral (everywhere — not amber)
+- **`#f0b429` amber** — Alerts, conviction bar, and WARNING state cells
 
 ---
 
-## Quad Tracker — Future Phase Reference
+## Version Control
+- Git initialized at `C:\Users\shann\Projects\signal-matrix`
+- First commit: `42e6663` — "Phase 1 complete - Tasks 1-5 - Dashboard + Admin Panel"
+- `.env` excluded from Git via `.gitignore`
+- `backend/signal_matrix.db` excluded from Git via `.gitignore`
 
-> **Status:** NOT in current build scope.
-> Full specification: Docs/QuadTracker_Spec_v1.1.docx
+### Git workflow
+After any confirmed working state:
+```
+git add .
+git commit -m "brief description"
+```
+Roll back if something breaks:
+```
+git checkout -- .
+```
+
+---
+
+## Admin Panel
+- **Route:** `localhost:3000/admin` — hidden, not in main nav
+- **Access:** Password from `.env` → `REACT_APP_ADMIN_PASSWORD`
+- **After changing `.env`:** Must restart Docker container (not just hot reload)
+- **Never hardcode the password in source code**
+- **Persistence:** localStorage key `sm_tickers`
+- **Never hard delete tickers** — use `active: false` (soft deactivate)
+
+---
+
+## Environment Variables
+`.env` file at project root — never commit this file:
+```
+REACT_APP_ADMIN_PASSWORD=yourpassword
+```
+
+---
+
+## Project Rules — Read Before Making Changes
+1. **Never modify the ticker universe without explicit instruction**
+2. **Never hardcode passwords, API keys, or secrets** — always use `.env`
+3. **Never hard delete tickers** — use `active: false`
+4. **Direction values are Bullish / Bearish / Neutral** — never Up / Down
+5. **HRR = Higher Risk Range** — always the higher price value — do not rename
+6. **LRR = Lower Risk Range** — always the lower price value — do not rename
+7. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts and WARNING state cells only
+8. **Asset Class values must exactly match:** Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities
+9. **Keep components modular** — one component per file
+10. **Docker:** changes to `src/` reflect on save — no rebuild needed for frontend
+11. **Do not modify** `docker-compose.yml`, `Dockerfile`, or `package.json` without flagging first
+12. **Phase 3 signal calculations are now in scope** — implement per spec above, no deviations
+13. **Flag all [OPEN] items** before implementing — do not assume defaults
+14. **Commit to Git** after every confirmed working state
+15. **Neo = Claude Code** (VS Code extension) — all code changes go here
+16. **No worktrees or feature branches** — all changes committed directly to master
+17. **Never auto-fetch from Yahoo Finance** — REFRESH DATA button only
+18. **Never auto-calculate signals** — CALCULATE SIGNALS button only
+19. **`backend/signal_matrix.db` must never be committed to Git**
+20. **C is the invalidation level** — not LRR. Break of Trade/Trend fires on price closing through C.
+
+---
+
+## Roadmap
+
+| Phase | Description | Status |
+|---|---|---|
+| Phase 1 | Dashboard Refinement | ✅ Complete |
+| Phase 2 | Real Data Integration | ✅ Complete |
+| Phase 3 | Signal Engine | 🔄 In Progress |
+| Phase 4 | Backend & Database | ⬜ Python FastAPI, SQLite, EOD scheduler, signal history |
+| Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
+| Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
+
+---
+
+## What Is NOT In Scope Yet
+- Schwab API (real-time streaming, options IV)
+- Supabase / PostgreSQL cloud database
+- Quad Tracker dashboard
+- Cloud deployment
+- Tier 2 auto-surfacing based on conviction threshold
+- MA20/50/100 display in dashboard UI
 
 ---
 
@@ -264,7 +561,7 @@ const tickers = [
   { ticker: "XLRE",  description: "Real Estate Select Sector",            assetClass: "Domestic Equities", sector: "Real Estate",              tier: 1, parentTicker: null, active: true, displayOrder: 17 },
   { ticker: "XLC",   description: "Communication Services Select Sector", assetClass: "Domestic Equities", sector: "Communication Services",   tier: 1, parentTicker: null, active: true, displayOrder: 18 },
   { ticker: "AAPL",  description: "Apple Inc.",                           assetClass: "Domestic Equities", sector: "Technology",               tier: 1, parentTicker: null, active: true, displayOrder: 19 },
-  { ticker: "MSFT",  description: "Microsoft Corp.",                      assetClass: "Domestic Equities", sector: "Technology",               tier: 1, parentTicker: null, active: true, displayOrder: 20 },
+  { ticker: "MSFT",  description: "Microsoft Corp.",                      assetClass: "Microsoft Corp.",   sector: "Technology",               tier: 1, parentTicker: null, active: true, displayOrder: 20 },
   { ticker: "NVDA",  description: "NVIDIA Corp.",                         assetClass: "Domestic Equities", sector: "Technology",               tier: 1, parentTicker: null, active: true, displayOrder: 21 },
   { ticker: "AVGO",  description: "Broadcom Inc.",                        assetClass: "Domestic Equities", sector: "Technology",               tier: 1, parentTicker: null, active: true, displayOrder: 22 },
   { ticker: "GOOGL", description: "Alphabet Inc.",                        assetClass: "Domestic Equities", sector: "Communication Services",   tier: 1, parentTicker: null, active: true, displayOrder: 23 },
@@ -301,148 +598,3 @@ const tickers = [
   { ticker: "SGOL",  description: "Aberdeen Physical Gold Shares ETF",    assetClass: "Foreign Exchange",  sector: "Gold",                     tier: 2, parentTicker: "GLD",  active: true, displayOrder: 1 },
 ];
 ```
-
----
-
-## Dashboard — Current State
-- React app running at localhost:3000 via Docker
-- All Tier 1 tickers loaded with real + mock data merged
-- Close prices: real — from Yahoo Finance via FastAPI
-- Sparklines: real — 60-day price history
-- Rel IV: real — realized vol percentile proxy (Schwab IV Percentile in Phase 5)
-- Volume: real — daily volume from Yahoo Finance
-- MA20/50/100: computed and cached — not yet displayed in UI
-- Signal columns remain mock: Conviction, Trade Dir, LRR, HRR, Hurst, Vol Signal
-- REFRESH DATA button in header — manual fetch only, never auto on page load
-- Admin panel at localhost:3000/admin — password protected, localStorage backed
-
-## Dashboard Columns (current, in order)
-| Column | Description |
-|--------|-------------|
-| › | Tier 2 expand/collapse chevron |
-| ⚡ | Alert flag — high conviction aligned signal |
-| Ticker | Symbol |
-| Description | Asset name |
-| Asset Class | Classification |
-| Sector | GICS sector / type |
-| Close | Last closing price (mock) |
-| Trend | SVG sparkline — 60 day mock price history |
-| Viewpoint | Trade + Trend alignment summary |
-| Conviction % | Probability score 0-100% |
-| Trade Dir | Short-term direction |
-| Trade LRR | Lower risk range - trade timeframe |
-| Trade HRR | Higher risk range - trade timeframe |
-| Trend Dir | Medium-term direction |
-| Trend LRR | Support level - trend timeframe |
-
-## Popup Fields (click any row)
-Close, Viewpoint, Conviction, LT Dir, LT LRR, Trend LRR, Hurst(T), Rel IV%, Vol Signal, Updated
-
-## Color Coding
-- **`#00e5a0` green** — Bullish, high conviction, trending
-- **`#ff4d6d` red** — Bearish, low conviction, mean-reverting
-- **`#8899aa` grey** — Neutral (everywhere — not amber)
-- **`#f0b429` amber** — Alerts and conviction bar only
-
----
-
-## Version Control
-- Git initialized at `C:\Users\shann\Projects\signal-matrix`
-- First commit: `42e6663` — "Phase 1 complete - Tasks 1-5 - Dashboard + Admin Panel"
-- `.env` excluded from Git via `.gitignore`
-
-### Git workflow going forward
-After any working change:
-```
-git add .
-git commit -m "brief description"
-```
-To roll back to last commit if something breaks:
-```
-git checkout -- .
-```
-
----
-
-## Admin Panel
-- **Route:** `localhost:3000/admin` — hidden, not in main nav
-- **Access:** Password from `.env` → `REACT_APP_ADMIN_PASSWORD`
-- **After changing `.env`:** Must restart Docker container (not just hot reload)
-- **Never hardcode the password in source code**
-- **Persistence:** localStorage key `sm_tickers`
-- **Never hard delete tickers** — use `active: false` (soft deactivate)
-
----
-
-## Environment Variables
-`.env` file at project root — never commit this file:
-```
-REACT_APP_ADMIN_PASSWORD=yourpassword
-```
-
----
-
-## Project Rules — Read Before Making Changes
-1. **Never modify the ticker universe without explicit instruction**
-2. **Never hardcode passwords, API keys, or secrets** — always use `.env`
-3. **Never hard delete tickers** — use `active: false`
-4. **Direction values are Bullish / Bearish / Neutral** — never Up / Down
-5. **HRR = High Risk Range** — do not rename to URR or anything else
-6. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts only
-7. **Asset Class values must exactly match:** Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities
-8. **Keep components modular** — one component per file
-9. **Docker:** changes to `src/` reflect on save — no rebuild needed for frontend
-10. **Do not modify** `docker-compose.yml`, `Dockerfile`, or `package.json` without flagging first
-11. **Do not implement signal calculations** until Phase 3 is explicitly started
-12. **Flag all [OPEN] items** before implementing — do not assume defaults
-13. **Commit to Git** after every confirmed working state
-14. **Neo = Claude Code** (VS Code extension) — all code changes go here
-15. **No worktrees or feature branches** — all changes committed directly to master
-16. **Never auto-fetch from Yahoo Finance** — REFRESH DATA button only
-17. **`backend/signal_matrix.db` must never be committed to Git**
-
----
-
-## Roadmap
-
-| Phase | Description | Status |
-|---|---|---|
-| Phase 1 | Dashboard Refinement | ✅ Complete |
-| Phase 2 | Real Data Integration | ✅ Complete |
-| Phase 3 | Signal Engine | ⬜ Hurst, Fractal Dimension, ABC pivots, LRR/HRR |
-| Phase 4 | Backend & Database | ⬜ Python FastAPI, SQLite, EOD scheduler |
-| Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
-| Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
-
-## Phase 2 — COMPLETE ✅
-
-Real data integration delivered:
-- Yahoo Finance EOD prices for all Tier 1 tickers via Python FastAPI backend
-- Real closing prices, sparklines (60-day), Rel IV (realized vol percentile), volume
-- MA20/50/100 computed and cached in SQLite — not yet displayed in UI
-- REFRESH DATA button in header — manual trigger only, no auto-fetch on load
-- 429 rate limit handling — batch stops immediately and returns partial results
-- SQLite cache at `backend/signal_matrix.db` — same-day fetches served instantly
-
----
-
-## Open Decisions — Must Resolve Before Phase 3
-
-| Decision | Options | Recommended Default |
-|---|---|---|
-| Hurst calculation method | R/S Analysis, DFA, Higuchi | DFA |
-| Hurst lookback — Trade | 21, 42, 63 trading days | 63 |
-| Hurst lookback — Trend | 126, 252 trading days | 252 |
-| Hurst lookback — Long Term | 504, 756 trading days | 756 |
-| Conviction weighting scheme | Equal (25% each) vs H-dominant (40/20/20/20) | H-dominant |
-| Quad dominant threshold | >40% declared, >60% high conviction | 40% / 60% |
-| Quad SD baseline lookback | 10-year rolling, exclude COVID? | 10yr, exclude 2020-2021 |
-
----
-
-## What Is NOT In Scope Yet
-- Signal calculations (Hurst, Fractal Dimension, LRR/HRR engine)
-- Schwab API (real-time streaming, options IV)
-- Supabase / PostgreSQL cloud database
-- Quad Tracker dashboard
-- Cloud deployment

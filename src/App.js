@@ -171,9 +171,28 @@ function Dashboard() {
   const [selected,    setSelected]    = useState(null);
   const [expandedTickers, setExpandedTickers] = useState(new Set());
 
-  const [realDataMap,  setRealDataMap]  = useState(new Map());
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [dataError,    setDataError]    = useState(false);
+  const [realDataMap,    setRealDataMap]    = useState(new Map());
+  const [isRefreshing,   setIsRefreshing]   = useState(false);
+  const [dataError,      setDataError]      = useState(false);
+  const [isCalculating,  setIsCalculating]  = useState(false);
+  const [calcStatus,     setCalcStatus]     = useState(null); // null | "ok" | "error"
+
+  const handleCalculateSignals = () => {
+    if (isCalculating) return;
+    setIsCalculating(true);
+    setCalcStatus(null);
+    fetch("http://localhost:8000/api/signals/hurst")
+      .then(r => r.json())
+      .then(data => {
+        setIsCalculating(false);
+        setCalcStatus(data.errors === 0 ? "ok" : "ok"); // show ok even with partial errors
+        console.log("Hurst results:", data);
+      })
+      .catch(() => {
+        setIsCalculating(false);
+        setCalcStatus("error");
+      });
+  };
 
   const handleRefresh = () => {
     if (isRefreshing) return;
@@ -336,20 +355,36 @@ function Dashboard() {
           ))}
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            style={{
-              background: isRefreshing ? "transparent" : "#001a0f",
-              border: `1px solid ${isRefreshing ? "#1a2535" : "#00e5a0"}`,
-              color: isRefreshing ? "#445566" : "#00e5a0",
-              padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
-              cursor: isRefreshing ? "default" : "pointer",
-              fontFamily: "inherit", letterSpacing: "0.1em",
-            }}
-          >
-            {isRefreshing ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
-          </button>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              onClick={handleCalculateSignals}
+              disabled={isCalculating}
+              style={{
+                background: isCalculating ? "transparent" : "#00101a",
+                border: `1px solid ${isCalculating ? "#1a2535" : calcStatus === "error" ? "#ff4d6d" : "#0099ff"}`,
+                color: isCalculating ? "#445566" : calcStatus === "error" ? "#ff4d6d" : "#0099ff",
+                padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
+                cursor: isCalculating ? "default" : "pointer",
+                fontFamily: "inherit", letterSpacing: "0.1em",
+              }}
+            >
+              {isCalculating ? "⟳ CALCULATING..." : "⟳ CALCULATE SIGNALS"}
+            </button>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              style={{
+                background: isRefreshing ? "transparent" : "#001a0f",
+                border: `1px solid ${isRefreshing ? "#1a2535" : "#00e5a0"}`,
+                color: isRefreshing ? "#445566" : "#00e5a0",
+                padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
+                cursor: isRefreshing ? "default" : "pointer",
+                fontFamily: "inherit", letterSpacing: "0.1em",
+              }}
+            >
+              {isRefreshing ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
+            </button>
+          </div>
           <div style={{ textAlign: "right", fontSize: "10px", color: "#667788" }}>
             <div style={{ color: "#8899aa" }}>EOD · 03/11/26</div>
             <div style={{ color: "#00e5a0", marginTop: "2px" }}>● LIVE</div>

@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routers import market_data
+from routers import market_data, signals
+import models.signal_hurst  # ensure table is registered before create_all
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(market_data.router)
+app.include_router(signals.router)
 
 @app.get("/health")
 def health():
