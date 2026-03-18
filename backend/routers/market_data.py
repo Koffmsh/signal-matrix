@@ -37,6 +37,15 @@ def serialize_cache_row(row: PriceCache) -> dict:
     }
 
 
+def get_stale(ticker: str, db: Session) -> dict | None:
+    """Return any cached row for ticker, regardless of date."""
+    row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+    if row and row.close is not None:
+        logger.info(f"Stale cache fallback: {ticker} (cached {row.cache_date})")
+        return serialize_cache_row(row)
+    return None
+
+
 def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
     """Return cached data if fresh for today, otherwise fetch and cache."""
     cached = db.query(PriceCache).filter(
@@ -53,7 +62,7 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
     data = fetch_ticker_data(ticker)
 
     if data is None:
-        return None
+        return get_stale(ticker, db)
 
     # Upsert: update existing row or insert new
     existing = db.query(PriceCache).filter(
@@ -115,12 +124,15 @@ def get_batch(db: Session = Depends(get_db)):
     rate_limited = False
 
     for ticker in TIER1_TICKERS:
-        try:
-            data = get_or_fetch(ticker, today, db)
-        except RateLimitError:
-            logger.warning(f"429 rate limit — stopping batch at {ticker}, returning {len(results)} results")
-            rate_limited = True
-            break
+        if rate_limited:
+            data = get_stale(ticker, db)
+        else:
+            try:
+                data = get_or_fetch(ticker, today, db)
+            except RateLimitError:
+                logger.warning(f"429 rate limit hit at {ticker} — serving stale cache for remaining tickers")
+                rate_limited = True
+                data = get_stale(ticker, db)
         if data:
             results.append(data)
         else:
