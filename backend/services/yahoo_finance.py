@@ -64,8 +64,8 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             spark_prices[-1] = close  # Ensure last point = exact close
 
         # Full price history — exclude today's incomplete bar (only confirmed EOD closes)
-        today_ts       = pd.Timestamp(date.today())
-        history_closes = closes[closes.index < today_ts]
+        # Use .date comparison to handle tz-aware index from yfinance 1.2.0
+        history_closes = closes[closes.index.date < date.today()]
         history_prices = [round(float(p), 4) for p in history_closes.tolist()]
         history_dates  = [str(d.date()) for d in history_closes.index]
 
