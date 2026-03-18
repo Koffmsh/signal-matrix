@@ -27,15 +27,16 @@ def get_yahoo_symbol(ticker: str) -> str:
 
 def fetch_ticker_data(ticker: str) -> dict | None:
     """
-    Fetch 14 months of history for a ticker (ensures 252 trading days).
-    Returns dict with close, volume, ma20/50/100, rel_iv, spark_prices.
+    Fetch 4 years of history for a ticker.
+    Returns dict with close, volume, ma20/50/100, rel_iv, spark_prices,
+    history_prices (full 4-year list), and history_dates (corresponding YYYY-MM-DD list).
     Returns None if fetch fails.
     """
     yahoo_symbol = get_yahoo_symbol(ticker)
 
     try:
         yf_ticker = yf.Ticker(yahoo_symbol)
-        hist = yf_ticker.history(period="14mo")
+        hist = yf_ticker.history(period="4y")
 
         if hist.empty or len(hist) < 20:
             logger.warning(f"Insufficient data for {ticker} ({yahoo_symbol})")
@@ -62,21 +63,27 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         if spark_prices:
             spark_prices[-1] = close  # Ensure last point = exact close
 
+        # Full price history — used by signal and pivot engines (no yfinance re-fetch)
+        history_prices = [round(float(p), 4) for p in closes.tolist()]
+        history_dates  = [str(d.date()) for d in closes.index]
+
         updated = datetime.now().strftime("%m/%d/%y %H:%M")
 
         time.sleep(0.5)  # Rate limit: pause between Yahoo Finance fetches
 
         return {
-            "ticker":        ticker,
-            "yahoo_symbol":  yahoo_symbol,
-            "close":         close,
-            "volume":        volume,
-            "ma20":          ma20,
-            "ma50":          ma50,
-            "ma100":         ma100,
-            "rel_iv":        rel_iv,
-            "spark_prices":  spark_prices,
-            "updated":       updated,
+            "ticker":          ticker,
+            "yahoo_symbol":    yahoo_symbol,
+            "close":           close,
+            "volume":          volume,
+            "ma20":            ma20,
+            "ma50":            ma50,
+            "ma100":           ma100,
+            "rel_iv":          rel_iv,
+            "spark_prices":    spark_prices,
+            "history_prices":  history_prices,
+            "history_dates":   history_dates,
+            "updated":         updated,
         }
 
     except Exception as e:

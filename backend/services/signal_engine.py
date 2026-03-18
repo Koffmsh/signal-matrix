@@ -1,11 +1,14 @@
 """
 Signal Engine — Task 3.1
 Hurst Exponent + Fractal Dimension via DFA (Detrended Fluctuation Analysis)
+
+Price history is read from the SQLite price_cache table (populated by REFRESH DATA).
+Never calls yfinance directly — CALCULATE SIGNALS always runs after REFRESH DATA.
 """
-import time
+import json
 import logging
 import numpy as np
-import yfinance as yf
+from models.price_cache import PriceCache
 
 logger = logging.getLogger(__name__)
 
@@ -14,19 +17,18 @@ WINDOW_TRADE = 63
 WINDOW_TREND = 252
 WINDOW_LT    = 756
 
-# Symbol overrides (same as yahoo_finance.py)
-YAHOO_SYMBOL_MAP = {
-    "SPX":  "^GSPC",
-    "NDX":  "^NDX",
-    "$DJI": "^DJI",
-    "VIX":  "^VIX",
-    "USD":  "DX-Y.NYB",
-    "JPY":  "JPY=X",
-}
 
-
-def get_yahoo_symbol(ticker: str) -> str:
-    return YAHOO_SYMBOL_MAP.get(ticker, ticker)
+def get_prices_from_cache(ticker: str, db) -> list | None:
+    """
+    Read full price history from the SQLite price_cache table.
+    Returns list of floats (oldest → newest), or None if not cached.
+    REFRESH DATA must be run first to populate the cache.
+    """
+    row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+    if row is None or not row.history_json:
+        logger.warning(f"No cached price history for {ticker} — run REFRESH DATA first")
+        return None
+    return json.loads(row.history_json)
 
 
 def dfa(prices: list, window: int) -> float | None:
@@ -72,8 +74,8 @@ def dfa(prices: list, window: int) -> float | None:
     )
 
     # Step 4: compute F(n) for each scale
-    log_scales  = []
-    log_f_vals  = []
+    log_scales = []
+    log_f_vals = []
 
     for n in scales:
         if n < 4:
@@ -104,38 +106,15 @@ def dfa(prices: list, window: int) -> float | None:
     return H
 
 
-def fetch_price_history(ticker: str, years: int = 4) -> list | None:
+def compute_hurst(ticker: str, db) -> dict:
     """
-    Fetch up to `years` years of daily closing prices from Yahoo Finance.
-    Returns a list of floats (oldest → newest), or None on failure.
-    """
-    yahoo_symbol = get_yahoo_symbol(ticker)
-    try:
-        yf_ticker = yf.Ticker(yahoo_symbol)
-        hist      = yf_ticker.history(period=f"{years}y")
-        if hist.empty or len(hist) < 10:
-            logger.warning(f"No history for {ticker} ({yahoo_symbol})")
-            return None
-        closes = hist["Close"].dropna().tolist()
-        time.sleep(0.5)  # Rate-limit buffer
-        return closes
-    except Exception as e:
-        err = str(e)
-        if "429" in err or "too many requests" in err.lower():
-            raise
-        logger.error(f"fetch_price_history failed for {ticker}: {e}")
-        return None
-
-
-def compute_hurst(ticker: str) -> dict:
-    """
-    Fetch price history and compute H + D for all three timeframes.
+    Read price history from cache and compute H + D for all three timeframes.
 
     Returns dict with keys:
       ticker, h_trade, h_trend, h_lt, d_trade, d_trend, d_lt
-    Fields are None when insufficient data.
+    Fields are None when insufficient data or cache miss.
     """
-    prices = fetch_price_history(ticker, years=4)
+    prices = get_prices_from_cache(ticker, db)
 
     if prices is None:
         return {

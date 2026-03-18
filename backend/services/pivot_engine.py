@@ -2,10 +2,13 @@
 Pivot Engine — Task 3.2
 ABC Pivot Detector: finds A, B, C, D price levels and structural state
 for three timeframes (trade, trend, long-term).
+
+Price history is read from the SQLite price_cache table (populated by REFRESH DATA).
+Never calls yfinance directly — CALCULATE SIGNALS always runs after REFRESH DATA.
 """
-import time
+import json
 import logging
-import yfinance as yf
+from models.price_cache import PriceCache
 
 logger = logging.getLogger(__name__)
 
@@ -16,47 +19,23 @@ TIMEFRAMES = {
     "lt":    90,
 }
 
-# Symbol overrides — must match signal_engine.py
-YAHOO_SYMBOL_MAP = {
-    "SPX":  "^GSPC",
-    "NDX":  "^NDX",
-    "$DJI": "^DJI",
-    "VIX":  "^VIX",
-    "USD":  "DX-Y.NYB",
-    "JPY":  "JPY=X",
-}
 
+# ── Price fetch from cache ────────────────────────────────────────────────────
 
-def get_yahoo_symbol(ticker: str) -> str:
-    return YAHOO_SYMBOL_MAP.get(ticker, ticker)
-
-
-# ── Price fetch ───────────────────────────────────────────────────────────────
-
-def fetch_price_history_with_dates(ticker: str, years: int = 4):
+def get_prices_and_dates_from_cache(ticker: str, db):
     """
-    Fetch daily closing prices with dates from Yahoo Finance.
+    Read full price history and dates from the SQLite price_cache table.
     Returns (prices: list[float], dates: list[str]) oldest → newest,
-    or (None, None) on failure.
+    or (None, None) if not cached.
+    REFRESH DATA must be run first to populate the cache.
     """
-    yahoo_symbol = get_yahoo_symbol(ticker)
-    try:
-        yf_ticker = yf.Ticker(yahoo_symbol)
-        hist      = yf_ticker.history(period=f"{years}y")
-        if hist.empty or len(hist) < 10:
-            logger.warning(f"No history for {ticker} ({yahoo_symbol})")
-            return None, None
-        closes = hist["Close"].dropna()
-        prices = [float(p) for p in closes.tolist()]
-        dates  = [str(d.date()) for d in closes.index]
-        time.sleep(0.5)   # rate-limit buffer
-        return prices, dates
-    except Exception as e:
-        err = str(e)
-        if "429" in err or "too many requests" in err.lower():
-            raise
-        logger.error(f"fetch_price_history_with_dates failed for {ticker}: {e}")
+    row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+    if row is None or not row.history_json or not row.history_dates_json:
+        logger.warning(f"No cached price history for {ticker} — run REFRESH DATA first")
         return None, None
+    prices = json.loads(row.history_json)
+    dates  = json.loads(row.history_dates_json)
+    return prices, dates
 
 
 # ── Pivot detection ───────────────────────────────────────────────────────────
@@ -182,15 +161,6 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
 
     Break state naming: BREAK_OF_TRADE for 'trade' timeframe,
                         BREAK_OF_TREND for 'trend' and 'lt'.
-
-    Structural states returned here:
-      UPTREND_VALID   — ABC confirmed, B not yet breached
-      DOWNTREND_VALID — ABC confirmed, B not yet breached
-      EXTENDED        — price at running high/low (D is current bar)
-      FORMING         — price pulled back from D, no new C yet
-      BREAK_OF_TRADE  — price closed below C (uptrend, trade tf)
-      BREAK_OF_TREND  — price closed below C (uptrend, trend/lt tf)
-                        price closed above C (downtrend, any tf)
     """
     direction     = abc["direction"]
     c_idx         = abc["c_idx"]
@@ -294,9 +264,10 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def compute_pivots(ticker: str) -> dict:
+def compute_pivots(ticker: str, db) -> dict:
     """
-    Fetch price history and compute ABC pivot structure for all three timeframes.
+    Read price history from cache and compute ABC pivot structure
+    for all three timeframes.
 
     Returns:
         {
@@ -307,10 +278,9 @@ def compute_pivots(ticker: str) -> dict:
         }
     All pivot fields are None when structural_state == "NO_STRUCTURE".
     """
-    prices, dates = fetch_price_history_with_dates(ticker, years=4)
+    prices, dates = get_prices_and_dates_from_cache(ticker, db)
 
     if prices is None:
-        logger.warning(f"No price history for {ticker} — returning NO_STRUCTURE for all timeframes")
         return {
             "ticker": ticker,
             "trade":  {"structural_state": "NO_STRUCTURE", "bar_window": TIMEFRAMES["trade"]},

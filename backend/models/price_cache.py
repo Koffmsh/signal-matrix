@@ -14,6 +14,8 @@ class PriceCache(Base):
     ma50         = Column(Float)
     ma100        = Column(Float)
     rel_iv       = Column(Integer)   # realized vol percentile 0-100
-    spark_json   = Column(Text)      # JSON array of 60 closing prices
-    updated_at   = Column(DateTime(timezone=True), server_default=func.now())
-    cache_date   = Column(String)    # YYYY-MM-DD — cache invalidation key
+    spark_json         = Column(Text)      # JSON array of 60 closing prices (sparkline)
+    history_json       = Column(Text)      # JSON array of full 4-year closing prices
+    history_dates_json = Column(Text)      # JSON array of corresponding dates (YYYY-MM-DD)
+    updated_at         = Column(DateTime(timezone=True), server_default=func.now())
+    cache_date         = Column(String)    # YYYY-MM-DD — cache invalidation key

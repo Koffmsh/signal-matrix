@@ -38,7 +38,7 @@ def calculate_hurst(db: Session = Depends(get_db)):
 
     for ticker in TIER1_TICKERS:
         try:
-            data = compute_hurst(ticker)
+            data = compute_hurst(ticker, db)
 
             # Upsert — merge by primary key (ticker)
             existing = db.query(SignalHurst).filter(
@@ -97,7 +97,7 @@ def calculate_pivots(db: Session = Depends(get_db)):
 
     for ticker in TIER1_TICKERS:
         try:
-            data = compute_pivots(ticker)
+            data = compute_pivots(ticker, db)
 
             now = datetime.utcnow()
 

@@ -61,26 +61,30 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
     ).first()
 
     if existing:
-        existing.close       = data["close"]
-        existing.volume      = data["volume"]
-        existing.ma20        = data["ma20"]
-        existing.ma50        = data["ma50"]
-        existing.ma100       = data["ma100"]
-        existing.rel_iv      = data["rel_iv"]
-        existing.spark_json  = json.dumps(data["spark_prices"])
-        existing.cache_date  = today
+        existing.close              = data["close"]
+        existing.volume             = data["volume"]
+        existing.ma20               = data["ma20"]
+        existing.ma50               = data["ma50"]
+        existing.ma100              = data["ma100"]
+        existing.rel_iv             = data["rel_iv"]
+        existing.spark_json         = json.dumps(data["spark_prices"])
+        existing.history_json       = json.dumps(data["history_prices"])
+        existing.history_dates_json = json.dumps(data["history_dates"])
+        existing.cache_date         = today
     else:
         db.add(PriceCache(
-            ticker       = data["ticker"],
-            yahoo_symbol = data["yahoo_symbol"],
-            close        = data["close"],
-            volume       = data["volume"],
-            ma20         = data["ma20"],
-            ma50         = data["ma50"],
-            ma100        = data["ma100"],
-            rel_iv       = data["rel_iv"],
-            spark_json   = json.dumps(data["spark_prices"]),
-            cache_date   = today,
+            ticker              = data["ticker"],
+            yahoo_symbol        = data["yahoo_symbol"],
+            close               = data["close"],
+            volume              = data["volume"],
+            ma20                = data["ma20"],
+            ma50                = data["ma50"],
+            ma100               = data["ma100"],
+            rel_iv              = data["rel_iv"],
+            spark_json          = json.dumps(data["spark_prices"]),
+            history_json        = json.dumps(data["history_prices"]),
+            history_dates_json  = json.dumps(data["history_dates"]),
+            cache_date          = today,
         ))
 
     db.commit()
