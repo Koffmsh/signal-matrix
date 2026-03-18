@@ -150,6 +150,42 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list):
     return uptrend or downtrend
 
 
+def update_c_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict:
+    """
+    After the initial ABC is confirmed, scan all subsequent pivots for a
+    dynamic C update:
+
+    Uptrend:   any pivot low AFTER current C that is HIGHER than current C
+               → update C upward (higher low = structural improvement)
+    Downtrend: any pivot high AFTER current C that is LOWER than current C
+               → update C downward (lower high = structural deterioration)
+
+    C only moves in the direction that strengthens the trend.
+    C never moves against the trend (that would be a break, not an update).
+
+    Returns updated abc dict (or original if no update occurred).
+    """
+    direction = abc["direction"]
+    c_idx     = abc["c_idx"]
+    c_price   = abc["c"]
+
+    if direction == "uptrend":
+        # Scan all pivot lows after initial C — take every higher low found
+        for i, p in pivot_lows:
+            if i > c_idx and p > c_price:
+                c_idx   = i
+                c_price = p
+
+    else:  # downtrend
+        # Scan all pivot highs after initial C — take every lower high found
+        for i, p in pivot_highs:
+            if i > c_idx and p < c_price:
+                c_idx   = i
+                c_price = p
+
+    return {**abc, "c": c_price, "c_idx": c_idx}
+
+
 # ── D + structural state ──────────────────────────────────────────────────────
 
 def compute_d_and_state(abc: dict, prices: list, timeframe: str):
@@ -170,13 +206,16 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     break_state   = "BREAK_OF_TRADE" if timeframe == "trade" else "BREAK_OF_TREND"
 
     if direction == "uptrend":
-        # C is the line in the sand
+        # C is the line in the sand — break fires when price closes below current C
         if current_price < c_price:
             return None, None, break_state
 
-        # Scan for first close above B after C
+        # D is established the moment price closes above B.
+        # Scan from b_idx+1 (not c_idx+1) so a breach that occurred before a
+        # dynamic C update is never missed.
+        b_idx        = abc["b_idx"]
         first_breach = None
-        for i in range(c_idx + 1, len(prices)):
+        for i in range(b_idx + 1, len(prices)):
             if prices[i] > b_price:
                 first_breach = i
                 break
@@ -186,9 +225,8 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
             return None, None, "UPTREND_VALID"
 
         # D = running high from first breach to end (inclusive)
-        d_slice = prices[first_breach:]
-        d_price = max(d_slice)
-        # Use last occurrence of d_price in the slice
+        d_slice     = prices[first_breach:]
+        d_price     = max(d_slice)
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
@@ -197,13 +235,14 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         return round(d_price, 4), d_idx, state
 
     else:  # downtrend
-        # C is the line in the sand
+        # C is the line in the sand — break fires when price closes above current C
         if current_price > c_price:
             return None, None, break_state
 
-        # Scan for first close below B after C
+        # Scan from b_idx+1 so a breach before a dynamic C update is not missed
+        b_idx        = abc["b_idx"]
         first_breach = None
-        for i in range(c_idx + 1, len(prices)):
+        for i in range(b_idx + 1, len(prices)):
             if prices[i] < b_price:
                 first_breach = i
                 break
@@ -212,8 +251,8 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
             return None, None, "DOWNTREND_VALID"
 
         # D = running low from first breach to end (inclusive)
-        d_slice = prices[first_breach:]
-        d_price = min(d_slice)
+        d_slice     = prices[first_breach:]
+        d_price     = min(d_slice)
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
@@ -244,6 +283,9 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
 
     if abc is None:
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
+
+    # Update C to the most recent confirmed structural level
+    abc = update_c_dynamically(abc, pivot_highs, pivot_lows)
 
     d_price, d_idx, state = compute_d_and_state(abc, prices, timeframe)
 
