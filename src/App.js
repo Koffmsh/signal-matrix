@@ -547,7 +547,8 @@ function Dashboard() {
               <SortHdr label="CLOSE"       k="close" align="right" />
               <th style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
-              <SortHdr label="CONVICTION"  k="conviction" />
+              <SortHdr label="CONVICTION"  k="conviction"
+                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
               <SortHdr label="TRADE LRR"   k="tradeLRR" />
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
