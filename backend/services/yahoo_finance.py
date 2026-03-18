@@ -1,7 +1,7 @@
 import time
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import logging
 
 logger = logging.getLogger(__name__)
@@ -63,9 +63,11 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         if spark_prices:
             spark_prices[-1] = close  # Ensure last point = exact close
 
-        # Full price history — used by signal and pivot engines (no yfinance re-fetch)
-        history_prices = [round(float(p), 4) for p in closes.tolist()]
-        history_dates  = [str(d.date()) for d in closes.index]
+        # Full price history — exclude today's incomplete bar (only confirmed EOD closes)
+        today_ts       = pd.Timestamp(date.today())
+        history_closes = closes[closes.index < today_ts]
+        history_prices = [round(float(p), 4) for p in history_closes.tolist()]
+        history_dates  = [str(d.date()) for d in history_closes.index]
 
         updated = datetime.now().strftime("%m/%d/%y %H:%M")
 
