@@ -182,6 +182,8 @@ def calculate_output(db: Session = Depends(get_db)):
                     alert            = data["alert"],
                     vol_signal       = data["vol_signal"],
                     warning          = tf_data.get("warning"),
+                    lrr_warn         = tf_data.get("lrr_warn"),
+                    hrr_warn         = tf_data.get("hrr_warn"),
                     calculated_at    = now,
                 )
 
@@ -240,7 +242,9 @@ def get_stored_signals(db: Session = Depends(get_db)):
             "structural_state": row.structural_state,
             "direction":        row.trade_direction,
             "h_value":          row.h_value,
-            "warning":          bool(row.warning) if row.warning is not None else False,
+            "warning":          bool(row.warning)   if row.warning   is not None else False,
+            "lrr_warn":         bool(row.lrr_warn)  if row.lrr_warn  is not None else False,
+            "hrr_warn":         bool(row.hrr_warn)  if row.hrr_warn  is not None else False,
         }
         if row.conviction is not None:
             by_ticker[t]["conviction"] = row.conviction

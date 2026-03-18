@@ -31,6 +31,8 @@ with engine.connect() as _conn:
         ("alert",      "ALTER TABLE signal_output ADD COLUMN alert INTEGER"),
         ("vol_signal", "ALTER TABLE signal_output ADD COLUMN vol_signal TEXT"),
         ("warning",    "ALTER TABLE signal_output ADD COLUMN warning INTEGER"),
+        ("lrr_warn",   "ALTER TABLE signal_output ADD COLUMN lrr_warn INTEGER"),
+        ("hrr_warn",   "ALTER TABLE signal_output ADD COLUMN hrr_warn INTEGER"),
     ]:
         if _col not in _cols_out:
             _conn.execute(text(_ddl))

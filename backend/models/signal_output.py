@@ -19,7 +19,9 @@ class SignalOutput(Base):
     viewpoint        = Column(String,  nullable=True)   # ticker-level: Bullish|Bearish|Neutral
     alert            = Column(Boolean, nullable=True)   # ticker-level alert flag
     vol_signal       = Column(String,  nullable=True)   # ticker-level: Confirming|Diverging|Neutral
-    warning          = Column(Boolean, nullable=True)   # per-timeframe WARNING flag
+    warning          = Column(Boolean, nullable=True)   # per-timeframe WARNING flag (IV-driven)
+    lrr_warn         = Column(Boolean, nullable=True)   # per-timeframe: LRR breaching pivot threshold
+    hrr_warn         = Column(Boolean, nullable=True)   # per-timeframe: HRR breaching pivot threshold
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

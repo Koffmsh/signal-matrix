@@ -282,6 +282,20 @@ def compute_output(ticker: str, db) -> dict:
 
         direction = _compute_direction(price, lrr, hrr, c, state, pivot_dir)
 
+        # Per-cell warning flags — price-based pivot threshold checks
+        lrr_warn = False
+        hrr_warn = False
+        if pivot_dir == "uptrend":
+            if lrr is not None and c is not None:
+                lrr_warn = lrr < c
+            if hrr is not None and b is not None:
+                hrr_warn = hrr < b
+        elif pivot_dir == "downtrend":
+            if hrr is not None and c is not None:
+                hrr_warn = hrr > c
+            if lrr is not None and b is not None:
+                lrr_warn = lrr > b
+
         timeframe_results[tf] = {
             "lrr":              lrr,
             "hrr":              hrr,
@@ -289,6 +303,8 @@ def compute_output(ticker: str, db) -> dict:
             "direction":        direction,
             "h_value":          h_tf,
             "warning":          warning,
+            "lrr_warn":         lrr_warn,
+            "hrr_warn":         hrr_warn,
         }
 
     # ── Viewpoint (trade + trend alignment — three states only) ─────────────

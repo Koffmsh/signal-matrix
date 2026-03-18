@@ -104,6 +104,9 @@ function generateMockData(ticker) {
     hurstTrade, hurstTrend, hurstLt,
     relIV, volSignal, isAlert, sparkPrices, updated: "03/11/26 16:00",
     tradeWarn: false, trendWarn: false,
+    tradeLrrWarn: false, tradeHrrWarn: false,
+    trendLrrWarn: false, trendHrrWarn: false,
+    ltLrrWarn: false, ltHrrWarn: false,
     trendHRR: null, ltHRR: null,
     tradeState: null, trendState: null, ltState: null,
   };
@@ -156,8 +159,14 @@ function mergeSignalData(row, signalMap) {
     ltHRR:      sig.lt?.hrr                 ?? null,
     ltState:    sig.lt?.structural_state     ?? null,
     hurstTrade: sig.trade?.h_value           ?? row.hurstTrade,
-    hurstTrend: sig.trend?.h_value           ?? row.hurstTrend,
-    hurstLt:    sig.lt?.h_value              ?? row.hurstLt,
+    hurstTrend:   sig.trend?.h_value           ?? row.hurstTrend,
+    hurstLt:      sig.lt?.h_value              ?? row.hurstLt,
+    tradeLrrWarn: sig.trade?.lrr_warn          ?? false,
+    tradeHrrWarn: sig.trade?.hrr_warn          ?? false,
+    trendLrrWarn: sig.trend?.lrr_warn          ?? false,
+    trendHrrWarn: sig.trend?.hrr_warn          ?? false,
+    ltLrrWarn:    sig.lt?.lrr_warn             ?? false,
+    ltHrrWarn:    sig.lt?.hrr_warn             ?? false,
   };
 }
 
@@ -189,7 +198,8 @@ const volColor   = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? 
 const hurstColor = (h)  => h == null ? "#8899aa" : h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
 const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
 const sparkColor = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
-const rangeColor = (viewpoint, isWarning) => isWarning ? "#f0b429" : vpColor(viewpoint);
+const rangeColor    = (viewpoint, isWarning) => isWarning ? "#f0b429" : vpColor(viewpoint);
+const dirRangeColor = (dir, isWarn) => isWarn ? "#f0b429" : dirColor(dir);
 const stateColor = (s)  =>
   !s                    ? "#8899aa" :
   s.includes("VALID")   ? "#00e5a0" :
@@ -411,18 +421,18 @@ function Dashboard() {
         {/* Trade Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
         {/* Trade LRR */}
-        <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.tradeWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
+        <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}{row.tradeLrrWarn ? " ⚠" : ""}
         </td>
         {/* Trade HRR */}
-        <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.tradeWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
+        <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}{row.tradeHrrWarn ? " ⚠" : ""}
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
         {/* Trend LRR */}
-        <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.trendWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
+        <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}{row.trendLrrWarn ? " ⚠" : ""}
         </td>
         {/* Asset Class — moved to far right, tightened */}
         <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -586,18 +596,18 @@ function Dashboard() {
           ["Viewpoint",    row.viewpoint,                                                                  vpColor(row.viewpoint),                 false],
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
           ["Vol Signal",   row.volSignal,                                                                  volColor(row.volSignal),                false],
-          ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                 false],
-          ["Trade LRR",    fmtPrice(row.tradeLRR),                                                        rangeColor(row.viewpoint, row.tradeWarn), false],
-          ["Trade HRR",    fmtPrice(row.tradeHRR),                                                        rangeColor(row.viewpoint, row.tradeWarn), false],
-          ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),             true],
-          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                 false],
-          ["Trend LRR",    fmtPrice(row.trendLRR),                                                        rangeColor(row.viewpoint, row.trendWarn), false],
-          ["Trend HRR",    fmtPrice(row.trendHRR),                                                        rangeColor(row.viewpoint, row.trendWarn), false],
-          ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),             true],
-          ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                    false],
-          ["LT LRR",       fmtPrice(row.ltLRR),                                                           rangeColor(row.viewpoint, false),       false],
-          ["LT HRR",       fmtPrice(row.ltHRR),                                                           rangeColor(row.viewpoint, false),       false],
-          ["LT State",     row.ltState || "—",                                                             stateColor(row.ltState),                true],
+          ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
+          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false],
+          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false],
+          ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
+          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
+          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendLrrWarn),              false],
+          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendHrrWarn),              false],
+          ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
+          ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
+          ["LT LRR",       `${fmtPrice(row.ltLRR)}${row.ltLrrWarn ? " ⚠" : ""}`,                         dirRangeColor(row.ltDir, row.ltLrrWarn),                   false],
+          ["LT HRR",       `${fmtPrice(row.ltHRR)}${row.ltHrrWarn ? " ⚠" : ""}`,                         dirRangeColor(row.ltDir, row.ltHrrWarn),                   false],
+          ["LT State",     row.ltState || "—",                                                             stateColor(row.ltState),                                   true],
           ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false],
           ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false],
           ["Hurst (LT)",   fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
