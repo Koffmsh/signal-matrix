@@ -22,6 +22,8 @@ class SignalOutput(Base):
     warning          = Column(Boolean, nullable=True)   # per-timeframe WARNING flag (IV-driven)
     lrr_warn         = Column(Boolean, nullable=True)   # per-timeframe: LRR breaching pivot threshold
     hrr_warn         = Column(Boolean, nullable=True)   # per-timeframe: HRR breaching pivot threshold
+    pivot_b          = Column(Float,   nullable=True)   # B pivot — prior swing high (uptrend) / low (downtrend)
+    pivot_c          = Column(Float,   nullable=True)   # C pivot — trade invalidation level
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

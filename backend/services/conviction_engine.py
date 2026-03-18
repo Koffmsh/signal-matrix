@@ -305,6 +305,8 @@ def compute_output(ticker: str, db) -> dict:
             "warning":          warning,
             "lrr_warn":         lrr_warn,
             "hrr_warn":         hrr_warn,
+            "pivot_b":          b,
+            "pivot_c":          c,
         }
 
     # ── Viewpoint (trade + trend alignment — three states only) ─────────────

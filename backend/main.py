@@ -33,6 +33,8 @@ with engine.connect() as _conn:
         ("warning",    "ALTER TABLE signal_output ADD COLUMN warning INTEGER"),
         ("lrr_warn",   "ALTER TABLE signal_output ADD COLUMN lrr_warn INTEGER"),
         ("hrr_warn",   "ALTER TABLE signal_output ADD COLUMN hrr_warn INTEGER"),
+        ("pivot_b",    "ALTER TABLE signal_output ADD COLUMN pivot_b REAL"),
+        ("pivot_c",    "ALTER TABLE signal_output ADD COLUMN pivot_c REAL"),
     ]:
         if _col not in _cols_out:
             _conn.execute(text(_ddl))

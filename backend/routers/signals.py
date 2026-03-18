@@ -184,6 +184,8 @@ def calculate_output(db: Session = Depends(get_db)):
                     warning          = tf_data.get("warning"),
                     lrr_warn         = tf_data.get("lrr_warn"),
                     hrr_warn         = tf_data.get("hrr_warn"),
+                    pivot_b          = tf_data.get("pivot_b"),
+                    pivot_c          = tf_data.get("pivot_c"),
                     calculated_at    = now,
                 )
 
@@ -245,6 +247,8 @@ def get_stored_signals(db: Session = Depends(get_db)):
             "warning":          bool(row.warning)   if row.warning   is not None else False,
             "lrr_warn":         bool(row.lrr_warn)  if row.lrr_warn  is not None else False,
             "hrr_warn":         bool(row.hrr_warn)  if row.hrr_warn  is not None else False,
+            "pivot_b":          row.pivot_b,
+            "pivot_c":          row.pivot_c,
         }
         if row.conviction is not None:
             by_ticker[t]["conviction"] = row.conviction

@@ -109,6 +109,9 @@ function generateMockData(ticker) {
     ltLrrWarn: false, ltHrrWarn: false,
     trendHRR: null, ltHRR: null,
     tradeState: null, trendState: null, ltState: null,
+    tradeC: null, tradeB: null,
+    trendC: null, trendB: null,
+    ltC: null, ltB: null,
   };
 }
 
@@ -167,6 +170,12 @@ function mergeSignalData(row, signalMap) {
     trendHrrWarn: sig.trend?.hrr_warn          ?? false,
     ltLrrWarn:    sig.lt?.lrr_warn             ?? false,
     ltHrrWarn:    sig.lt?.hrr_warn             ?? false,
+    tradeC:       sig.trade?.pivot_c           ?? null,
+    tradeB:       sig.trade?.pivot_b           ?? null,
+    trendC:       sig.trend?.pivot_c           ?? null,
+    trendB:       sig.trend?.pivot_b           ?? null,
+    ltC:          sig.lt?.pivot_c              ?? null,
+    ltB:          sig.lt?.pivot_b              ?? null,
   };
 }
 
@@ -200,6 +209,17 @@ const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6
 const sparkColor = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
 const rangeColor    = (viewpoint, isWarning) => isWarning ? "#f0b429" : vpColor(viewpoint);
 const dirRangeColor = (dir, isWarn) => isWarn ? "#f0b429" : dirColor(dir);
+const warnTip = (dir, which) => {
+  if (dir === "Bullish")
+    return which === "lrr"
+      ? "LRR is below C — approaching trade invalidation level"
+      : "HRR is below B — target doesn't reach prior swing high";
+  if (dir === "Bearish")
+    return which === "hrr"
+      ? "HRR is above C — approaching trade invalidation level"
+      : "LRR is above B — target doesn't reach prior swing low";
+  return "Warning threshold breached";
+};
 const stateColor = (s)  =>
   !s                    ? "#8899aa" :
   s.includes("VALID")   ? "#00e5a0" :
@@ -422,17 +442,20 @@ function Dashboard() {
         <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
         {/* Trade LRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}{row.tradeLrrWarn ? " ⚠" : ""}
+          {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
+          {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr")} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Trade HRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}{row.tradeHrrWarn ? " ⚠" : ""}
+          {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
+          {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr")} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
         {/* Trend LRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}{row.trendLrrWarn ? " ⚠" : ""}
+          {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
+          {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr")} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Asset Class — moved to far right, tightened */}
         <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -591,22 +614,30 @@ function Dashboard() {
         const fmtHurst = (v) => v != null ? v.toFixed(4) : "—";
         const fmtConv  = (v) => v != null ? `${v.toFixed(1)}%` : "—";
 
+        // fields: [label, value, color, isState, warnTip?]
+        // warnTip = string → wraps value in <span title> for ⚠ tooltip
         const fields = [
           ["Close",        fmtPrice(row.close),                                                          "#c8d8e8",                              false],
           ["Viewpoint",    row.viewpoint,                                                                  vpColor(row.viewpoint),                 false],
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
           ["Vol Signal",   row.volSignal,                                                                  volColor(row.volSignal),                false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
-          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false],
-          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false],
+          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false, row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr") : null],
+          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false, row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr") : null],
+          ["Trade C",      fmtPrice(row.tradeC),                                                          "#8899aa",                                                  false],
+          ["Trade B",      fmtPrice(row.tradeB),                                                          "#8899aa",                                                  false],
           ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
           ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
-          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendLrrWarn),              false],
-          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendHrrWarn),              false],
+          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendLrrWarn),              false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr") : null],
+          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendHrrWarn),              false, row.trendHrrWarn ? warnTip(row.trendDir, "hrr") : null],
+          ["Trend C",      fmtPrice(row.trendC),                                                          "#8899aa",                                                  false],
+          ["Trend B",      fmtPrice(row.trendB),                                                          "#8899aa",                                                  false],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
           ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
-          ["LT LRR",       `${fmtPrice(row.ltLRR)}${row.ltLrrWarn ? " ⚠" : ""}`,                         dirRangeColor(row.ltDir, row.ltLrrWarn),                   false],
-          ["LT HRR",       `${fmtPrice(row.ltHRR)}${row.ltHrrWarn ? " ⚠" : ""}`,                         dirRangeColor(row.ltDir, row.ltHrrWarn),                   false],
+          ["LT LRR",       `${fmtPrice(row.ltLRR)}${row.ltLrrWarn ? " ⚠" : ""}`,                         dirRangeColor(row.ltDir, row.ltLrrWarn),                   false, row.ltLrrWarn ? warnTip(row.ltDir, "lrr") : null],
+          ["LT HRR",       `${fmtPrice(row.ltHRR)}${row.ltHrrWarn ? " ⚠" : ""}`,                         dirRangeColor(row.ltDir, row.ltHrrWarn),                   false, row.ltHrrWarn ? warnTip(row.ltDir, "hrr") : null],
+          ["LT C",         fmtPrice(row.ltC),                                                             "#8899aa",                                                  false],
+          ["LT B",         fmtPrice(row.ltB),                                                             "#8899aa",                                                  false],
           ["LT State",     row.ltState || "—",                                                             stateColor(row.ltState),                                   true],
           ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false],
           ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false],
@@ -625,10 +656,12 @@ function Dashboard() {
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
-              {fields.map(([label, val, color, isState]) => (
+              {fields.map(([label, val, color, isState, tip]) => (
                 <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
                   <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "2px" }}>{label}</div>
-                  <div style={{ fontSize: isState ? "9px" : "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>{val}</div>
+                  <div style={{ fontSize: isState ? "9px" : "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>
+                    {tip ? <span title={tip} style={{ cursor: "help" }}>{val}</span> : val}
+                  </div>
                 </div>
               ))}
             </div>
