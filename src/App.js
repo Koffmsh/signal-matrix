@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { fetchBatchMarketData } from "./services/api";
 import tickersData from "./data/tickers";
 import AdminPanel from "./components/Admin/AdminPanel";
@@ -100,6 +100,8 @@ function generateMockData(ticker) {
     close, viewpoint, conviction, tradeDir, tradeLRR, tradeHRR,
     trendDir, trendLRR, ltDir, ltLRR, hurstTrade, relIV, volSignal,
     isAlert, sparkPrices, updated: "03/11/26 16:00",
+    tradeWarn: false, trendWarn: false,
+    trendHRR: null, ltHRR: null,
   };
 }
 
@@ -124,6 +126,32 @@ function mergeRealData(mockRow, realDataMap) {
   };
 }
 
+// ── Merge signal data over row ────────────────────────────────────────────────
+function mergeSignalData(row, signalMap) {
+  const sig = signalMap.get(row.ticker);
+  if (!sig) return row; // No signals yet — keep mock
+
+  return {
+    ...row,
+    viewpoint:  sig.viewpoint  ?? row.viewpoint,
+    conviction: sig.conviction ?? null,       // null = blank (Neutral) — never fall back to mock
+    volSignal:  sig.vol_signal ?? row.volSignal,
+    isAlert:    sig.alert      ?? row.isAlert,
+    tradeDir:   sig.trade?.direction  ?? row.tradeDir,
+    tradeLRR:   sig.trade?.lrr        ?? row.tradeLRR,
+    tradeHRR:   sig.trade?.hrr        ?? row.tradeHRR,
+    tradeWarn:  sig.trade?.warning    ?? false,
+    trendDir:   sig.trend?.direction  ?? row.trendDir,
+    trendLRR:   sig.trend?.lrr        ?? row.trendLRR,
+    trendHRR:   sig.trend?.hrr        ?? null,
+    trendWarn:  sig.trend?.warning    ?? false,
+    ltDir:      sig.lt?.direction     ?? row.ltDir,
+    ltLRR:      sig.lt?.lrr          ?? row.ltLRR,
+    ltHRR:      sig.lt?.hrr          ?? null,
+    hurstTrade: sig.trade?.h_value    ?? row.hurstTrade,
+  };
+}
+
 // ── Sort helpers ─────────────────────────────────────────────────────────────
 const ASSET_CLASS_ORDER = [
   "Domestic Equities", "Domestic Fixed Income", "Commodities",
@@ -144,14 +172,15 @@ function defaultSort(a, b) {
 }
 
 // ── Color helpers ────────────────────────────────────────────────────────────
-const dirIcon   = (d)  => d === "Bullish" ? "▲" : d === "Bearish" ? "▼" : "—";
-const dirColor  = (d)  => d === "Bullish" ? "#00e5a0" : d === "Bearish" ? "#ff4d6d" : "#8899aa";
-const vpColor   = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
-const convColor = (c)  => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
-const volColor  = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? "#ff4d6d" : "#8899aa";
-const hurstColor= (h)  => h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
-const ivColor   = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
-const sparkColor= (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
+const dirIcon    = (d)  => d === "Bullish" ? "▲" : d === "Bearish" ? "▼" : "—";
+const dirColor   = (d)  => d === "Bullish" ? "#00e5a0" : d === "Bearish" ? "#ff4d6d" : "#8899aa";
+const vpColor    = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
+const convColor  = (c)  => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
+const volColor   = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? "#ff4d6d" : "#8899aa";
+const hurstColor = (h)  => h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
+const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
+const sparkColor = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
+const rangeColor = (viewpoint, isWarning) => isWarning ? "#f0b429" : vpColor(viewpoint);
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 const TICKERS = loadTickers();
@@ -172,10 +201,23 @@ function Dashboard() {
   const [expandedTickers, setExpandedTickers] = useState(new Set());
 
   const [realDataMap,    setRealDataMap]    = useState(new Map());
+  const [signalMap,      setSignalMap]      = useState(new Map());
   const [isRefreshing,   setIsRefreshing]   = useState(false);
   const [dataError,      setDataError]      = useState(false);
   const [isCalculating,  setIsCalculating]  = useState(false);
   const [calcStatus,     setCalcStatus]     = useState(null); // null | "ok" | "error"
+
+  // Load stored signals on page load (no recalculation)
+  useEffect(() => {
+    fetch("http://localhost:8000/api/signals/stored")
+      .then(r => r.json())
+      .then(data => {
+        const m = new Map();
+        (data.results || []).forEach(r => m.set(r.ticker, r));
+        setSignalMap(m);
+      })
+      .catch(() => {}); // silent — mock data stays if backend unavailable
+  }, []);
 
   const handleCalculateSignals = () => {
     if (isCalculating) return;
@@ -183,15 +225,16 @@ function Dashboard() {
     setCalcStatus(null);
     fetch("http://localhost:8000/api/signals/hurst")
       .then(r => r.json())
-      .then(hurstData => {
-        console.log("Hurst results:", hurstData);
-        return fetch("http://localhost:8000/api/signals/pivots");
-      })
+      .then(() => fetch("http://localhost:8000/api/signals/pivots"))
       .then(r => r.json())
-      .then(pivotsData => {
+      .then(() => fetch("http://localhost:8000/api/signals/output"))
+      .then(r => r.json())
+      .then(outputData => {
+        const m = new Map();
+        (outputData.results || []).forEach(r => m.set(r.ticker, r));
+        setSignalMap(m);
         setIsCalculating(false);
         setCalcStatus("ok");
-        console.log("Pivot results:", pivotsData);
       })
       .catch(() => {
         setIsCalculating(false);
@@ -215,12 +258,14 @@ function Dashboard() {
       });
   };
 
-  // Merge real data over mock — reruns whenever realDataMap updates
+  // Three-step pipeline: mock → price → signals
   const ALL_DATA = useMemo(() =>
-    TICKERS.filter(t => t.active).map(t =>
-      mergeRealData(generateMockData(t), realDataMap)
-    ),
-    [realDataMap]
+    TICKERS.filter(t => t.active).map(t => {
+      const mockRow  = generateMockData(t);
+      const priceRow = mergeRealData(mockRow, realDataMap);
+      return mergeSignalData(priceRow, signalMap);
+    }),
+    [realDataMap, signalMap]
   );
   const DATA    = ALL_DATA.filter(t => t.tier === 1);
   const TIER2_DATA = ALL_DATA.filter(t => t.tier === 2);
@@ -323,18 +368,28 @@ function Dashboard() {
           {isAligned && <span style={{ marginLeft: "4px", fontSize: "9px", color: "#0077ff" }}>●</span>}
         </td>
         <td style={{ padding: "9px 8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <div style={{ width: "50px", height: "4px", background: "#1a2535", borderRadius: "2px", overflow: "hidden" }}>
-              <div style={{ width: `${row.conviction}%`, height: "100%", background: convColor(row.conviction), borderRadius: "2px" }} />
+          {row.conviction !== null && row.conviction !== undefined ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div style={{ width: "50px", height: "4px", background: "#1a2535", borderRadius: "2px", overflow: "hidden" }}>
+                <div style={{ width: `${row.conviction}%`, height: "100%", background: convColor(row.conviction), borderRadius: "2px" }} />
+              </div>
+              <span style={{ color: convColor(row.conviction), fontVariantNumeric: "tabular-nums" }}>{row.conviction}%</span>
             </div>
-            <span style={{ color: convColor(row.conviction), fontVariantNumeric: "tabular-nums" }}>{row.conviction}%</span>
-          </div>
+          ) : (
+            <span style={{ color: "#8899aa" }}>—</span>
+          )}
         </td>
         <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
-        <td style={{ padding: "9px 8px", color: "#ff4d6d", fontVariantNumeric: "tabular-nums" }}>${row.tradeLRR.toFixed(2)}</td>
-        <td style={{ padding: "9px 8px", color: "#00e5a0", fontVariantNumeric: "tabular-nums" }}>${row.tradeHRR.toFixed(2)}</td>
+        <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.tradeWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
+        </td>
+        <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.tradeWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
+        </td>
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
-        <td style={{ padding: "9px 8px", color: "#ff8855", fontVariantNumeric: "tabular-nums" }}>${row.trendLRR.toFixed(2)}</td>
+        <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.trendWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
+        </td>
       </tr>
     );
   };
@@ -486,16 +541,16 @@ function Dashboard() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
               {[
-                ["Close",      `$${row.close.toFixed(2)}`,            "#c8d8e8"],
-                ["Viewpoint",  row.viewpoint,                          vpColor(row.viewpoint)],
-                ["Conviction", `${row.conviction}%`,                   convColor(row.conviction)],
-                ["LT Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,   dirColor(row.ltDir)],
-                ["LT LRR",     `$${row.ltLRR.toFixed(2)}`,            "#cc7744"],
-                ["Trend LRR",  `$${row.trendLRR.toFixed(2)}`,         "#ff8855"],
-                ["Hurst (T)",  row.hurstTrade,                         hurstColor(row.hurstTrade)],
-                ["Rel IV%",    `${row.relIV}%`,                        ivColor(row.relIV)],
-                ["Vol Signal", row.volSignal,                          volColor(row.volSignal)],
-                ["Updated",    row.updated,                            "#667788"],
+                ["Close",      `$${row.close.toFixed(2)}`,                                                          "#c8d8e8"],
+                ["Viewpoint",  row.viewpoint,                                                                        vpColor(row.viewpoint)],
+                ["Conviction", row.conviction !== null && row.conviction !== undefined ? `${row.conviction}%` : "—", row.conviction !== null && row.conviction !== undefined ? convColor(row.conviction) : "#8899aa"],
+                ["LT Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,                                                dirColor(row.ltDir)],
+                ["LT LRR",     row.ltLRR != null ? `$${row.ltLRR.toFixed(2)}` : "—",                               rangeColor(row.viewpoint, false)],
+                ["Trend LRR",  row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—",                         rangeColor(row.viewpoint, row.trendWarn)],
+                ["Hurst (T)",  row.hurstTrade,                                                                       hurstColor(row.hurstTrade)],
+                ["Rel IV%",    `${row.relIV}%`,                                                                      ivColor(row.relIV)],
+                ["Vol Signal", row.volSignal,                                                                        volColor(row.volSignal)],
+                ["Updated",    row.updated,                                                                          "#667788"],
               ].map(([label, val, color]) => (
                 <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "8px 10px" }}>
                   <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "3px" }}>{label}</div>

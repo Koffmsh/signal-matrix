@@ -178,6 +178,10 @@ def calculate_output(db: Session = Depends(get_db)):
                     trade_direction  = tf_data.get("direction"),
                     conviction       = conviction,
                     h_value          = tf_data.get("h_value"),
+                    viewpoint        = data["viewpoint"],
+                    alert            = data["alert"],
+                    vol_signal       = data["vol_signal"],
+                    warning          = tf_data.get("warning"),
                     calculated_at    = now,
                 )
 
@@ -204,3 +208,49 @@ def calculate_output(db: Session = Depends(get_db)):
         "error_list": errors,
         "results":    results,
     }
+
+
+@router.get("/stored")
+def get_stored_signals(db: Session = Depends(get_db)):
+    """
+    Task 3.4 — Return last calculated signal output from DB, grouped by ticker.
+    Returns the same nested shape as /output results — used by frontend on page load.
+    No recalculation — pure read.
+    """
+    rows = db.query(SignalOutput).all()
+
+    # Check whether any lt rows exist — if not, only require trade + trend
+    has_lt = any(r.timeframe == "lt" for r in rows)
+
+    by_ticker: dict = {}
+    for row in rows:
+        t = row.ticker
+        if t not in by_ticker:
+            by_ticker[t] = {
+                "ticker":     t,
+                "viewpoint":  row.viewpoint,
+                "conviction": None,
+                "vol_signal": row.vol_signal,
+                "alert":      bool(row.alert) if row.alert is not None else False,
+                "trade": None, "trend": None, "lt": None,
+            }
+        by_ticker[t][row.timeframe] = {
+            "lrr":              row.lrr,
+            "hrr":              row.hrr,
+            "structural_state": row.structural_state,
+            "direction":        row.trade_direction,
+            "h_value":          row.h_value,
+            "warning":          bool(row.warning) if row.warning is not None else False,
+        }
+        if row.conviction is not None:
+            by_ticker[t]["conviction"] = row.conviction
+
+    def _complete(v):
+        if v["trade"] is None or v["trend"] is None:
+            return False
+        if has_lt and v["lt"] is None:
+            return False
+        return True
+
+    results = [v for v in by_ticker.values() if _complete(v)]
+    return {"results": results, "count": len(results)}

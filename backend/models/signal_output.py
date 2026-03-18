@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime, UniqueConstraint
+from sqlalchemy import Column, String, Float, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -15,7 +15,11 @@ class SignalOutput(Base):
     structural_state = Column(String, nullable=True)
     trade_direction  = Column(String, nullable=True)   # Bullish | Bearish | Neutral
     conviction       = Column(Float,  nullable=True)   # 0.0 – 100.0
-    h_value          = Column(Float,  nullable=True)   # Hurst for this timeframe
+    h_value          = Column(Float,   nullable=True)   # Hurst for this timeframe
+    viewpoint        = Column(String,  nullable=True)   # ticker-level: Bullish|Bearish|Neutral
+    alert            = Column(Boolean, nullable=True)   # ticker-level alert flag
+    vol_signal       = Column(String,  nullable=True)   # ticker-level: Confirming|Diverging|Neutral
+    warning          = Column(Boolean, nullable=True)   # per-timeframe WARNING flag
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

@@ -23,6 +23,19 @@ with engine.connect() as _conn:
         _conn.execute(text("ALTER TABLE price_cache ADD COLUMN history_dates_json TEXT"))
     _conn.commit()
 
+# Schema migration — add new signal_output columns if they don't exist yet
+with engine.connect() as _conn:
+    _cols_out = [row[1] for row in _conn.execute(text("PRAGMA table_info(signal_output)"))]
+    for _col, _ddl in [
+        ("viewpoint",  "ALTER TABLE signal_output ADD COLUMN viewpoint TEXT"),
+        ("alert",      "ALTER TABLE signal_output ADD COLUMN alert INTEGER"),
+        ("vol_signal", "ALTER TABLE signal_output ADD COLUMN vol_signal TEXT"),
+        ("warning",    "ALTER TABLE signal_output ADD COLUMN warning INTEGER"),
+    ]:
+        if _col not in _cols_out:
+            _conn.execute(text(_ddl))
+    _conn.commit()
+
 app = FastAPI(
     title="Signal Matrix API",
     description="Market data backend for Signal Matrix Platform",
