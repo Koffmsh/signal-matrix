@@ -283,18 +283,20 @@ def compute_output(ticker: str, db) -> dict:
         direction = _compute_direction(price, lrr, hrr, c, state, pivot_dir)
 
         # Per-cell warning flags — price-based pivot threshold checks
+        # LT: no warnings. Trade: C-based + B-based. Trend: C-based only.
         lrr_warn = False
         hrr_warn = False
-        if pivot_dir == "uptrend":
-            if lrr is not None and c is not None:
-                lrr_warn = lrr < c
-            if hrr is not None and b is not None:
-                hrr_warn = hrr < b
-        elif pivot_dir == "downtrend":
-            if hrr is not None and c is not None:
-                hrr_warn = hrr > c
-            if lrr is not None and b is not None:
-                lrr_warn = lrr > b
+        if tf != "lt":
+            if pivot_dir == "uptrend":
+                if lrr is not None and c is not None:
+                    lrr_warn = lrr < c
+                if tf == "trade" and hrr is not None and b is not None:
+                    hrr_warn = hrr < b          # trade only: HRR below prior swing high
+            elif pivot_dir == "downtrend":
+                if hrr is not None and c is not None:
+                    hrr_warn = hrr > c
+                if tf == "trade" and lrr is not None and b is not None:
+                    lrr_warn = lrr > b          # trade only: LRR above prior swing low
 
         timeframe_results[tf] = {
             "lrr":              lrr,
