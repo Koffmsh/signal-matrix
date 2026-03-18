@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.price_cache import PriceCache
 from services.yahoo_finance import fetch_ticker_data, RateLimitError
-from datetime import date
+from datetime import date, datetime
 import json
 import logging
 
@@ -33,7 +33,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "ma100":        row.ma100,
         "rel_iv":       row.rel_iv,
         "spark_prices": json.loads(row.spark_json),
-        "updated":      str(row.updated_at),
+        "updated":      row.updated_at.strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
 
@@ -80,6 +80,7 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
         existing.history_json       = json.dumps(data["history_prices"])
         existing.history_dates_json = json.dumps(data["history_dates"])
         existing.cache_date         = today
+        existing.updated_at         = datetime.utcnow()
     else:
         db.add(PriceCache(
             ticker              = data["ticker"],

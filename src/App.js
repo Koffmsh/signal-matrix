@@ -391,7 +391,10 @@ function Dashboard() {
             </button>
           </div>
           <div style={{ textAlign: "right", fontSize: "10px", color: "#667788" }}>
-            <div style={{ color: "#8899aa" }}>EOD · 03/11/26</div>
+            {realDataMap.size > 0 && (() => {
+              const ts = realDataMap.values().next().value?.updated;
+              return ts ? <div style={{ color: "#8899aa" }}>EOD · {ts}</div> : null;
+            })()}
             <div style={{ color: "#00e5a0", marginTop: "2px" }}>● LIVE</div>
           </div>
         </div>
