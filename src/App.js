@@ -78,6 +78,8 @@ function generateMockData(ticker) {
   const trendLRR = +(close * (0.82 + r() * 0.1)).toFixed(2);
   const ltLRR = +(close * (0.65 + r() * 0.15)).toFixed(2);
   const hurstTrade = +(0.45 + r() * 0.35).toFixed(2);
+  const hurstTrend = +(0.45 + r() * 0.35).toFixed(2);
+  const hurstLt    = +(0.45 + r() * 0.35).toFixed(2);
   const relIV = Math.floor(15 + r() * 80);
   const volSignal = volSignals[Math.floor(r() * 3)];
   const isAlert = aligned && conviction > 75;
@@ -98,17 +100,19 @@ function generateMockData(ticker) {
   return {
     ...ticker,
     close, viewpoint, conviction, tradeDir, tradeLRR, tradeHRR,
-    trendDir, trendLRR, ltDir, ltLRR, hurstTrade, relIV, volSignal,
-    isAlert, sparkPrices, updated: "03/11/26 16:00",
+    trendDir, trendLRR, ltDir, ltLRR,
+    hurstTrade, hurstTrend, hurstLt,
+    relIV, volSignal, isAlert, sparkPrices, updated: "03/11/26 16:00",
     tradeWarn: false, trendWarn: false,
     trendHRR: null, ltHRR: null,
+    tradeState: null, trendState: null, ltState: null,
   };
 }
 
 // ── Merge real data over mock ─────────────────────────────────────────────────
 function mergeRealData(mockRow, realDataMap) {
   const real = realDataMap.get(mockRow.ticker);
-  if (!real) return mockRow; // No real data — keep mock entirely
+  if (!real) return mockRow;
 
   return {
     ...mockRow,
@@ -129,7 +133,7 @@ function mergeRealData(mockRow, realDataMap) {
 // ── Merge signal data over row ────────────────────────────────────────────────
 function mergeSignalData(row, signalMap) {
   const sig = signalMap.get(row.ticker);
-  if (!sig) return row; // No signals yet — keep mock
+  if (!sig) return row;
 
   return {
     ...row,
@@ -137,18 +141,23 @@ function mergeSignalData(row, signalMap) {
     conviction: sig.conviction ?? null,       // null = blank (Neutral) — never fall back to mock
     volSignal:  sig.vol_signal ?? row.volSignal,
     isAlert:    sig.alert      ?? row.isAlert,
-    tradeDir:   sig.trade?.direction  ?? row.tradeDir,
-    tradeLRR:   sig.trade?.lrr        ?? row.tradeLRR,
-    tradeHRR:   sig.trade?.hrr        ?? row.tradeHRR,
-    tradeWarn:  sig.trade?.warning    ?? false,
-    trendDir:   sig.trend?.direction  ?? row.trendDir,
-    trendLRR:   sig.trend?.lrr        ?? row.trendLRR,
-    trendHRR:   sig.trend?.hrr        ?? null,
-    trendWarn:  sig.trend?.warning    ?? false,
-    ltDir:      sig.lt?.direction     ?? row.ltDir,
-    ltLRR:      sig.lt?.lrr          ?? row.ltLRR,
-    ltHRR:      sig.lt?.hrr          ?? null,
-    hurstTrade: sig.trade?.h_value    ?? row.hurstTrade,
+    tradeDir:   sig.trade?.direction         ?? row.tradeDir,
+    tradeLRR:   sig.trade?.lrr               ?? row.tradeLRR,
+    tradeHRR:   sig.trade?.hrr               ?? row.tradeHRR,
+    tradeWarn:  sig.trade?.warning           ?? false,
+    tradeState: sig.trade?.structural_state  ?? null,
+    trendDir:   sig.trend?.direction         ?? row.trendDir,
+    trendLRR:   sig.trend?.lrr               ?? row.trendLRR,
+    trendHRR:   sig.trend?.hrr               ?? null,
+    trendWarn:  sig.trend?.warning           ?? false,
+    trendState: sig.trend?.structural_state  ?? null,
+    ltDir:      sig.lt?.direction            ?? row.ltDir,
+    ltLRR:      sig.lt?.lrr                 ?? row.ltLRR,
+    ltHRR:      sig.lt?.hrr                 ?? null,
+    ltState:    sig.lt?.structural_state     ?? null,
+    hurstTrade: sig.trade?.h_value           ?? row.hurstTrade,
+    hurstTrend: sig.trend?.h_value           ?? row.hurstTrend,
+    hurstLt:    sig.lt?.h_value              ?? row.hurstLt,
   };
 }
 
@@ -177,10 +186,15 @@ const dirColor   = (d)  => d === "Bullish" ? "#00e5a0" : d === "Bearish" ? "#ff4
 const vpColor    = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
 const convColor  = (c)  => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
 const volColor   = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? "#ff4d6d" : "#8899aa";
-const hurstColor = (h)  => h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
+const hurstColor = (h)  => h == null ? "#8899aa" : h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
 const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
 const sparkColor = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
 const rangeColor = (viewpoint, isWarning) => isWarning ? "#f0b429" : vpColor(viewpoint);
+const stateColor = (s)  =>
+  !s                    ? "#8899aa" :
+  s.includes("VALID")   ? "#00e5a0" :
+  s.includes("WARN")    ? "#f0b429" :
+  s.includes("BREAK")   ? "#ff4d6d" : "#8899aa";
 
 // ── Data ─────────────────────────────────────────────────────────────────────
 const TICKERS = loadTickers();
@@ -205,7 +219,7 @@ function Dashboard() {
   const [isRefreshing,   setIsRefreshing]   = useState(false);
   const [dataError,      setDataError]      = useState(false);
   const [isCalculating,  setIsCalculating]  = useState(false);
-  const [calcStatus,     setCalcStatus]     = useState(null); // null | "ok" | "error"
+  const [calcStatus,     setCalcStatus]     = useState(null);
 
   // Load stored signals on page load (no recalculation)
   useEffect(() => {
@@ -216,7 +230,7 @@ function Dashboard() {
         (data.results || []).forEach(r => m.set(r.ticker, r));
         setSignalMap(m);
       })
-      .catch(() => {}); // silent — mock data stays if backend unavailable
+      .catch(() => {});
   }, []);
 
   const handleCalculateSignals = () => {
@@ -313,9 +327,11 @@ function Dashboard() {
     else { setSortKey(key); setSortDir(1); }
   };
 
-  const SortHdr = ({ label, k, align }) => (
+  // Change 2 — title prop for tooltip support
+  const SortHdr = ({ label, k, align, title }) => (
     <th
       onClick={() => handleSort(k)}
+      title={title}
       style={{
         cursor: "pointer", userSelect: "none", padding: "10px 8px",
         textAlign: align || "left", fontSize: "10px", letterSpacing: "0.08em",
@@ -337,6 +353,17 @@ function Dashboard() {
       ? (isSelected ? "#0d1f35" : "#0a1018")
       : (isSelected ? "#0d1f35" : i % 2 === 0 ? "#080e18" : "#090f1a");
 
+    // Tightened badge style for asset class / sector
+    const badgeStyle = {
+      background: isTier2 ? "#0a1520" : "#0d1a2a",
+      border: `1px solid ${isTier2 ? "#141e2e" : "#1a2e45"}`,
+      borderRadius: "2px", padding: "1px 4px",
+      fontSize: "8px", color: isTier2 ? "#667788" : "#8899aa",
+      letterSpacing: "0.08em", display: "inline-block",
+      maxWidth: "110px", overflow: "hidden",
+      textOverflow: "ellipsis", whiteSpace: "nowrap",
+    };
+
     return (
       <tr
         key={isTier2 ? `t2-${row.ticker}` : row.ticker}
@@ -345,28 +372,30 @@ function Dashboard() {
         onMouseEnter={e => e.currentTarget.style.background = "#0d1a28"}
         onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
+        {/* Expand chevron */}
         <td style={{ padding: "9px 4px 9px 8px", width: "24px", textAlign: "center" }}>
           {hasChildren && (
             <span onClick={e => toggleExpand(row.ticker, e)} style={{ display: "inline-block", color: "#8899aa", fontSize: "13px", lineHeight: 1, cursor: "pointer", userSelect: "none", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.3s" }}>›</span>
           )}
         </td>
+        {/* Alert */}
         <td style={{ padding: "9px 8px", textAlign: "center" }}>{row.isAlert ? <span style={{ color: "#f0b429" }}>⚡</span> : ""}</td>
+        {/* Ticker */}
         <td style={{ padding: isTier2 ? "9px 8px 9px 24px" : "9px 8px", fontWeight: "700", color: isTier2 ? "#b0c4d8" : "#e8f4ff", letterSpacing: "0.05em" }}>{row.ticker}</td>
+        {/* Description */}
         <td style={{ padding: "9px 8px", color: isTier2 ? "#506070" : "#6688aa", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.description}</td>
-        <td style={{ padding: "9px 8px" }}>
-          <span style={{ background: isTier2 ? "#0a1520" : "#0d1a2a", border: `1px solid ${isTier2 ? "#141e2e" : "#1a2e45"}`, borderRadius: "2px", padding: "2px 6px", fontSize: "9px", color: isTier2 ? "#667788" : "#8899aa", letterSpacing: "0.1em" }}>{row.assetClass}</span>
-        </td>
-        <td style={{ padding: "9px 8px" }}>
-          <span style={{ background: isTier2 ? "#0a1520" : "#0d1a2a", border: `1px solid ${isTier2 ? "#141e2e" : "#1a2e45"}`, borderRadius: "2px", padding: "2px 6px", fontSize: "9px", color: isTier2 ? "#667788" : "#8899aa", letterSpacing: "0.1em" }}>{row.sector}</span>
-        </td>
+        {/* Close */}
         <td style={{ padding: "9px 8px", color: isTier2 ? "#a0b0c0" : "#c8d8e8", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>${row.close.toFixed(2)}</td>
+        {/* Sparkline */}
         <td style={{ padding: "6px 8px" }}>
           <Sparkline prices={row.sparkPrices} color={sparkColor(row.viewpoint)} />
         </td>
+        {/* Viewpoint */}
         <td style={{ padding: "9px 8px" }}>
           <span style={{ color: vpColor(row.viewpoint), fontWeight: "600", letterSpacing: "0.05em" }}>{row.viewpoint.toUpperCase()}</span>
           {isAligned && <span style={{ marginLeft: "4px", fontSize: "9px", color: "#0077ff" }}>●</span>}
         </td>
+        {/* Conviction */}
         <td style={{ padding: "9px 8px" }}>
           {row.conviction !== null && row.conviction !== undefined ? (
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -379,16 +408,29 @@ function Dashboard() {
             <span style={{ color: "#8899aa" }}>—</span>
           )}
         </td>
+        {/* Trade Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
+        {/* Trade LRR */}
         <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.tradeWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
         </td>
+        {/* Trade HRR */}
         <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.tradeWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
         </td>
+        {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
+        {/* Trend LRR */}
         <td style={{ padding: "9px 8px", color: rangeColor(row.viewpoint, row.trendWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
+        </td>
+        {/* Asset Class — moved to far right, tightened */}
+        <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={badgeStyle}>{row.assetClass}</span>
+        </td>
+        {/* Sector — moved to far right, tightened */}
+        <td style={{ padding: "9px 6px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={badgeStyle}>{row.sector}</span>
         </td>
       </tr>
     );
@@ -496,11 +538,12 @@ function Dashboard() {
           <thead>
             <tr style={{ background: "#0a1220" }}>
               <th style={{ width: "24px", padding: "10px 4px 10px 8px", borderBottom: "1px solid #1a2535" }} />
-              <SortHdr label="⚡"          k="isAlert" />
+              {/* Change 2 — tooltip on alert header */}
+              <SortHdr label="⚡" k="isAlert"
+                title="High conviction alert — H>0.55 (trade & trend), conviction ≥70%, viewpoint Bullish or Bearish" />
               <SortHdr label="TICKER"      k="ticker" />
               <SortHdr label="DESCRIPTION" k="description" />
-              <SortHdr label="ASSET CLASS" k="assetClass" />
-              <SortHdr label="SECTOR"      k="sector" />
+              {/* Change 1 — CLOSE / TREND before signal columns; ASSET CLASS / SECTOR at far right */}
               <SortHdr label="CLOSE"       k="close" align="right" />
               <th style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
@@ -510,6 +553,8 @@ function Dashboard() {
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
               <SortHdr label="TREND LRR"   k="trendLRR" />
+              <SortHdr label="ASSET CLASS" k="assetClass" />
+              <SortHdr label="SECTOR"      k="sector" />
             </tr>
           </thead>
           <tbody>
@@ -526,12 +571,41 @@ function Dashboard() {
         </table>
       </div>
 
-      {/* Detail Panel */}
+      {/* Detail Panel — Change 3: full calculation fields */}
       {selected && (() => {
         const row = ALL_DATA.find(x => x.ticker === selected);
         if (!row) return null;
+
+        const fmtPrice = (v) => v != null ? `$${v.toFixed(2)}` : "—";
+        const fmtHurst = (v) => v != null ? v.toFixed(4) : "—";
+        const fmtConv  = (v) => v != null ? `${v.toFixed(1)}%` : "—";
+
+        const fields = [
+          ["Close",        fmtPrice(row.close),                                                          "#c8d8e8",                              false],
+          ["Viewpoint",    row.viewpoint,                                                                  vpColor(row.viewpoint),                 false],
+          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
+          ["Vol Signal",   row.volSignal,                                                                  volColor(row.volSignal),                false],
+          ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                 false],
+          ["Trade LRR",    fmtPrice(row.tradeLRR),                                                        rangeColor(row.viewpoint, row.tradeWarn), false],
+          ["Trade HRR",    fmtPrice(row.tradeHRR),                                                        rangeColor(row.viewpoint, row.tradeWarn), false],
+          ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),             true],
+          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                 false],
+          ["Trend LRR",    fmtPrice(row.trendLRR),                                                        rangeColor(row.viewpoint, row.trendWarn), false],
+          ["Trend HRR",    fmtPrice(row.trendHRR),                                                        rangeColor(row.viewpoint, row.trendWarn), false],
+          ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),             true],
+          ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                    false],
+          ["LT LRR",       fmtPrice(row.ltLRR),                                                           rangeColor(row.viewpoint, false),       false],
+          ["LT HRR",       fmtPrice(row.ltHRR),                                                           rangeColor(row.viewpoint, false),       false],
+          ["LT State",     row.ltState || "—",                                                             stateColor(row.ltState),                true],
+          ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false],
+          ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false],
+          ["Hurst (LT)",   fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
+          ["Rel IV%",      `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
+          ["Updated",      row.updated,                                                                    "#667788",                              false],
+        ];
+
         return (
-          <div style={{ position: "fixed", bottom: "0", right: "0", width: "360px", background: "#0a1422", border: "1px solid #1a3050", borderBottom: "none", borderRight: "none", padding: "20px", zIndex: 100 }}>
+          <div style={{ position: "fixed", bottom: "0", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderBottom: "none", borderRight: "none", padding: "20px", zIndex: 100 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
               <div>
                 <div style={{ fontSize: "22px", fontWeight: "700", color: "#e8f4ff", letterSpacing: "0.1em" }}>{row.ticker}</div>
@@ -539,28 +613,17 @@ function Dashboard() {
               </div>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-              {[
-                ["Close",      `$${row.close.toFixed(2)}`,                                                          "#c8d8e8"],
-                ["Viewpoint",  row.viewpoint,                                                                        vpColor(row.viewpoint)],
-                ["Conviction", row.conviction !== null && row.conviction !== undefined ? `${row.conviction}%` : "—", row.conviction !== null && row.conviction !== undefined ? convColor(row.conviction) : "#8899aa"],
-                ["LT Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,                                                dirColor(row.ltDir)],
-                ["LT LRR",     row.ltLRR != null ? `$${row.ltLRR.toFixed(2)}` : "—",                               rangeColor(row.viewpoint, false)],
-                ["Trend LRR",  row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—",                         rangeColor(row.viewpoint, row.trendWarn)],
-                ["Hurst (T)",  row.hurstTrade,                                                                       hurstColor(row.hurstTrade)],
-                ["Rel IV%",    `${row.relIV}%`,                                                                      ivColor(row.relIV)],
-                ["Vol Signal", row.volSignal,                                                                        volColor(row.volSignal)],
-                ["Updated",    row.updated,                                                                          "#667788"],
-              ].map(([label, val, color]) => (
-                <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "8px 10px" }}>
-                  <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "3px" }}>{label}</div>
-                  <div style={{ fontSize: "13px", fontWeight: "600", color }}>{val}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
+              {fields.map(([label, val, color, isState]) => (
+                <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
+                  <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "2px" }}>{label}</div>
+                  <div style={{ fontSize: isState ? "9px" : "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>{val}</div>
                 </div>
               ))}
             </div>
             {row.isAlert && (
-              <div style={{ marginTop: "12px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
-                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned with {row.conviction}% conviction
+              <div style={{ marginTop: "10px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
+                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned with {fmtConv(row.conviction)} conviction
               </div>
             )}
           </div>
