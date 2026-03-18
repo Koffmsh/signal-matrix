@@ -1,11 +1,15 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routers import market_data, signals
+from routers.scheduler import router as scheduler_router
 from sqlalchemy import text
-import models.signal_hurst   # ensure tables are registered before create_all
-import models.signal_pivots  # Task 3.2 — signal_pivots table
-import models.signal_output  # Task 3.3 — signal_output table
+import models.signal_hurst    # ensure tables are registered before create_all
+import models.signal_pivots   # Task 3.2 — signal_pivots table
+import models.signal_output   # Task 3.3 — signal_output table
+import models.scheduler_log   # Task 4.2 — scheduler_log table
+import services.scheduler as scheduler_svc
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +18,6 @@ logging.basicConfig(level=logging.INFO)
 Base.metadata.create_all(bind=engine)
 
 # Schema migration — add new price_cache columns if they don't exist yet
-# (SQLite doesn't support IF NOT EXISTS on ADD COLUMN, so we check first)
 with engine.connect() as _conn:
     _cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(price_cache)"))]
     if "history_json" not in _cols:
@@ -40,10 +43,20 @@ with engine.connect() as _conn:
             _conn.execute(text(_ddl))
     _conn.commit()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler_svc.start()
+    await scheduler_svc.run_catchup_on_startup()
+    yield
+    scheduler_svc.shutdown()
+
+
 app = FastAPI(
     title="Signal Matrix API",
     description="Market data backend for Signal Matrix Platform",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS — allow React dev server at localhost:3000
@@ -57,6 +70,8 @@ app.add_middleware(
 
 app.include_router(market_data.router)
 app.include_router(signals.router)
+app.include_router(scheduler_router)
+
 
 @app.get("/health")
 def health():

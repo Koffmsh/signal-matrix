@@ -244,12 +244,13 @@ function Dashboard() {
   const [selected,    setSelected]    = useState(null);
   const [expandedTickers, setExpandedTickers] = useState(new Set());
 
-  const [realDataMap,    setRealDataMap]    = useState(new Map());
-  const [signalMap,      setSignalMap]      = useState(new Map());
-  const [isRefreshing,   setIsRefreshing]   = useState(false);
-  const [dataError,      setDataError]      = useState(false);
-  const [isCalculating,  setIsCalculating]  = useState(false);
-  const [calcStatus,     setCalcStatus]     = useState(null);
+  const [realDataMap,     setRealDataMap]     = useState(new Map());
+  const [signalMap,       setSignalMap]       = useState(new Map());
+  const [isRefreshing,    setIsRefreshing]    = useState(false);
+  const [dataError,       setDataError]       = useState(false);
+  const [isCalculating,   setIsCalculating]   = useState(false);
+  const [calcStatus,      setCalcStatus]      = useState(null);
+  const [schedulerStatus, setSchedulerStatus] = useState(null);
 
   // Load stored signals on page load (no recalculation)
   useEffect(() => {
@@ -260,6 +261,14 @@ function Dashboard() {
         (data.results || []).forEach(r => m.set(r.ticker, r));
         setSignalMap(m);
       })
+      .catch(() => {});
+  }, []);
+
+  // Load scheduler status on page load (no polling)
+  useEffect(() => {
+    fetch("http://localhost:8000/api/scheduler/status")
+      .then(r => r.json())
+      .then(data => setSchedulerStatus(data))
       .catch(() => {});
   }, []);
 
@@ -525,7 +534,21 @@ function Dashboard() {
               const ts = realDataMap.values().next().value?.updated;
               return ts ? <div style={{ color: "#8899aa" }}>EOD · {ts}</div> : null;
             })()}
-            <div style={{ color: "#00e5a0", marginTop: "2px" }}>● LIVE</div>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end", marginTop: "2px" }}>
+              <div style={{ color: "#00e5a0" }}>● LIVE</div>
+              {schedulerStatus && (() => {
+                const done  = schedulerStatus.today_complete;
+                const fail  = schedulerStatus.last_run_status === "failure";
+                const color = done ? "#00e5a0" : fail ? "#ff4d6d" : "#f0b429";
+                const label = done ? "● SCHED" : fail ? "● SCHED" : "● SCHED";
+                const tip   = done
+                  ? `EOD run complete · ${schedulerStatus.last_run_time || ""}`
+                  : fail
+                  ? `Last run failed — check scheduler_log`
+                  : `Scheduled · next run ${schedulerStatus.next_run_time || "4:15 PM ET"}`;
+                return <div title={tip} style={{ color, cursor: "default" }}>{label}</div>;
+              })()}
+            </div>
           </div>
         </div>
       </div>

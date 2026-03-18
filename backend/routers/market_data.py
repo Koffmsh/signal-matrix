@@ -112,14 +112,8 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
     }
 
 
-@router.get("/batch")
-def get_batch(db: Session = Depends(get_db)):
-    """
-    Fetch market data for all Tier 1 tickers.
-    Null results are omitted — React falls back to mock for those tickers.
-    First call fetches all from Yahoo Finance (~30-60 seconds).
-    Subsequent calls same day are served from SQLite cache (instant).
-    """
+def refresh_data(db: Session) -> dict:
+    """Core refresh logic — callable by scheduler or HTTP endpoint."""
     today        = str(date.today())
     results      = []
     rate_limited = False
@@ -140,6 +134,17 @@ def get_batch(db: Session = Depends(get_db)):
             logger.warning(f"No data for {ticker} — React will use mock")
 
     return {"data": results, "count": len(results), "date": today, "rate_limited": rate_limited}
+
+
+@router.get("/batch")
+def get_batch(db: Session = Depends(get_db)):
+    """
+    Fetch market data for all Tier 1 tickers.
+    Null results are omitted — React falls back to mock for those tickers.
+    First call fetches all from Yahoo Finance (~30-60 seconds).
+    Subsequent calls same day are served from SQLite cache (instant).
+    """
+    return refresh_data(db)
 
 
 @router.get("/quote/{ticker}")

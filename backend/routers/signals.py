@@ -26,17 +26,12 @@ TIER1_TICKERS = [
 ]
 
 
-@router.get("/hurst")
-def calculate_hurst(db: Session = Depends(get_db)):
-    """
-    Task 3.1 — Compute Hurst Exponent + Fractal Dimension for all Tier 1 tickers.
-    Fetches 4 years of price history per ticker, runs DFA at three timeframes.
-    Upserts results into signal_hurst table.
+# ── Callable functions (used by scheduler and HTTP endpoints) ─────────────────
 
-    Manual trigger only — called by CALCULATE SIGNALS button.
-    """
-    results  = []
-    errors   = []
+def run_hurst(db: Session) -> dict:
+    """Compute Hurst Exponent + Fractal Dimension for all Tier 1 tickers."""
+    results = []
+    errors  = []
 
     for ticker in TIER1_TICKERS:
         try:
@@ -75,32 +70,18 @@ def calculate_hurst(db: Session = Depends(get_db)):
             logger.error(f"Hurst calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
-    return {
-        "calculated": len(results),
-        "errors":     len(errors),
-        "error_list": errors,
-        "results":    results,
-    }
+    return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
-@router.get("/pivots")
-def calculate_pivots(db: Session = Depends(get_db)):
-    """
-    Task 3.2 — Compute ABC pivot structure for all Tier 1 tickers.
-    Fetches 4 years of price history per ticker, detects pivot highs/lows,
-    builds A-B-C-D structure for trade (3-bar), trend (20-bar), and LT (90-bar).
-    Upserts results into signal_pivots table.
-
-    Manual trigger only — called after /api/signals/hurst by CALCULATE SIGNALS.
-    """
+def run_pivots(db: Session) -> dict:
+    """Compute ABC pivot structure for all Tier 1 tickers."""
     results = []
     errors  = []
 
     for ticker in TIER1_TICKERS:
         try:
             data = compute_pivots(ticker, db)
-
-            now = datetime.utcnow()
+            now  = datetime.utcnow()
 
             for tf in ("trade", "trend", "lt"):
                 tf_data = data[tf]
@@ -137,23 +118,11 @@ def calculate_pivots(db: Session = Depends(get_db)):
             logger.error(f"Pivot calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
-    return {
-        "calculated": len(results),
-        "errors":     len(errors),
-        "error_list": errors,
-        "results":    results,
-    }
+    return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
-@router.get("/output")
-def calculate_output(db: Session = Depends(get_db)):
-    """
-    Task 3.3 — Compute LRR/HRR + Conviction for all Tier 1 tickers.
-    Reads from signal_hurst, signal_pivots, price_cache.
-    Upserts results into signal_output table (one row per ticker per timeframe).
-
-    Manual trigger only — called after /api/signals/pivots by CALCULATE SIGNALS.
-    """
+def run_output(db: Session) -> dict:
+    """Compute LRR/HRR + Conviction for all Tier 1 tickers."""
     results = []
     errors  = []
 
@@ -166,7 +135,6 @@ def calculate_output(db: Session = Depends(get_db)):
                 tf_data  = data[tf]
                 row_id   = f"{ticker}_{tf}"
 
-                # Conviction stored per timeframe row; None when viewpoint is Neutral
                 conviction = data["conviction"] if data["viewpoint"] != "Neutral" else None
 
                 fields = dict(
@@ -206,12 +174,45 @@ def calculate_output(db: Session = Depends(get_db)):
             logger.error(f"Output calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
+    return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
+
+
+def calculate_signals(db: Session) -> dict:
+    """Run full signal pipeline: hurst → pivots → output. Called by scheduler."""
     return {
-        "calculated": len(results),
-        "errors":     len(errors),
-        "error_list": errors,
-        "results":    results,
+        "hurst":  run_hurst(db),
+        "pivots": run_pivots(db),
+        "output": run_output(db),
     }
+
+
+# ── HTTP endpoints ────────────────────────────────────────────────────────────
+
+@router.get("/hurst")
+def calculate_hurst(db: Session = Depends(get_db)):
+    """
+    Task 3.1 — Compute Hurst Exponent + Fractal Dimension for all Tier 1 tickers.
+    Manual trigger only — called by CALCULATE SIGNALS button.
+    """
+    return run_hurst(db)
+
+
+@router.get("/pivots")
+def calculate_pivots(db: Session = Depends(get_db)):
+    """
+    Task 3.2 — Compute ABC pivot structure for all Tier 1 tickers.
+    Manual trigger only — called after /api/signals/hurst by CALCULATE SIGNALS.
+    """
+    return run_pivots(db)
+
+
+@router.get("/output")
+def calculate_output(db: Session = Depends(get_db)):
+    """
+    Task 3.3 — Compute LRR/HRR + Conviction for all Tier 1 tickers.
+    Manual trigger only — called after /api/signals/pivots by CALCULATE SIGNALS.
+    """
+    return run_output(db)
 
 
 @router.get("/stored")
