@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.signal_hurst import SignalHurst
 from models.signal_pivots import SignalPivots
+from models.signal_output import SignalOutput
 from services.signal_engine import compute_hurst
 from services.pivot_engine import compute_pivots
+from services.conviction_engine import compute_output
 from datetime import datetime
 import logging
 
@@ -40,7 +42,6 @@ def calculate_hurst(db: Session = Depends(get_db)):
         try:
             data = compute_hurst(ticker, db)
 
-            # Upsert — merge by primary key (ticker)
             existing = db.query(SignalHurst).filter(
                 SignalHurst.ticker == ticker
             ).first()
@@ -134,6 +135,67 @@ def calculate_pivots(db: Session = Depends(get_db)):
 
         except Exception as e:
             logger.error(f"Pivot calculation failed for {ticker}: {e}")
+            errors.append({"ticker": ticker, "error": str(e)})
+
+    return {
+        "calculated": len(results),
+        "errors":     len(errors),
+        "error_list": errors,
+        "results":    results,
+    }
+
+
+@router.get("/output")
+def calculate_output(db: Session = Depends(get_db)):
+    """
+    Task 3.3 — Compute LRR/HRR + Conviction for all Tier 1 tickers.
+    Reads from signal_hurst, signal_pivots, price_cache.
+    Upserts results into signal_output table (one row per ticker per timeframe).
+
+    Manual trigger only — called after /api/signals/pivots by CALCULATE SIGNALS.
+    """
+    results = []
+    errors  = []
+
+    for ticker in TIER1_TICKERS:
+        try:
+            data = compute_output(ticker, db)
+            now  = datetime.utcnow()
+
+            for tf in ("trade", "trend", "lt"):
+                tf_data  = data[tf]
+                row_id   = f"{ticker}_{tf}"
+
+                # Conviction stored per timeframe row; None when viewpoint is Neutral
+                conviction = data["conviction"] if data["viewpoint"] != "Neutral" else None
+
+                fields = dict(
+                    ticker           = ticker,
+                    timeframe        = tf,
+                    lrr              = tf_data.get("lrr"),
+                    hrr              = tf_data.get("hrr"),
+                    structural_state = tf_data.get("structural_state"),
+                    trade_direction  = tf_data.get("direction"),
+                    conviction       = conviction,
+                    h_value          = tf_data.get("h_value"),
+                    calculated_at    = now,
+                )
+
+                existing = db.query(SignalOutput).filter(
+                    SignalOutput.id == row_id
+                ).first()
+
+                if existing:
+                    for k, v in fields.items():
+                        setattr(existing, k, v)
+                else:
+                    db.add(SignalOutput(id=row_id, **fields))
+
+            db.commit()
+            results.append(data)
+
+        except Exception as e:
+            logger.error(f"Output calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
     return {

@@ -5,6 +5,7 @@ from routers import market_data, signals
 from sqlalchemy import text
 import models.signal_hurst   # ensure tables are registered before create_all
 import models.signal_pivots  # Task 3.2 — signal_pivots table
+import models.signal_output  # Task 3.3 — signal_output table
 import logging
 
 logging.basicConfig(level=logging.INFO)
