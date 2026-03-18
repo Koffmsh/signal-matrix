@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routers import market_data, signals
-import models.signal_hurst  # ensure table is registered before create_all
+import models.signal_hurst   # ensure tables are registered before create_all
+import models.signal_pivots  # Task 3.2 — signal_pivots table
 import logging
 
 logging.basicConfig(level=logging.INFO)

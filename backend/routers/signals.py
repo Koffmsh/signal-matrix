@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from models.signal_hurst import SignalHurst
+from models.signal_pivots import SignalPivots
 from services.signal_engine import compute_hurst
+from services.pivot_engine import compute_pivots
 from datetime import datetime
 import logging
 
@@ -70,6 +72,68 @@ def calculate_hurst(db: Session = Depends(get_db)):
 
         except Exception as e:
             logger.error(f"Hurst calculation failed for {ticker}: {e}")
+            errors.append({"ticker": ticker, "error": str(e)})
+
+    return {
+        "calculated": len(results),
+        "errors":     len(errors),
+        "error_list": errors,
+        "results":    results,
+    }
+
+
+@router.get("/pivots")
+def calculate_pivots(db: Session = Depends(get_db)):
+    """
+    Task 3.2 — Compute ABC pivot structure for all Tier 1 tickers.
+    Fetches 4 years of price history per ticker, detects pivot highs/lows,
+    builds A-B-C-D structure for trade (3-bar), trend (20-bar), and LT (90-bar).
+    Upserts results into signal_pivots table.
+
+    Manual trigger only — called after /api/signals/hurst by CALCULATE SIGNALS.
+    """
+    results = []
+    errors  = []
+
+    for ticker in TIER1_TICKERS:
+        try:
+            data = compute_pivots(ticker)
+
+            now = datetime.utcnow()
+
+            for tf in ("trade", "trend", "lt"):
+                tf_data = data[tf]
+
+                existing = db.query(SignalPivots).filter(
+                    SignalPivots.ticker    == ticker,
+                    SignalPivots.timeframe == tf,
+                ).first()
+
+                fields = dict(
+                    bar_window       = tf_data.get("bar_window"),
+                    pivot_a          = tf_data.get("pivot_a"),
+                    pivot_b          = tf_data.get("pivot_b"),
+                    pivot_c          = tf_data.get("pivot_c"),
+                    pivot_d          = tf_data.get("pivot_d"),
+                    pivot_a_date     = tf_data.get("pivot_a_date"),
+                    pivot_b_date     = tf_data.get("pivot_b_date"),
+                    pivot_c_date     = tf_data.get("pivot_c_date"),
+                    pivot_d_date     = tf_data.get("pivot_d_date"),
+                    structural_state = tf_data.get("structural_state"),
+                    calculated_at    = now,
+                )
+
+                if existing:
+                    for k, v in fields.items():
+                        setattr(existing, k, v)
+                else:
+                    db.add(SignalPivots(ticker=ticker, timeframe=tf, **fields))
+
+            db.commit()
+            results.append(data)
+
+        except Exception as e:
+            logger.error(f"Pivot calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
     return {

@@ -183,10 +183,15 @@ function Dashboard() {
     setCalcStatus(null);
     fetch("http://localhost:8000/api/signals/hurst")
       .then(r => r.json())
-      .then(data => {
+      .then(hurstData => {
+        console.log("Hurst results:", hurstData);
+        return fetch("http://localhost:8000/api/signals/pivots");
+      })
+      .then(r => r.json())
+      .then(pivotsData => {
         setIsCalculating(false);
-        setCalcStatus(data.errors === 0 ? "ok" : "ok"); // show ok even with partial errors
-        console.log("Hurst results:", data);
+        setCalcStatus("ok");
+        console.log("Pivot results:", pivotsData);
       })
       .catch(() => {
         setIsCalculating(false);
