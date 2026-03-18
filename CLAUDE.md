@@ -98,14 +98,18 @@ signal-matrix/
 │   ├── main.py
 │   ├── database.py
 │   ├── models/
-│   │   └── price_cache.py
+│   │   ├── price_cache.py
+│   │   ├── signal_hurst.py                ← Task 3.1 — Hurst DB model
+│   │   ├── signal_pivots.py               ← Task 3.2 — Pivots DB model
+│   │   └── signal_output.py               ← Task 3.3 — Output DB model
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
 │   │   ├── pivot_engine.py                ← Task 3.2 — ABC Pivot Detector ✅
-│   │   └── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine
+│   │   └── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine ✅
 │   └── routers/
-│       └── market_data.py
+│       ├── market_data.py
+│       └── signals.py                     ← Task 3.3/3.4 — Signal endpoints ✅
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -119,7 +123,7 @@ signal-matrix/
 
 ## Phase 1 — COMPLETE ✅
 ## Phase 2 — COMPLETE ✅
-## Phase 3 — IN PROGRESS 🔄
+## Phase 3 — COMPLETE ✅
 
 ### Phase 3 Build Sequence
 
@@ -127,8 +131,8 @@ signal-matrix/
 |---|---|---|---|
 | 3.1 | Hurst + Fractal Dimension (DFA) | `backend/services/signal_engine.py` | ✅ Complete |
 | 3.2 | ABC Pivot Detector | `backend/services/pivot_engine.py` | ✅ Complete |
-| 3.3 | LRR/HRR + Conviction Engine | `backend/services/conviction_engine.py` | ⬜ Next |
-| 3.4 | Wire to Dashboard | React frontend (App.js) | ⬜ Pending 3.3 |
+| 3.3 | LRR/HRR + Conviction Engine | `backend/services/conviction_engine.py` | ✅ Complete |
+| 3.4 | Wire to Dashboard | `src/App.js` | ✅ Complete |
 
 ### New Button — CALCULATE SIGNALS
 - Added to dashboard header alongside REFRESH DATA
@@ -417,7 +421,7 @@ Downtrend: HRR pushed up, LRR pulled down (same widening logic, mirrored).
 - **Trade and Trend states are independent** — Trend break does not auto-flip Trade
 - **C updates dynamically** — always references most recent confirmed higher low / lower high
 
-### New Database Tables (Phase 3)
+### Database Tables (Phase 3)
 ```sql
 signal_hurst:   ticker, h_trade, h_trend, h_lt, d_trade, d_trend, d_lt, calculated_at
                 UNIQUE(ticker)
@@ -429,15 +433,21 @@ signal_pivots:  ticker, timeframe, bar_window,
                 UNIQUE(ticker, timeframe)
 
 signal_output:  ticker, timeframe, lrr, hrr, structural_state,
-                conviction, trade_direction, h_value, calculated_at
+                trade_direction, conviction, h_value,
+                viewpoint, alert, vol_signal,
+                warning,                    ← IV-driven WARNING flag (per timeframe)
+                lrr_warn, hrr_warn,         ← price-based pivot threshold flags (per timeframe)
+                pivot_b, pivot_c,           ← pivot values for UI comparison
+                calculated_at
                 UNIQUE(ticker, timeframe)
 ```
 
-### New FastAPI Endpoints (Phase 3)
+### FastAPI Endpoints (Phase 3)
 ```
 GET /api/signals/hurst    ← Task 3.1 ✅
 GET /api/signals/pivots   ← Task 3.2 ✅
-GET /api/signals/output   ← Task 3.3
+GET /api/signals/output   ← Task 3.3 ✅  (recalculates + writes to DB)
+GET /api/signals/stored   ← Task 3.4 ✅  (read-only, grouped by ticker, used on page load)
 ```
 
 ### Sanity Checks
@@ -505,7 +515,7 @@ Do not modify without explicit instruction. Source of truth for ticker universe.
 - Sparklines: real — 60-day price history
 - Rel IV: real — realized vol percentile proxy (Schwab IV Percentile in Phase 5)
 - Volume: real — daily volume from Yahoo Finance
-- Signal columns: mock until Task 3.4 completes
+- Signal columns: **live** — populated from `/api/signals/stored` on page load; recalculated on CALCULATE SIGNALS
 - REFRESH DATA: manual fetch only, never auto on page load
 - CALCULATE SIGNALS: manual trigger only, reads from price_cache
 - Admin panel at localhost:3000/admin — password protected
@@ -514,35 +524,76 @@ Do not modify without explicit instruction. Source of truth for ticker universe.
 | Column | Description |
 |--------|-------------|
 | › | Tier 2 expand/collapse chevron |
-| ⚡ | Alert flag — high conviction aligned signal |
+| ⚡ | Alert flag — hover tooltip describes trigger conditions |
 | Ticker | Symbol |
 | Description | Asset name |
-| Asset Class | Classification |
-| Sector | GICS sector / type |
 | Close | Last closing price (real) |
 | Trend | SVG sparkline — 60-day real price history |
 | Viewpoint | Bullish / Bearish / Neutral (three states only) |
-| Conviction % | 0-100% — blank when Neutral |
+| Conviction % | 0-100% — blank when Neutral; green ≥70%, amber 50-69%, grey <50% |
 | Trade Dir | Short-term direction |
-| Trade LRR | Lower risk range - trade timeframe |
-| Trade HRR | Higher risk range - trade timeframe |
+| Trade LRR | Lower risk range — color = trade direction; ⚠ when LRR < C (uptrend) or LRR > B (downtrend) |
+| Trade HRR | Higher risk range — color = trade direction; ⚠ when HRR < B (uptrend) or HRR > C (downtrend) |
 | Trend Dir | Medium-term direction |
-| Trend LRR | Support level - trend timeframe |
+| Trend LRR | Support level — color = trend direction; ⚠ when LRR < C (uptrend) or HRR > C (downtrend) |
+| Asset Class | Classification — tightened badge, far right |
+| Sector | GICS sector / type — tightened badge, far right |
 
 ## Popup Fields (click any row)
-Close, Viewpoint, Conviction, LT Dir, LT LRR, Trend LRR, Hurst(T), Rel IV%, Vol Signal, Updated
+| Field | Notes |
+|---|---|
+| Close | Live price |
+| Viewpoint | Bullish / Bearish / Neutral |
+| Conviction | % or — when Neutral |
+| Vol Signal | Confirming / Diverging / Neutral |
+| Trade Dir | Direction + icon |
+| Trade LRR | Color = trade dir; ⚠ + hover tooltip when warn |
+| Trade HRR | Color = trade dir; ⚠ + hover tooltip when warn |
+| Trade C | C pivot — trade invalidation level |
+| Trade B | B pivot — prior swing high/low |
+| Trade State | Structural state string |
+| Trend Dir | Direction + icon |
+| Trend LRR | Color = trend dir; ⚠ when LRR < C |
+| Trend HRR | Color = trend dir; ⚠ when HRR > C |
+| Trend C | C pivot — trend invalidation level |
+| Trend State | Structural state string |
+| LT Dir | Direction + icon |
+| LT LRR | Color = LT direction |
+| Hurst (T) | Trade timeframe H value |
+| Hurst (Tr) | Trend timeframe H value |
+| Hurst (LT) | Long term H value |
+| Rel IV% | Realized vol percentile |
+| Updated | Last data fetch timestamp |
 
 ## Color Coding
-- **`#00e5a0` green** — Bullish, high conviction, trending
-- **`#ff4d6d` red** — Bearish, low conviction, mean-reverting
-- **`#8899aa` grey** — Neutral (everywhere — not amber)
-- **`#f0b429` amber** — Alerts, conviction bar, and WARNING state cells
+- **`#00e5a0` green** — Bullish direction, high conviction, trending H
+- **`#ff4d6d` red** — Bearish direction, mean-reverting H
+- **`#8899aa` grey** — Neutral direction/viewpoint (everywhere — not amber)
+- **`#f0b429` amber** — ⚡ alerts, conviction bar 50-69%, WARNING state, ⚠ per-cell pivot breach
+
+### LRR/HRR Cell Color Logic (LOCKED)
+Each LRR/HRR cell uses its **own timeframe's direction** color, not the overall viewpoint:
+- `dirRangeColor(dir, isWarn)` → amber if warn flag is true, otherwise `dirColor(dir)`
+- Warn flags are price-based, independent of the IV-driven `warning` structural state
+
+### Warning Flag Scope (LOCKED)
+| Timeframe | LRR ⚠ condition | HRR ⚠ condition |
+|---|---|---|
+| **Trade** | Bullish: `lrr < c` · Bearish: `lrr > b` | Bullish: `hrr < b` · Bearish: `hrr > c` |
+| **Trend** | Bullish: `lrr < c` only | Bearish: `hrr > c` only |
+| **LT** | Never | Never |
 
 ---
 
 ## Version Control
 - Git initialized at `C:\Users\shann\Projects\signal-matrix`
-- Commits: `42e6663` Phase 1, `927f8ce` Phase 3 Tasks 3.1+3.2, `28d6b71` gitignore fix
+- Key commits:
+  - `42e6663` — Phase 1 complete (Tasks 1-5)
+  - `927f8ce` — Phase 3 Tasks 3.1 + 3.2
+  - `28d6b71` — gitignore fix
+  - `0b0c4e3` — Per-cell LRR/HRR warning flags + direction-based coloring
+  - `ba1d7d6` — Pivot B/C in popup + ⚠ hover tooltips
+  - `a90b1d1` — Warning scope: trade-only B-based, no LT warnings, LT popup trimmed
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -572,7 +623,7 @@ git checkout -- .   # roll back if needed
 4. **Direction values are Bullish / Bearish / Neutral** — never Up / Down
 5. **HRR = Higher Risk Range** — always the higher price value — do not rename
 6. **LRR = Lower Risk Range** — always the lower price value — do not rename
-7. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts and WARNING state cells only
+7. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts, conviction 50-69%, WARNING state, and ⚠ per-cell pivot breach flags
 8. **Asset Class values must exactly match:** Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities
 9. **Keep components modular** — one component per file
 10. **Docker:** changes to `src/` reflect on save — no rebuild needed for frontend
@@ -596,6 +647,9 @@ git checkout -- .   # roll back if needed
 28. **Viewpoint has three states only** — Bullish, Bearish, Neutral (no Diverging)
 29. **Effective floor (uptrend) = MAX(LRR, C)** — Bullish only when price above this
 30. **Effective ceiling (downtrend) = MIN(HRR, C)** — Bearish only when price below this
+31. **LRR/HRR cell color = timeframe direction** — use `dirRangeColor(dir, isWarn)`, NOT viewpoint color
+32. **Per-cell ⚠ warn flags are price-based** — separate from IV-driven `warning` structural state
+33. **Warning scope is timeframe-specific** — Trade: full (C+B); Trend: C-based only; LT: none
 
 ---
 
@@ -605,7 +659,7 @@ git checkout -- .   # roll back if needed
 |---|---|---|
 | Phase 1 | Dashboard Refinement | ✅ Complete |
 | Phase 2 | Real Data Integration | ✅ Complete |
-| Phase 3 | Signal Engine | 🔄 In Progress — Tasks 3.1 + 3.2 complete |
+| Phase 3 | Signal Engine | ✅ Complete |
 | Phase 4 | Backend & Database | ⬜ Python FastAPI, SQLite, EOD scheduler, signal history |
 | Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
 | Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
@@ -620,7 +674,6 @@ git checkout -- .   # roll back if needed
 - Cloud deployment
 - Tier 2 auto-surfacing based on conviction threshold
 - MA20/50/100 display in dashboard UI
-- Auto-load cache on page load + last updated timestamps (Task 3.4)
 
 ---
 
