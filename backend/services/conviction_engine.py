@@ -122,16 +122,17 @@ def compute_lrr_hrr(b: float, c: float, d: float | None,
     sigma  = _sigma(prices)
     anchor = d if d is not None else b
 
+    lrr_mult = _iv_lrr_multiplier(rel_iv)
+    hrr_mult = _iv_hrr_multiplier(rel_iv)
+
     if direction == "uptrend":
         base_lrr = c + (b - c) * hf
-        base_hrr = anchor + sigma
-        lrr = round(base_lrr * _iv_lrr_multiplier(rel_iv), 4)
-        hrr = round(base_hrr * _iv_hrr_multiplier(rel_iv), 4)
+        lrr = round(base_lrr - sigma * (1.0 - lrr_mult), 4)
+        hrr = round(anchor + sigma * hrr_mult, 4)
     else:  # downtrend
         base_hrr = c - (c - b) * hf
-        base_lrr = anchor - sigma
-        hrr = round(base_hrr * _iv_hrr_multiplier(rel_iv), 4)
-        lrr = round(base_lrr * _iv_lrr_multiplier(rel_iv), 4)
+        hrr = round(base_hrr + sigma * (hrr_mult - 1.0), 4)
+        lrr = round(anchor - sigma * hrr_mult, 4)
 
     # Clamp — IV can push them past each other (WARNING state check follows)
     if lrr > hrr:
