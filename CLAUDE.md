@@ -1,5 +1,14 @@
 # Signal Matrix Platform — Project Context
 
+## Important Note for Neo
+The `.docx` spec files in `Docs/` cannot be read by Claude Code.
+A readable `.txt` copy exists at `Docs/SignalMatrix_Spec_v1.4.txt` —
+Neo should read this before making any methodology or architecture changes.
+When QuadTracker build begins, a corresponding `.txt` will be added.
+CLAUDE.md remains the authoritative source for rules and current state.
+
+---
+
 ## What This Project Is
 Signal Matrix is a multi-timeframe, probabilistic trading signal platform designed to identify
 high-conviction trade opportunities across a diversified universe of ~51 assets. Built on fractal
@@ -31,6 +40,16 @@ indicators.
 
 ---
 
+## Infrastructure & Domain
+- **Domain:** suttonmc.com — DNS and nameservers transferred to Cloudflare (Free plan)
+- **Cloudflare:** Active — DNS management, DDoS protection, free SSL. No hosting.
+- **Fly.io:** Account created, CLI installed and authenticated — ready for deployment (Task 4.4, deferred)
+- **Current hosting:** Local only — Docker on Windows PC at localhost:3000
+- **Deployment trigger:** Phase 5 Schwab OAuth requires a stable public URL — that is the forcing function for Fly.io deployment
+- **ngrok:** Available for 1-off demos — `ngrok http 3000` gives temporary public URL
+
+---
+
 ## Known Fixes & Learnings
 
 Critical issues already resolved — do not reintroduce these bugs:
@@ -47,7 +66,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 ### Stale Cache Fallback on 429 (`market_data.py`)
 - Old behavior: batch endpoint returned empty on 429 — dashboard went blank
 - **Fixed:** On 429, batch endpoint now serves whatever is cached in SQLite
-- All 48 tickers stay visible even during rate limit windows
+- All active tickers stay visible even during rate limit windows
 
 ### `updated_at` Refreshes on Upsert (`market_data.py`)
 - Old behavior: `updated_at` only stamped original insert date — never updated
@@ -86,6 +105,15 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
 - **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
 
+### yfinance Asset Class Mapping — ETFs Default to Domestic Equities
+- yfinance returns `quoteType: 'ETF'` for most ETFs but `category` is often empty or uses Morningstar taxonomy
+- The mapping layer falls through to `Domestic Equities` default for international, fixed income, FX, and commodity ETFs
+- **Fix:** `ASSET_CLASS_OVERRIDES` dict in `backend/routers/tickers.py` — checked first before any inference
+- **Rule:** When adding new ETFs via admin panel, always verify asset class after lookup and correct if needed
+- **Known good overrides already in place:** TLT, LQD, HYG, CLOX (Fixed Income); EWG, EWQ, EWP, KWT, KWEB, EWJ, EWW, TUR, UAE (International); GLD, SGOL, FXB, FXE, FXY (FX); USO, SLV, PALL, PPLT, CANE, WOOD, CORN, WEAT (Commodities); IBIT (Digital Assets)
+
+---
+
 ## Project Folder Structure
 ```
 signal-matrix/
@@ -93,8 +121,9 @@ signal-matrix/
 │   ├── launch.json
 │   └── settings.local.json
 ├── Docs/
-│   ├── SignalMatrix_Spec_v1.4.docx        ← current spec
-│   └── QuadTracker_Spec_v1.1.docx
+│   ├── SignalMatrix_Spec_v1.4.docx        ← spec — NOT readable by Neo (.docx)
+│   ├── SignalMatrix_Spec_v1.4.txt         ← ✅ Neo's readable copy — full spec
+│   └── QuadTracker_Spec_v1.1.docx        ← spec — NOT readable by Neo (.docx)
 ├── public/
 ├── src/
 │   ├── components/
@@ -103,7 +132,7 @@ signal-matrix/
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
 │   │   └── shared/                        ← placeholder
 │   ├── data/
-│   │   └── tickers.js                     ← Seed data only — source of truth is SQLite tickers table
+│   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is SQLite tickers table
 │   ├── hooks/                             ← placeholder
 │   ├── utils/                             ← placeholder
 │   ├── App.css
@@ -120,7 +149,9 @@ signal-matrix/
 │   │   ├── signal_hurst.py                ← Task 3.1 — Hurst DB model
 │   │   ├── signal_pivots.py               ← Task 3.2 — Pivots DB model
 │   │   ├── signal_output.py               ← Task 3.3 — Output DB model
-│   │   └── scheduler_log.py               ← Task 4.2 — Scheduler run log DB model
+│   │   ├── signal_history.py              ← Task 4.3 — Signal history snapshots DB model
+│   │   ├── scheduler_log.py               ← Task 4.2 — Scheduler run log DB model
+│   │   └── ticker.py                      ← Task 4.6 — Tickers DB model
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -129,7 +160,7 @@ signal-matrix/
 │   │   └── scheduler.py                   ← Task 4.2 — APScheduler EOD job ✅
 │   └── routers/
 │       ├── market_data.py
-│       ├── signals.py                     ← Task 3.3/3.4 — Signal endpoints ✅
+│       ├── signals.py                     ← Task 3.3/3.4/4.3 — Signal endpoints + history ✅
 │       ├── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
 │       └── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
@@ -157,12 +188,94 @@ signal-matrix/
 | 3.3 | LRR/HRR + Conviction Engine | `backend/services/conviction_engine.py` | ✅ Complete |
 | 3.4 | Wire to Dashboard | `src/App.js` | ✅ Complete |
 
+### Phase 4 Build Sequence
+
+| Task | Deliverable | Status |
+|---|---|---|
+| 4.1 | GitHub private repo + .env history cleanup | ✅ Complete |
+| 4.2 | EOD Scheduler (APScheduler + NYSE calendar) | ✅ Complete |
+| 4.3 | Signal History daily snapshots | ✅ Complete |
+| 4.4 | Fly.io cloud deployment | ⬜ Deferred — triggers at Phase 5 (Schwab OAuth) |
+| 4.5 | Auto-load cache on page load | ✅ Complete |
+| 4.6 | Tickers table + dynamic backend | ✅ Complete |
+| 4.7 | yfinance lookup endpoint for new tickers | ✅ Complete |
+
 ### New Button — CALCULATE SIGNALS
 - Added to dashboard header alongside REFRESH DATA
 - Manual trigger only — never auto-calculates on page load
 - Must be run AFTER REFRESH DATA (price history must be current)
 - Calls: `GET /api/signals/calculate` — runs full pipeline (hurst → pivots → output → snapshot) in one call
 - Signal engine reads from `price_cache` SQLite table — NEVER calls yfinance directly
+
+---
+
+## Phase 4 — Task 4.2: EOD Scheduler ✅
+
+### Scheduler Overview
+- APScheduler `AsyncIOScheduler` inside FastAPI lifespan
+- Fires at **4:15 PM ET** on NYSE trading days only (via `pandas_market_calendars`)
+- On startup: catch-up check — if past 4:15 PM ET, trading day, and no successful run today → runs immediately
+- All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
+
+### EOD Flow (4:15 PM ET, NYSE trading days)
+```
+APScheduler
+    → refresh_data()        writes → price_cache
+    → calculate_signals()   writes → signal_hurst
+                                   → signal_pivots
+                                   → signal_output
+                                   → signal_history (snapshot)
+    → scheduler_log         writes → success/failure entry
+```
+
+### Page Load Flow
+```
+App.js useEffect (Task 4.5)
+    → /api/market-data/batch    reads price_cache   → close, sparklines, rel IV
+    → /api/signals/stored       reads signal_output → viewpoint, conviction, LRR/HRR
+    → /api/scheduler/status     reads scheduler_log → ● SCHED indicator
+```
+
+### Manual Override Buttons
+```
+REFRESH DATA        → force Yahoo fetch outside scheduler window
+CALCULATE SIGNALS   → force recalculation mid-day or after code change
+```
+
+### Edge Case Coverage
+```
+Docker down at 4:15 PM → startup catchup fires on restart if past 4:15 ET and today's job missing
+PC off at 4:15 PM      → same catchup pattern covers this
+Run twice same day     → signal_history idempotency check prevents duplicate snapshots
+429 from Yahoo         → stale cache served, scheduler_log records failure
+```
+
+### Scheduler Files
+| File | Role |
+|---|---|
+| `backend/services/scheduler.py` | Core job logic, catch-up, start/shutdown |
+| `backend/routers/scheduler.py` | `GET /api/scheduler/status` endpoint |
+| `backend/models/scheduler_log.py` | SQLAlchemy model for `scheduler_log` table |
+
+### scheduler_log Table
+```sql
+id, run_date (ET), trigger ('scheduled'|'catchup'|'manual'),
+status ('success'|'failure'), refresh_ok, signals_ok,
+error_msg, duration_s, created_at (UTC string)
+```
+
+### Dashboard Header — Scheduler Indicator
+`● SCHED` dot next to data timestamp:
+- **Green** — today's EOD run complete (`today_complete = true`)
+- **Amber** — scheduled, not yet run today
+- **Red** — last run failed
+- Hover tooltip shows run time or next scheduled time. Fetched once on page load, no polling.
+
+### Refactors Made for Scheduler
+- `refresh_data(db)` extracted from `get_batch` endpoint in `market_data.py` — callable directly
+- `run_hurst(db)`, `run_pivots(db)`, `run_output(db)`, `calculate_signals(db)` extracted in `signals.py`
+- HTTP endpoints now call these functions — behavior unchanged
+- `main.py` converted from module-level startup to `lifespan` context manager
 
 ---
 
@@ -192,12 +305,26 @@ No UNIQUE constraint — idempotency enforced in Python, not DB
 ### History API Endpoint
 `GET /api/signals/history` — query params: `ticker`, `timeframe`, `start_date`, `end_date`, `limit` (default 30, max 500)
 - Returns rows newest-first
-- Used for signal trend analysis; not currently wired to dashboard UI
+- Not currently wired to dashboard UI — available for future analysis and backtesting
 
-### CALCULATE SIGNALS Button Fix (Task 4.3 related)
-- Old behavior: frontend called `/hurst` → `/pivots` → `/output` individually — snapshot never fired
-- **Fixed:** frontend now calls `GET /api/signals/calculate` which runs full pipeline + snapshot in one call
+### CALCULATE SIGNALS Button
+- Frontend calls `GET /api/signals/calculate` — runs full pipeline + snapshot in one call
 - `/calculate` returns output results in same shape as `/output` — no frontend shape change needed
+
+---
+
+## Phase 4 — Task 4.5: Auto-Load Cache on Page Load ✅
+
+### Overview
+- `App.js` calls `/api/market-data/batch` on mount via `useEffect` — populates close prices, sparklines, rel IV from SQLite cache
+- Cache is always warm from scheduler — page load is instant, no Yahoo Finance call
+- REFRESH DATA button retained as manual override to force a fresh Yahoo fetch
+- Signals also auto-load from `/api/signals/stored` on page load (Task 3.4, unchanged)
+
+### Rule Clarification
+- Auto-loading from **SQLite cache** on page load is allowed — this is a local DB read
+- Auto-fetching from **Yahoo Finance** on page load is still prohibited
+- The distinction: cache read = instant + safe; Yahoo fetch = external call + rate limit risk
 
 ---
 
@@ -206,9 +333,25 @@ No UNIQUE constraint — idempotency enforced in Python, not DB
 ### Overview
 - SQLite `tickers` table is the source of truth — replaces `tickers.js` + localStorage
 - `tickers.js` retained as seed-only bootstrap file — never modified directly
-- `seed_tickers_if_empty(db)` runs on FastAPI startup — inserts 52 rows if table is empty (AMZN excluded from Tier 2 seed due to UNIQUE constraint, add via admin if needed)
-- `market_data.py` and `signals.py` both call `get_active_tickers(db)` — no hardcoded list
+- `seed_tickers_if_empty(db)` runs on FastAPI startup — inserts 52 rows if table is empty
+  (AMZN excluded from Tier 2 seed due to UNIQUE constraint — add via admin panel if needed)
+- `market_data.py` and `signals.py` both call `get_active_tickers(db)` — no hardcoded lists
 - `App.js` fetches ticker universe from `GET /api/tickers?active=true` on mount
+
+### Tickers Table Schema
+```sql
+id            INTEGER PRIMARY KEY AUTOINCREMENT
+ticker        TEXT NOT NULL UNIQUE
+description   TEXT
+asset_class   TEXT
+sector        TEXT
+tier          INTEGER DEFAULT 1
+parent_ticker TEXT
+active        BOOLEAN DEFAULT TRUE
+display_order INTEGER
+created_at    TEXT    -- UTC timestamp
+updated_at    TEXT    -- UTC timestamp
+```
 
 ### Tickers API Endpoints
 ```
@@ -238,67 +381,64 @@ GET    /api/tickers/lookup/{sym} ← Task 4.7: yfinance suggestions (registered 
 - `newTickerValues` state tracks keystroke input independently to prevent focus loss on re-render
 - Ticker cell locked (disabled) after row is saved — symbol cannot be changed
 - Deactivate: soft-delete via DELETE API; Reactivate: PUT with `active: true`
-
-### Task 4.7 — yfinance Lookup
-- `GET /api/tickers/lookup/{symbol}` — calls yfinance, returns `{found, suggestions, already_exists, notes}`
-- Returns: `description` (longName), `asset_class` (mapped), `sector` (category)
-- `_map_asset_class()` maps yfinance quoteType + category to Signal Matrix vocabulary
-- ETF gold symbols hardcoded: GLD, IAU, SGOL, GLDM, BAR → "Foreign Exchange"
-- Category keywords used (not quoteType alone) — covers edge cases like "Miscellaneous Region" → International
-- Suggestions only — never auto-saves
+- Asset Class field is a dropdown — enforces exact vocabulary, not free text
 
 ---
 
-## Phase 4 — Task 4.2: EOD Scheduler ✅
+## Phase 4 — Task 4.7: yfinance Lookup Endpoint ✅
 
-### Scheduler Overview
-- APScheduler `AsyncIOScheduler` inside FastAPI lifespan
-- Fires at **4:15 PM ET** on NYSE trading days only (via `pandas_market_calendars`)
-- On startup: catch-up check — if past 4:15 PM ET, trading day, and no successful run today → runs immediately
-- All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
+### Overview
+- `GET /api/tickers/lookup/{symbol}` — on-demand metadata fetch for new tickers
+- Returns suggested description, asset class, sector — never auto-saves
+- User reviews and corrects suggestions before saving via admin panel
 
-### Scheduler Files
-| File | Role |
-|---|---|
-| `backend/services/scheduler.py` | Core job logic, catch-up, start/shutdown |
-| `backend/routers/scheduler.py` | `GET /api/scheduler/status` endpoint |
-| `backend/models/scheduler_log.py` | SQLAlchemy model for `scheduler_log` table |
-
-### scheduler_log Table
-```sql
-id, run_date (ET), trigger ('scheduled'|'catchup'|'manual'),
-status ('success'|'failure'), refresh_ok, signals_ok,
-error_msg, duration_s, created_at (UTC string)
+### Response Schema
+```json
+{
+  "symbol": "EWG",
+  "found": true,
+  "suggestions": {
+    "description": "iShares MSCI Germany ETF",
+    "asset_class": "International Equities",
+    "sector": "Germany"
+  },
+  "already_exists": false,
+  "notes": null
+}
 ```
 
-### Scheduler Status Endpoint
-`GET /api/scheduler/status` — returns last run info, next scheduled time, `today_complete` flag.
-Read-only, no recalculation.
+### Asset Class Override Table (in `backend/routers/tickers.py`)
+Override table is checked FIRST before any yfinance inference. Add new entries here when lookup returns wrong asset class:
 
-### Dashboard Header — Scheduler Indicator
-`● SCHED` dot next to `● LIVE`:
-- **Green** — today's EOD run complete (`today_complete = true`)
-- **Amber** — scheduled, not yet run today
-- **Red** — last run failed
-- Hover tooltip shows run time or next scheduled time. Fetched once on page load, no polling.
-
-### Refactors Made for Scheduler
-- `refresh_data(db)` extracted from `get_batch` endpoint in `market_data.py` — callable directly
-- `run_hurst(db)`, `run_pivots(db)`, `run_output(db)`, `calculate_signals(db)` extracted in `signals.py`
-- HTTP endpoints now call these functions — behavior unchanged
-- `main.py` converted from module-level startup to `lifespan` context manager
-
-### FastAPI Endpoints (Phase 4)
+```python
+ASSET_CLASS_OVERRIDES = {
+    # Domestic Fixed Income
+    'TLT': 'Domestic Fixed Income', 'LQD': 'Domestic Fixed Income',
+    'HYG': 'Domestic Fixed Income', 'CLOX': 'Domestic Fixed Income',
+    # International Equities
+    'EWG': 'International Equities', 'EWQ': 'International Equities',
+    'EWP': 'International Equities', 'KWT': 'International Equities',
+    'KWEB': 'International Equities', 'EWJ': 'International Equities',
+    'EWW': 'International Equities', 'TUR': 'International Equities',
+    'UAE': 'International Equities',
+    # Foreign Exchange
+    'GLD': 'Foreign Exchange', 'SGOL': 'Foreign Exchange',
+    'FXB': 'Foreign Exchange', 'FXE': 'Foreign Exchange', 'FXY': 'Foreign Exchange',
+    # Commodities
+    'USO': 'Commodities', 'SLV': 'Commodities', 'PALL': 'Commodities',
+    'PPLT': 'Commodities', 'CANE': 'Commodities', 'WOOD': 'Commodities',
+    'CORN': 'Commodities', 'WEAT': 'Commodities',
+    # Digital Assets
+    'IBIT': 'Digital Assets',
+}
 ```
-GET /api/scheduler/status         ← Task 4.2 ✅  (read-only status)
-GET /api/signals/calculate        ← Task 4.3 ✅  (full pipeline + snapshot)
-GET /api/signals/history          ← Task 4.3 ✅  (query snapshots, not wired to UI yet)
-GET /api/tickers                  ← Task 4.6 ✅  (list all, optional ?active filter)
-POST /api/tickers                 ← Task 4.6 ✅  (create)
-PUT /api/tickers/{symbol}         ← Task 4.6 ✅  (update)
-DELETE /api/tickers/{symbol}      ← Task 4.6 ✅  (soft-delete)
-GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
-```
+
+### Lookup Rules
+1. Override table wins — always checked first
+2. Only fills empty form fields — never overwrites existing values
+3. Graceful on missing data — `null` fields returned, no error
+4. Never writes to DB — suggestions only
+5. yfinance inference runs as fallback for unknown tickers
 
 ---
 
@@ -609,6 +749,18 @@ GET /api/signals/output   ← Task 3.3 ✅  (recalculates + writes to DB)
 GET /api/signals/stored   ← Task 3.4 ✅  (read-only, grouped by ticker, used on page load)
 ```
 
+### FastAPI Endpoints (Phase 4)
+```
+GET /api/scheduler/status         ← Task 4.2 ✅  (read-only status)
+GET /api/signals/calculate        ← Task 4.3 ✅  (full pipeline + snapshot, replaces /output for button)
+GET /api/signals/history          ← Task 4.3 ✅  (query snapshots, not wired to UI yet)
+GET /api/tickers                  ← Task 4.6 ✅  (list all, optional ?active filter)
+POST /api/tickers                 ← Task 4.6 ✅  (create)
+PUT /api/tickers/{symbol}         ← Task 4.6 ✅  (update)
+DELETE /api/tickers/{symbol}      ← Task 4.6 ✅  (soft-delete)
+GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
+```
+
 ### Sanity Checks
 | Ticker | Expected H(Trade) | Rationale |
 |---|---|---|
@@ -626,9 +778,13 @@ GET /api/signals/stored   ← Task 3.4 ✅  (read-only, grouped by ticker, used 
 - REFRESH DATA populates the cache — CALCULATE SIGNALS reads from it
 - Same-day cache invalidation — stale rows reset before re-fetch
 - Price history excludes today's incomplete bar before pivot detection
+- Auto-loading from SQLite cache on page load is allowed — it is a local DB read, not a Yahoo call
 
-### tickers.js — Tier 1 (48 tickers, STATIC)
-Do not modify without explicit instruction. Source of truth for ticker universe.
+### Ticker Universe — Source of Truth
+- **SQLite `tickers` table** is the source of truth as of Task 4.6
+- `tickers.js` is seed data only — runs once on first FastAPI startup if table is empty
+- Do not modify `tickers.js` — use the admin panel to add/edit/deactivate tickers
+- `get_active_tickers(db)` is the only way backend should retrieve the ticker list — no hardcoded arrays
 
 ---
 
@@ -670,14 +826,15 @@ Do not modify without explicit instruction. Source of truth for ticker universe.
 
 ## Dashboard — Current State
 - React app running at localhost:3000 via Docker
-- Close prices: real — from Yahoo Finance via FastAPI
+- Close prices: real — auto-loaded from SQLite cache on page load
 - Sparklines: real — 60-day price history
 - Rel IV: real — realized vol percentile proxy (Schwab IV Percentile in Phase 5)
 - Volume: real — daily volume from Yahoo Finance
 - Signal columns: **live** — populated from `/api/signals/stored` on page load; recalculated on CALCULATE SIGNALS
-- REFRESH DATA: manual fetch only, never auto on page load
+- REFRESH DATA: manual fetch only — forces fresh Yahoo Finance fetch outside scheduler window
 - CALCULATE SIGNALS: manual trigger only, reads from price_cache
 - Admin panel at localhost:3000/admin — password protected
+- Ticker universe: loaded from `/api/tickers?active=true` on page load
 
 ## Dashboard Columns (current, in order)
 | Column | Description |
@@ -756,7 +913,7 @@ Each LRR/HRR cell uses its **own timeframe's direction** color, not the overall 
   - `4ab3208` — Task 4.2: EOD Scheduler (APScheduler + NYSE calendar)
   - `96346bc` — Fix scheduler run_date timezone (ET date, not UTC)
   - `0e510dd` — Fix cache_date timezone (ET date, not UTC)
-  - `cd15150` — Task 4.6: Tickers table + dynamic backend + Task 4.7: yfinance lookup
+  - `cd15150` — Tasks 4.6 + 4.7: Tickers table + dynamic backend + yfinance lookup
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -775,12 +932,12 @@ git checkout -- .   # roll back if needed
 - **Access:** Password from `.env` → `REACT_APP_ADMIN_PASSWORD`
 - **After changing `.env`:** Must restart Docker container
 - **Never hardcode the password in source code**
-- **Never hard delete tickers** — use `active: false`
+- **Never hard delete tickers** — use `active: false` via DELETE endpoint
 
 ---
 
 ## Project Rules — Read Before Making Changes
-1. **Never modify the ticker universe without explicit instruction**
+1. **Never modify the ticker universe without explicit instruction** — use admin panel, not code edits
 2. **Never hardcode passwords, API keys, or secrets** — always use `.env`
 3. **Never hard delete tickers** — use `active: false`
 4. **Direction values are Bullish / Bearish / Neutral** — never Up / Down
@@ -791,12 +948,12 @@ git checkout -- .   # roll back if needed
 9. **Keep components modular** — one component per file
 10. **Docker:** changes to `src/` reflect on save — no rebuild needed for frontend
 11. **Do not modify** `docker-compose.yml`, `Dockerfile`, or `package.json` without flagging first
-12. **Phase 3 signal calculations are now in scope** — implement per spec above, no deviations
+12. **Phase 3 signal calculations are locked** — implement per spec above, no deviations
 13. **Flag all [OPEN] items** before implementing — do not assume defaults
 14. **Commit to Git** after every confirmed working state
 15. **Neo = Claude Code** (VS Code extension) — all code changes go here
 16. **No worktrees or feature branches** — all changes committed directly to master
-17. **Never auto-fetch from Yahoo Finance** — REFRESH DATA button only
+17. **Never auto-fetch from Yahoo Finance** — REFRESH DATA button only; auto-loading from SQLite cache on page load IS allowed
 18. **Never auto-calculate signals** — CALCULATE SIGNALS button only
 19. **`backend/signal_matrix.db` must never be committed to Git**
 20. **C is the invalidation level** — Break of Trade/Trend fires on price closing through C
@@ -813,6 +970,11 @@ git checkout -- .   # roll back if needed
 31. **LRR/HRR cell color = timeframe direction** — use `dirRangeColor(dir, isWarn)`, NOT viewpoint color
 32. **Per-cell ⚠ warn flags are price-based** — separate from IV-driven `warning` structural state
 33. **Warning scope is timeframe-specific** — Trade: full (C+B); Trend: C-based only; LT: none
+34. **All cache_date and run_date writes use ET date** — never UTC date for trading day keys
+35. **`get_active_tickers(db)`** is the only way to retrieve the ticker list in backend — no hardcoded arrays
+36. **tickers.js is seed data only** — never import it for the live ticker universe; use `/api/tickers`
+37. **Asset class overrides checked first** — add new entries to `ASSET_CLASS_OVERRIDES` in `tickers.py` when yfinance returns wrong asset class
+38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
 
 ---
 
@@ -823,24 +985,28 @@ git checkout -- .   # roll back if needed
 | Phase 1 | Dashboard Refinement | ✅ Complete |
 | Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ✅ Complete |
-| Phase 4 | Backend & Database | 🔄 Tasks 4.2/4.6/4.7 complete — Task 4.4 (deploy) deferred |
-| Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
-| Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
+| Phase 4 | Backend & Database | 🔄 In Progress — 4.1–4.3, 4.5–4.7 complete; 4.4 (Fly.io) deferred to Phase 5 |
+| Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV — triggers Fly.io deployment |
+| Phase 6 | Cloud Deployment | ⬜ Supabase migration, production hardening |
 
 ---
 
 ## What Is NOT In Scope Yet
 - Schwab API (real-time streaming, options IV)
 - Supabase / PostgreSQL cloud database
+- Fly.io deployment (deferred until Phase 5 Schwab OAuth forces a public URL)
 - Quad Tracker dashboard
 - Quad alignment column in Signal Matrix table (deferred to Quad Tracker phase)
-- Cloud deployment
 - Tier 2 auto-surfacing based on conviction threshold
 - MA20/50/100 display in dashboard UI
+- Signal history UI (table exists, endpoint exists — frontend consumption is future scope)
 
 ---
 
-## Ticker Universe — Tier 1 (48 tickers, STATIC)
+## Ticker Universe — Seed Data (tickers.js — DO NOT USE AS LIVE SOURCE)
+
+The live ticker universe is managed via the SQLite `tickers` table and admin panel.
+The list below is the original seed data only — reference for recovery purposes.
 
 ```javascript
 const tickers = [
@@ -895,8 +1061,8 @@ const tickers = [
   // TIER 2 — seed data
   { ticker: "XOP",   description: "SPDR S&P Oil & Gas Explor & Prod ETF", assetClass: "Commodities",       sector: "Energy",                   tier: 2, parentTicker: "USO",  active: true, displayOrder: 1 },
   { ticker: "OIH",   description: "VanEck Oil Services ETF",              assetClass: "Commodities",       sector: "Energy",                   tier: 2, parentTicker: "USO",  active: true, displayOrder: 2 },
-  { ticker: "AMZN",  description: "Amazon.com Inc.",                      assetClass: "Domestic Equities", sector: "Consumer Discretionary",   tier: 2, parentTicker: "XLY",  active: true, displayOrder: 1 },
   { ticker: "SOXX",  description: "iShares Semiconductor ETF",            assetClass: "Domestic Equities", sector: "Technology",               tier: 2, parentTicker: "XLK",  active: true, displayOrder: 1 },
   { ticker: "SGOL",  description: "Aberdeen Physical Gold Shares ETF",    assetClass: "Foreign Exchange",  sector: "Gold",                     tier: 2, parentTicker: "GLD",  active: true, displayOrder: 1 },
 ];
+// NOTE: AMZN excluded from Tier 2 seed — already exists as Tier 1. Add via admin panel if needed as Tier 2.
 ```
