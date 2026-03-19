@@ -8,9 +8,38 @@ Never calls yfinance directly — CALCULATE SIGNALS always runs after REFRESH DA
 """
 import json
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pandas_market_calendars as mcal
+
 from models.price_cache import PriceCache
 
+_ET = ZoneInfo("America/New_York")
+_NYSE = mcal.get_calendar("NYSE")
+# Max trading days since pivot_c before the structure is considered stale.
+# None = no cutoff (long-term structures are expected to be old).
+_STALE_C_DAYS = {
+    "trade": 60,
+    "trend": 100,
+    "lt":    None,
+}
+
 logger = logging.getLogger(__name__)
+
+
+def _trading_days_since(date_str: str) -> int:
+    """
+    Count NYSE trading days elapsed since date_str (exclusive) through today ET (inclusive).
+    Returns 0 on any parse or calendar error.
+    """
+    try:
+        today_et = datetime.now(_ET).date()
+        schedule = _NYSE.schedule(start_date=date_str, end_date=str(today_et))
+        return max(0, len(schedule) - 1)  # subtract 1 to exclude the C date itself
+    except Exception:
+        return 0
+
 
 # Bar windows per timeframe (trading days)
 TIMEFRAMES = {
@@ -288,6 +317,16 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
     abc = update_c_dynamically(abc, pivot_highs, pivot_lows)
 
     d_price, d_idx, state = compute_d_and_state(abc, prices, timeframe)
+
+    # Stale C check — if pivot_c exceeds the timeframe cutoff, treat as NO_STRUCTURE
+    max_c_age = _STALE_C_DAYS.get(timeframe)
+    c_date_str = dates[abc["c_idx"]] if dates else None
+    if max_c_age is not None and c_date_str and _trading_days_since(c_date_str) > max_c_age:
+        logger.info(
+            f"[{timeframe}] pivot_c_date {c_date_str} is stale "
+            f"(>{max_c_age} trading days) — overriding to NO_STRUCTURE"
+        )
+        return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
     return {
         "bar_window":       bar_window,

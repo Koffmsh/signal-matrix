@@ -149,9 +149,11 @@ def _compute_direction(price: float, lrr: float | None, hrr: float | None,
     """
     Derive Bullish / Bearish / Neutral for one timeframe.
 
-    Uptrend:   effective_floor   = max(lrr, c) → Bullish if price > floor
-    Downtrend: effective_ceiling = min(hrr, c) → Bearish if price < ceiling
-    Break / no structure → Neutral always.
+    C is the only invalidation level. Direction is Bullish/Bearish as long as price
+    hasn't closed through C — regardless of structural state. FORMING, EXTENDED, and
+    WARNING do not force Neutral; only BREAK_OF_TRADE, BREAK_OF_TREND, and NO_STRUCTURE do.
+
+    Direction is determined by pivots only — H (and therefore LRR/HRR) has no role.
     """
     if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "NO_STRUCTURE"):
         return "Neutral"
@@ -159,16 +161,10 @@ def _compute_direction(price: float, lrr: float | None, hrr: float | None,
         return "Neutral"
 
     if pivot_direction == "uptrend":
-        if lrr is None:
-            return "Neutral"   # no H data → can't confirm Bullish
-        effective_floor = max(lrr, c)
-        return "Bullish" if price > effective_floor else "Neutral"
+        return "Bullish" if price > c else "Neutral"
 
     if pivot_direction == "downtrend":
-        if hrr is None:
-            return "Neutral"
-        effective_ceiling = min(hrr, c)
-        return "Bearish" if price < effective_ceiling else "Neutral"
+        return "Bearish" if price < c else "Neutral"
 
     return "Neutral"
 
