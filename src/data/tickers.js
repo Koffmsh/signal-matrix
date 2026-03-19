@@ -1,5 +1,6 @@
-// Tier 1 Ticker Universe — STATIC — do not modify without explicit instruction
-// Source of truth for all ticker data in the platform
+// SEED DATA ONLY — source of truth is now the SQLite tickers table
+// This file is used once on first FastAPI startup to populate the DB
+// Do not modify the ticker list here — use the admin panel instead
 
 const tickers = [
   // DOMESTIC EQUITIES — Index

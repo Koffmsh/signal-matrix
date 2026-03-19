@@ -1,21 +1,19 @@
 import { useState, useMemo, useEffect } from "react";
 import { fetchBatchMarketData } from "./services/api";
-import tickersData from "./data/tickers";
 import AdminPanel from "./components/Admin/AdminPanel";
 
-// ── Storage helpers ──────────────────────────────────────────────────────────
-export function loadTickers() {
-  try {
-    const stored = localStorage.getItem("sm_tickers");
-    if (stored) return JSON.parse(stored);
-  } catch (e) {}
-  return tickersData;
-}
-
-export function saveTickers(data) {
-  try {
-    localStorage.setItem("sm_tickers", JSON.stringify(data));
-  } catch (e) {}
+// ── API field mapping: snake_case → camelCase ─────────────────────────────────
+function tickerFromApi(r) {
+  return {
+    ticker:       r.ticker        || "",
+    description:  r.description   || "",
+    assetClass:   r.asset_class   || "",
+    sector:       r.sector        || "",
+    tier:         r.tier          ?? 1,
+    parentTicker: r.parent_ticker || null,
+    active:       r.active        ?? true,
+    displayOrder: r.display_order ?? 999,
+  };
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────────
@@ -227,8 +225,6 @@ const stateColor = (s)  =>
   s.includes("BREAK")   ? "#ff4d6d" : "#8899aa";
 
 // ── Data ─────────────────────────────────────────────────────────────────────
-const TICKERS = loadTickers();
-
 const CLASSES    = ["All", "Domestic Equities", "Domestic Fixed Income", "Digital Assets", "Foreign Exchange", "International Equities", "Commodities"];
 const VIEWPOINTS = ["All", "Bullish", "Bearish", "Neutral"];
 
@@ -244,6 +240,7 @@ function Dashboard() {
   const [selected,    setSelected]    = useState(null);
   const [expandedTickers, setExpandedTickers] = useState(new Set());
 
+  const [tickerUniverse,  setTickerUniverse]  = useState([]);
   const [realDataMap,     setRealDataMap]     = useState(new Map());
   const [signalMap,       setSignalMap]       = useState(new Map());
   const [isRefreshing,    setIsRefreshing]    = useState(false);
@@ -251,6 +248,14 @@ function Dashboard() {
   const [isCalculating,   setIsCalculating]   = useState(false);
   const [calcStatus,      setCalcStatus]      = useState(null);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
+
+  // Load ticker universe from DB on page load
+  useEffect(() => {
+    fetch("http://localhost:8000/api/tickers?active=true")
+      .then(r => r.json())
+      .then(data => setTickerUniverse(data.map(tickerFromApi)))
+      .catch(() => {});
+  }, []);
 
   // Load market data from cache on page load (instant when cache is warm)
   useEffect(() => {
@@ -319,12 +324,12 @@ function Dashboard() {
 
   // Three-step pipeline: mock → price → signals
   const ALL_DATA = useMemo(() =>
-    TICKERS.filter(t => t.active).map(t => {
+    tickerUniverse.filter(t => t.active).map(t => {
       const mockRow  = generateMockData(t);
       const priceRow = mergeRealData(mockRow, realDataMap);
       return mergeSignalData(priceRow, signalMap);
     }),
-    [realDataMap, signalMap]
+    [tickerUniverse, realDataMap, signalMap]
   );
   const DATA    = ALL_DATA.filter(t => t.tier === 1);
   const TIER2_DATA = ALL_DATA.filter(t => t.tier === 2);

@@ -1,5 +1,29 @@
 import { useState, useEffect, useRef } from "react";
-import { loadTickers, saveTickers } from "../../App";
+
+const API = "http://localhost:8000/api/tickers";
+
+// ── Field mapping: API (snake_case) ↔ local state (camelCase) ────────────────
+const fromApi = (r) => ({
+  ticker:       r.ticker        || "",
+  description:  r.description   || "",
+  assetClass:   r.asset_class   || "Domestic Equities",
+  sector:       r.sector        || "",
+  tier:         r.tier          ?? 1,
+  parentTicker: r.parent_ticker || "",
+  active:       r.active        ?? true,
+  displayOrder: r.display_order ?? 999,
+});
+
+const toApi = (row) => ({
+  ticker:        row.ticker,
+  description:   row.description,
+  asset_class:   row.assetClass,
+  sector:        row.sector,
+  tier:          Number(row.tier),
+  parent_ticker: row.parentTicker || null,
+  active:        row.active,
+  display_order: Number(row.displayOrder),
+});
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ASSET_CLASSES = [
@@ -20,6 +44,7 @@ const BLANK_TICKER = {
   parentTicker: "",
   active: true,
   displayOrder: 999,
+  _isNew: true,  // local-only flag — not sent to API
 };
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -107,7 +132,7 @@ function EditCell({ value, onChange, onCommit, type = "text", options = null, di
   };
 
   if (disabled) {
-    return <td style={{ ...S.cellText, color: "#3a4a5a", cursor: "default" }}>{value || "—"}</td>;
+    return <td style={{ ...S.cellText, color: "#c8d8e8", cursor: "default" }}>{value || "—"}</td>;
   }
 
   if (editing) {
@@ -160,46 +185,109 @@ export default function AdminPanel() {
   const [toast, setToast] = useState(null);
   const [filter, setFilter] = useState("all"); // all | active | inactive
 
-  // Load from localStorage on mount
-  useEffect(() => {
-    if (authed) setRows(loadTickers());
-  }, [authed]);
-
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2000);
   };
 
-  const persist = (updated) => {
-    setRows(updated);
-    saveTickers(updated);
-    showToast("Saved");
+  // Load from API on auth
+  const loadFromApi = () => {
+    fetch(API)  // fetch all — no active filter, admin sees everything
+      .then(r => r.json())
+      .then(data => setRows(data.map(fromApi)))
+      .catch(() => showToast("Failed to load tickers"));
   };
 
-  const updateField = (idx, field, value) => {
+  useEffect(() => {
+    if (authed) loadFromApi();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed]);
+
+  const updateField = async (idx, field, value) => {
+    // Update local state first for instant UI feedback
     const updated = rows.map((r, i) => i === idx ? { ...r, [field]: value } : r);
-    persist(updated);
+    setRows(updated);
+    const row = updated[idx];
+
+    if (row._isNew) {
+      // New row — only POST once the ticker symbol is committed
+      if (field === "ticker" && value) {
+        try {
+          const res = await fetch(API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(toApi(row)),
+          });
+          if (res.status === 409) {
+            showToast(`${value} already exists`);
+            setRows(rows); // revert
+            return;
+          }
+          if (!res.ok) throw new Error();
+          // Clear _isNew flag — row is now persisted
+          setRows(prev => prev.map((r, i) => i === idx ? { ...r, _isNew: false } : r));
+          showToast("Added");
+        } catch {
+          showToast("Error saving ticker");
+        }
+      }
+      // Other fields on new row: update local state only, wait for ticker symbol
+      return;
+    }
+
+    // Existing row — PUT to API
+    try {
+      const res = await fetch(`${API}/${row.ticker}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toApi(row)),
+      });
+      if (!res.ok) throw new Error();
+      showToast("Saved");
+    } catch {
+      showToast("Error saving");
+    }
   };
 
   const addRow = () => {
-    const maxOrder = rows.reduce((m, r) => Math.max(m, r.displayOrder || 0), 0);
-    const newRow = { ...BLANK_TICKER, displayOrder: maxOrder + 1 };
-    const updated = [...rows, newRow];
-    setRows(updated);
-    // Don't persist until user edits — blank ticker has no ticker symbol yet
+    const maxOrder = rows.filter(r => !r._isNew).reduce((m, r) => Math.max(m, r.displayOrder || 0), 0);
+    setRows(prev => [...prev, { ...BLANK_TICKER, displayOrder: maxOrder + 1 }]);
   };
 
-  const deactivate = (idx) => {
-    const updated = rows.map((r, i) => i === idx ? { ...r, active: false } : r);
-    persist(updated);
+  const deactivate = async (idx) => {
+    const row = rows[idx];
+    if (row._isNew) {
+      // Just remove from local state — not in DB yet
+      setRows(prev => prev.filter((_, i) => i !== idx));
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/${row.ticker}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      setRows(prev => prev.map((r, i) => i === idx ? { ...r, active: false } : r));
+      showToast("Deactivated");
+    } catch {
+      showToast("Error deactivating");
+    }
   };
 
-  const reactivate = (idx) => {
-    const updated = rows.map((r, i) => i === idx ? { ...r, active: true } : r);
-    persist(updated);
+  const reactivate = async (idx) => {
+    const row = rows[idx];
+    try {
+      const res = await fetch(`${API}/${row.ticker}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...toApi(row), active: true }),
+      });
+      if (!res.ok) throw new Error();
+      setRows(prev => prev.map((r, i) => i === idx ? { ...r, active: true } : r));
+      showToast("Reactivated");
+    } catch {
+      showToast("Error reactivating");
+    }
   };
 
-  const tier1Tickers = rows.filter(r => r.tier === 1 && r.ticker).map(r => r.ticker);
+  const tier1Tickers = rows.filter(r => r.tier === 1 && r.ticker && !r._isNew).map(r => r.ticker);
 
   const visibleRows = rows
     .map((r, originalIdx) => ({ ...r, originalIdx }))
@@ -208,7 +296,11 @@ export default function AdminPanel() {
       if (filter === "inactive") return !r.active;
       return true;
     })
-    .sort((a, b) => (a.displayOrder || 999) - (b.displayOrder || 999) || a.ticker.localeCompare(b.ticker));
+    .sort((a, b) => {
+      if (a._isNew) return 1;
+      if (b._isNew) return -1;
+      return (a.displayOrder || 999) - (b.displayOrder || 999) || (a.ticker || "").localeCompare(b.ticker || "");
+    });
 
   if (!authed) return <PasswordGate onSuccess={() => setAuthed(true)} />;
 
@@ -227,7 +319,7 @@ export default function AdminPanel() {
           </div>
         </div>
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-          <span style={{ fontSize: "10px", color: "#667788" }}>{rows.filter(r => r.active).length} active · {rows.filter(r => !r.active).length} inactive · {rows.length} total</span>
+          <span style={{ fontSize: "10px", color: "#667788" }}>{rows.filter(r => r.active && !r._isNew).length} active · {rows.filter(r => !r.active).length} inactive · {rows.filter(r => !r._isNew).length} total</span>
           <button style={S.addBtn} onClick={addRow}>+ ADD TICKER</button>
           <button style={S.backBtn} onClick={() => window.location.href = "/"}>← DASHBOARD</button>
         </div>
@@ -273,20 +365,24 @@ export default function AdminPanel() {
                   onMouseEnter={() => setHoveredRow(idx)}
                   onMouseLeave={() => setHoveredRow(null)}
                   style={{
-                    background: isHovered ? "#0d1a28" : isInactive ? "#07090e" : idx % 2 === 0 ? "#080e18" : "#090f1a",
-                    borderLeft: "2px solid transparent",
+                    background: isHovered ? "#0d1a28" : isInactive ? "#07090e" : row._isNew ? "#071020" : idx % 2 === 0 ? "#080e18" : "#090f1a",
+                    borderLeft: row._isNew ? "2px solid #0077ff" : "2px solid transparent",
                     opacity: isInactive ? 0.45 : 1,
                     transition: "background 0.15s, opacity 0.2s",
                   }}
                 >
                   {/* Status dot */}
                   <td style={{ padding: "8px 12px", textAlign: "center" }}>
-                    <span style={{ fontSize: "14px", color: row.active ? "#00e5a0" : "#3a4a5a" }} title={row.active ? "Active" : "Inactive"}>●</span>
+                    <span
+                      style={{ fontSize: "14px", color: row._isNew ? "#0077ff" : row.active ? "#00e5a0" : "#3a4a5a" }}
+                      title={row._isNew ? "New — enter ticker to save" : row.active ? "Active" : "Inactive"}
+                    >●</span>
                   </td>
 
-                  {/* Ticker */}
+                  {/* Ticker — editable only on new rows */}
                   <EditCell
                     value={row.ticker}
+                    disabled={!row._isNew}
                     onCommit={v => updateField(idx, "ticker", v.toUpperCase().trim())}
                   />
 
@@ -334,7 +430,9 @@ export default function AdminPanel() {
                   {/* Deactivate / Reactivate — show on hover */}
                   <td style={{ padding: "8px", textAlign: "right", minWidth: "100px" }}>
                     {isHovered && (
-                      row.active
+                      row._isNew
+                        ? <button style={S.deactBtn} onClick={() => deactivate(idx)}>REMOVE</button>
+                        : row.active
                         ? <button style={S.deactBtn} onClick={() => deactivate(idx)}>DEACTIVATE</button>
                         : <button style={S.reactBtn} onClick={() => reactivate(idx)}>REACTIVATE</button>
                     )}

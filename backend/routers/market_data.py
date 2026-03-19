@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from models.price_cache import PriceCache
+from models.ticker import Ticker
 from services.yahoo_finance import fetch_ticker_data, RateLimitError
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -13,17 +14,10 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market-data", tags=["market-data"])
 
-# Full Tier 1 ticker list — must match tickers.js
-TIER1_TICKERS = [
-    "SPX", "NDX", "$DJI", "VIX",
-    "SPY", "QQQ", "IWM",
-    "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLB", "XLU", "XLRE", "XLC",
-    "AAPL", "MSFT", "NVDA", "AVGO", "GOOGL", "META", "NFLX", "AMZN", "TSLA",
-    "SMH", "CIBR", "GRID", "QTUM", "ROBO", "SATS",
-    "TLT", "IBIT", "GLD", "USD", "JPY",
-    "KWEB", "EWJ", "EWW", "TUR", "UAE",
-    "USO", "SLV", "PALL", "CANE", "WOOD",
-]
+
+def get_active_tickers(db: Session) -> list:
+    rows = db.query(Ticker).filter(Ticker.active == True).order_by(Ticker.tier, Ticker.display_order).all()
+    return [r.ticker for r in rows]
 
 
 def serialize_cache_row(row: PriceCache) -> dict:
@@ -121,7 +115,7 @@ def refresh_data(db: Session) -> dict:
     results      = []
     rate_limited = False
 
-    for ticker in TIER1_TICKERS:
+    for ticker in get_active_tickers(db):
         if rate_limited:
             data = get_stale(ticker, db)
         else:

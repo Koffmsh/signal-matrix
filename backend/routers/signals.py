@@ -5,6 +5,7 @@ from models.signal_hurst import SignalHurst
 from models.signal_pivots import SignalPivots
 from models.signal_output import SignalOutput
 from models.signal_history import SignalHistory
+from models.ticker import Ticker
 from services.signal_engine import compute_hurst
 from services.pivot_engine import compute_pivots
 from services.conviction_engine import compute_output
@@ -16,27 +17,20 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
-# Full Tier 1 ticker list — must match market_data.py
-TIER1_TICKERS = [
-    "SPX", "NDX", "$DJI", "VIX",
-    "SPY", "QQQ", "IWM",
-    "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLB", "XLU", "XLRE", "XLC",
-    "AAPL", "MSFT", "NVDA", "AVGO", "GOOGL", "META", "NFLX", "AMZN", "TSLA",
-    "SMH", "CIBR", "GRID", "QTUM", "ROBO", "SATS",
-    "TLT", "IBIT", "GLD", "USD", "JPY",
-    "KWEB", "EWJ", "EWW", "TUR", "UAE",
-    "USO", "SLV", "PALL", "CANE", "WOOD",
-]
+
+def get_active_tickers(db: Session) -> list:
+    rows = db.query(Ticker).filter(Ticker.active == True).order_by(Ticker.tier, Ticker.display_order).all()
+    return [r.ticker for r in rows]
 
 
 # ── Callable functions (used by scheduler and HTTP endpoints) ─────────────────
 
 def run_hurst(db: Session) -> dict:
-    """Compute Hurst Exponent + Fractal Dimension for all Tier 1 tickers."""
+    """Compute Hurst Exponent + Fractal Dimension for all active tickers."""
     results = []
     errors  = []
 
-    for ticker in TIER1_TICKERS:
+    for ticker in get_active_tickers(db):
         try:
             data = compute_hurst(ticker, db)
 
@@ -77,11 +71,11 @@ def run_hurst(db: Session) -> dict:
 
 
 def run_pivots(db: Session) -> dict:
-    """Compute ABC pivot structure for all Tier 1 tickers."""
+    """Compute ABC pivot structure for all active tickers."""
     results = []
     errors  = []
 
-    for ticker in TIER1_TICKERS:
+    for ticker in get_active_tickers(db):
         try:
             data = compute_pivots(ticker, db)
             now  = datetime.utcnow()
@@ -125,11 +119,11 @@ def run_pivots(db: Session) -> dict:
 
 
 def run_output(db: Session) -> dict:
-    """Compute LRR/HRR + Conviction for all Tier 1 tickers."""
+    """Compute LRR/HRR + Conviction for all active tickers."""
     results = []
     errors  = []
 
-    for ticker in TIER1_TICKERS:
+    for ticker in get_active_tickers(db):
         try:
             data = compute_output(ticker, db)
             now  = datetime.utcnow()

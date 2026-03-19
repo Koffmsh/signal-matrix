@@ -4,12 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routers import market_data, signals
 from routers.scheduler import router as scheduler_router
+from routers.tickers import router as tickers_router, seed_tickers_if_empty
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+from database import SessionLocal
 import models.signal_hurst    # ensure tables are registered before create_all
 import models.signal_pivots   # Task 3.2 — signal_pivots table
 import models.signal_output   # Task 3.3 — signal_output table
 import models.scheduler_log   # Task 4.2 — scheduler_log table
 import models.signal_history  # Task 4.3 — signal_history table
+import models.ticker          # Task 4.6 — tickers table
 import services.scheduler as scheduler_svc
 import logging
 
@@ -47,6 +51,12 @@ with engine.connect() as _conn:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Seed tickers table on first startup
+    db: Session = SessionLocal()
+    try:
+        seed_tickers_if_empty(db)
+    finally:
+        db.close()
     scheduler_svc.start()
     await scheduler_svc.run_catchup_on_startup()
     yield
@@ -72,6 +82,7 @@ app.add_middleware(
 app.include_router(market_data.router)
 app.include_router(signals.router)
 app.include_router(scheduler_router)
+app.include_router(tickers_router)
 
 
 @app.get("/health")
