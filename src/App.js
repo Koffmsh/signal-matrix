@@ -252,6 +252,16 @@ function Dashboard() {
   const [calcStatus,      setCalcStatus]      = useState(null);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
 
+  // Load market data from cache on page load (instant when cache is warm)
+  useEffect(() => {
+    fetchBatchMarketData()
+      .then(map => {
+        setRealDataMap(map);
+        if (map.size === 0) setDataError(true);
+      })
+      .catch(() => setDataError(true));
+  }, []);
+
   // Load stored signals on page load (no recalculation)
   useEffect(() => {
     fetch("http://localhost:8000/api/signals/stored")
@@ -276,11 +286,7 @@ function Dashboard() {
     if (isCalculating) return;
     setIsCalculating(true);
     setCalcStatus(null);
-    fetch("http://localhost:8000/api/signals/hurst")
-      .then(r => r.json())
-      .then(() => fetch("http://localhost:8000/api/signals/pivots"))
-      .then(r => r.json())
-      .then(() => fetch("http://localhost:8000/api/signals/output"))
+    fetch("http://localhost:8000/api/signals/calculate")
       .then(r => r.json())
       .then(outputData => {
         const m = new Map();

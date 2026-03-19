@@ -256,11 +256,22 @@ def calculate_signals(db: Session, trigger: str = "manual") -> dict:
 
 # ── HTTP endpoints ────────────────────────────────────────────────────────────
 
+@router.get("/calculate")
+def run_calculate_signals(db: Session = Depends(get_db)):
+    """
+    Task 4.3 — Full signal pipeline + snapshot in one call.
+    Called by CALCULATE SIGNALS button: hurst → pivots → output → snapshot.
+    Returns output results in the same shape the frontend expects.
+    """
+    result = calculate_signals(db, trigger="manual")
+    return result["output"]
+
+
 @router.get("/hurst")
 def calculate_hurst(db: Session = Depends(get_db)):
     """
     Task 3.1 — Compute Hurst Exponent + Fractal Dimension for all Tier 1 tickers.
-    Manual trigger only — called by CALCULATE SIGNALS button.
+    Debug endpoint — use /calculate for full pipeline with snapshot.
     """
     return run_hurst(db)
 
