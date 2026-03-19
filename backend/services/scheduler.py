@@ -58,7 +58,7 @@ def run_eod_job(trigger: str = "scheduled") -> None:
         refresh_ok = not result.get("rate_limited", False)
         logger.info(f"Scheduler: refresh complete — {result['count']} tickers")
 
-        sig        = calculate_signals(db)
+        sig        = calculate_signals(db, trigger=trigger)
         signals_ok = sig["output"]["errors"] == 0
         logger.info(f"Scheduler: signals complete — {sig['output']['calculated']} tickers")
 

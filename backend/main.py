@@ -9,6 +9,7 @@ import models.signal_hurst    # ensure tables are registered before create_all
 import models.signal_pivots   # Task 3.2 — signal_pivots table
 import models.signal_output   # Task 3.3 — signal_output table
 import models.scheduler_log   # Task 4.2 — scheduler_log table
+import models.signal_history  # Task 4.3 — signal_history table
 import services.scheduler as scheduler_svc
 import logging
 

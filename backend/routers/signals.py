@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from database import get_db
 from models.signal_hurst import SignalHurst
 from models.signal_pivots import SignalPivots
 from models.signal_output import SignalOutput
+from models.signal_history import SignalHistory
 from services.signal_engine import compute_hurst
 from services.pivot_engine import compute_pivots
 from services.conviction_engine import compute_output
 from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -177,12 +180,77 @@ def run_output(db: Session) -> dict:
     return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
-def calculate_signals(db: Session) -> dict:
+def snapshot_signals(trigger: str, db: Session) -> dict:
+    """
+    Snapshot current signal_output rows to signal_history for today's ET date.
+    Idempotent — skips any ticker/timeframe that already has a row for today.
+    Called inside calculate_signals; failure never blocks signal calculation.
+    """
+    _ET         = ZoneInfo("America/New_York")
+    today_str   = datetime.now(_ET).strftime("%Y-%m-%d")
+    now_utc_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    rows      = db.query(SignalOutput).all()
+    inserted  = 0
+    skipped   = 0
+
+    for row in rows:
+        already = db.query(SignalHistory).filter(
+            SignalHistory.snapshot_date == today_str,
+            SignalHistory.ticker        == row.ticker,
+            SignalHistory.timeframe     == row.timeframe,
+        ).first()
+
+        if already:
+            skipped += 1
+            continue
+
+        db.add(SignalHistory(
+            snapshot_date    = today_str,
+            trigger          = trigger,
+            ticker           = row.ticker,
+            timeframe        = row.timeframe,
+            lrr              = row.lrr,
+            hrr              = row.hrr,
+            structural_state = row.structural_state,
+            trade_direction  = row.trade_direction,
+            conviction       = row.conviction,
+            h_value          = row.h_value,
+            viewpoint        = row.viewpoint,
+            alert            = row.alert,
+            vol_signal       = row.vol_signal,
+            warning          = row.warning,
+            lrr_warn         = row.lrr_warn,
+            hrr_warn         = row.hrr_warn,
+            pivot_b          = row.pivot_b,
+            pivot_c          = row.pivot_c,
+            calculated_at    = str(row.calculated_at) if row.calculated_at else None,
+            created_at       = now_utc_str,
+        ))
+        inserted += 1
+
+    db.commit()
+    logger.info(f"Snapshot: {inserted} inserted, {skipped} skipped for {today_str} (trigger={trigger})")
+    return {"snapshot_date": today_str, "trigger": trigger, "inserted": inserted, "skipped": skipped}
+
+
+def calculate_signals(db: Session, trigger: str = "manual") -> dict:
     """Run full signal pipeline: hurst → pivots → output. Called by scheduler."""
+    hurst_result  = run_hurst(db)
+    pivots_result = run_pivots(db)
+    output_result = run_output(db)
+
+    snapshot_result = None
+    try:
+        snapshot_result = snapshot_signals(trigger, db)
+    except Exception as e:
+        logger.error(f"Snapshot failed (non-fatal): {e}")
+
     return {
-        "hurst":  run_hurst(db),
-        "pivots": run_pivots(db),
-        "output": run_output(db),
+        "hurst":    hurst_result,
+        "pivots":   pivots_result,
+        "output":   output_result,
+        "snapshot": snapshot_result,
     }
 
 
@@ -262,4 +330,61 @@ def get_stored_signals(db: Session = Depends(get_db)):
         return True
 
     results = [v for v in by_ticker.values() if _complete(v)]
+    return {"results": results, "count": len(results)}
+
+
+@router.get("/history")
+def get_signal_history(
+    ticker:     Optional[str] = Query(None, description="Filter by ticker symbol"),
+    timeframe:  Optional[str] = Query(None, description="Filter by timeframe: trade | trend | lt"),
+    start_date: Optional[str] = Query(None, description="Start date inclusive — YYYY-MM-DD"),
+    end_date:   Optional[str] = Query(None, description="End date inclusive — YYYY-MM-DD"),
+    limit:      int           = Query(30,   ge=1, le=500, description="Max rows returned (default 30)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Task 4.3 — Return signal history snapshots with optional filters.
+    Rows are ordered newest-first.
+    """
+    q = db.query(SignalHistory)
+
+    if ticker:
+        q = q.filter(SignalHistory.ticker == ticker.upper())
+    if timeframe:
+        q = q.filter(SignalHistory.timeframe == timeframe.lower())
+    if start_date:
+        q = q.filter(SignalHistory.snapshot_date >= start_date)
+    if end_date:
+        q = q.filter(SignalHistory.snapshot_date <= end_date)
+
+    q = q.order_by(SignalHistory.snapshot_date.desc(), SignalHistory.id.desc())
+    rows = q.limit(limit).all()
+
+    results = [
+        {
+            "id":               r.id,
+            "snapshot_date":    r.snapshot_date,
+            "trigger":          r.trigger,
+            "ticker":           r.ticker,
+            "timeframe":        r.timeframe,
+            "lrr":              r.lrr,
+            "hrr":              r.hrr,
+            "structural_state": r.structural_state,
+            "trade_direction":  r.trade_direction,
+            "conviction":       r.conviction,
+            "h_value":          r.h_value,
+            "viewpoint":        r.viewpoint,
+            "alert":            r.alert,
+            "vol_signal":       r.vol_signal,
+            "warning":          r.warning,
+            "lrr_warn":         r.lrr_warn,
+            "hrr_warn":         r.hrr_warn,
+            "pivot_b":          r.pivot_b,
+            "pivot_c":          r.pivot_c,
+            "calculated_at":    r.calculated_at,
+            "created_at":       r.created_at,
+        }
+        for r in rows
+    ]
+
     return {"results": results, "count": len(results)}
