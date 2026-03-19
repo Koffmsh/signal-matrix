@@ -68,6 +68,24 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Fix:** Reset all rows to `cache_date = '1970-01-01'` to force fresh fetch
 - SQL: `UPDATE price_cache SET cache_date = '1970-01-01'`
 
+### UTC vs ET Date in Docker — CRITICAL (Task 4.2)
+- Docker containers run UTC. `date.today()` and `datetime.utcnow().date()` return UTC date.
+- After ~8 PM ET (midnight UTC), UTC date flips to the next day while ET date has not.
+- **Three places this causes bugs:**
+  1. `cache_date` in `price_cache` — stored as UTC, checked as UTC → cache miss after 8 PM ET
+  2. `run_date` in `scheduler_log` — stored as UTC, checked as UTC → `today_complete` returns false
+  3. NYSE trading day check — should always use ET date (NYSE operates on ET)
+- **Fix:** Use ET date everywhere. Pattern:
+  ```python
+  from zoneinfo import ZoneInfo
+  from datetime import datetime
+  _ET = ZoneInfo("America/New_York")
+  today_et = datetime.now(_ET).strftime("%Y-%m-%d")   # for string storage
+  today_et = datetime.now(_ET).date()                  # for date object
+  ```
+- **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
+- **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
+
 ## Project Folder Structure
 ```
 signal-matrix/
@@ -101,15 +119,18 @@ signal-matrix/
 │   │   ├── price_cache.py
 │   │   ├── signal_hurst.py                ← Task 3.1 — Hurst DB model
 │   │   ├── signal_pivots.py               ← Task 3.2 — Pivots DB model
-│   │   └── signal_output.py               ← Task 3.3 — Output DB model
+│   │   ├── signal_output.py               ← Task 3.3 — Output DB model
+│   │   └── scheduler_log.py               ← Task 4.2 — Scheduler run log DB model
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
 │   │   ├── pivot_engine.py                ← Task 3.2 — ABC Pivot Detector ✅
-│   │   └── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine ✅
+│   │   ├── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine ✅
+│   │   └── scheduler.py                   ← Task 4.2 — APScheduler EOD job ✅
 │   └── routers/
 │       ├── market_data.py
-│       └── signals.py                     ← Task 3.3/3.4 — Signal endpoints ✅
+│       ├── signals.py                     ← Task 3.3/3.4 — Signal endpoints ✅
+│       └── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -124,6 +145,7 @@ signal-matrix/
 ## Phase 1 — COMPLETE ✅
 ## Phase 2 — COMPLETE ✅
 ## Phase 3 — COMPLETE ✅
+## Phase 4 — IN PROGRESS 🔄
 
 ### Phase 3 Build Sequence
 
@@ -140,6 +162,52 @@ signal-matrix/
 - Must be run AFTER REFRESH DATA (price history must be current)
 - Calls: `/api/signals/hurst` → `/api/signals/pivots` → `/api/signals/output` in sequence
 - Signal engine reads from `price_cache` SQLite table — NEVER calls yfinance directly
+
+---
+
+## Phase 4 — Task 4.2: EOD Scheduler ✅
+
+### Scheduler Overview
+- APScheduler `AsyncIOScheduler` inside FastAPI lifespan
+- Fires at **4:15 PM ET** on NYSE trading days only (via `pandas_market_calendars`)
+- On startup: catch-up check — if past 4:15 PM ET, trading day, and no successful run today → runs immediately
+- All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
+
+### Scheduler Files
+| File | Role |
+|---|---|
+| `backend/services/scheduler.py` | Core job logic, catch-up, start/shutdown |
+| `backend/routers/scheduler.py` | `GET /api/scheduler/status` endpoint |
+| `backend/models/scheduler_log.py` | SQLAlchemy model for `scheduler_log` table |
+
+### scheduler_log Table
+```sql
+id, run_date (ET), trigger ('scheduled'|'catchup'|'manual'),
+status ('success'|'failure'), refresh_ok, signals_ok,
+error_msg, duration_s, created_at (UTC string)
+```
+
+### Scheduler Status Endpoint
+`GET /api/scheduler/status` — returns last run info, next scheduled time, `today_complete` flag.
+Read-only, no recalculation.
+
+### Dashboard Header — Scheduler Indicator
+`● SCHED` dot next to `● LIVE`:
+- **Green** — today's EOD run complete (`today_complete = true`)
+- **Amber** — scheduled, not yet run today
+- **Red** — last run failed
+- Hover tooltip shows run time or next scheduled time. Fetched once on page load, no polling.
+
+### Refactors Made for Scheduler
+- `refresh_data(db)` extracted from `get_batch` endpoint in `market_data.py` — callable directly
+- `run_hurst(db)`, `run_pivots(db)`, `run_output(db)`, `calculate_signals(db)` extracted in `signals.py`
+- HTTP endpoints now call these functions — behavior unchanged
+- `main.py` converted from module-level startup to `lifespan` context manager
+
+### FastAPI Endpoints (Phase 4)
+```
+GET /api/scheduler/status   ← Task 4.2 ✅  (read-only status)
+```
 
 ---
 
@@ -594,6 +662,9 @@ Each LRR/HRR cell uses its **own timeframe's direction** color, not the overall 
   - `0b0c4e3` — Per-cell LRR/HRR warning flags + direction-based coloring
   - `ba1d7d6` — Pivot B/C in popup + ⚠ hover tooltips
   - `a90b1d1` — Warning scope: trade-only B-based, no LT warnings, LT popup trimmed
+  - `4ab3208` — Task 4.2: EOD Scheduler (APScheduler + NYSE calendar)
+  - `96346bc` — Fix scheduler run_date timezone (ET date, not UTC)
+  - `0e510dd` — Fix cache_date timezone (ET date, not UTC)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -660,7 +731,7 @@ git checkout -- .   # roll back if needed
 | Phase 1 | Dashboard Refinement | ✅ Complete |
 | Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ✅ Complete |
-| Phase 4 | Backend & Database | ⬜ Python FastAPI, SQLite, EOD scheduler, signal history |
+| Phase 4 | Backend & Database | 🔄 Task 4.2 (EOD Scheduler) complete — tickers DB pending |
 | Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
 | Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
 
