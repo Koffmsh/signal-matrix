@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Bar windows per timeframe (trading days)
 TIMEFRAMES = {
-    "trade": 3,
+    "trade": 5,
     "trend": 20,
     "lt":    90,
 }
