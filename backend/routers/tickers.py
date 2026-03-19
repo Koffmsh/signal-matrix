@@ -171,6 +171,111 @@ def create_ticker(body: dict, db: Session = Depends(get_db)):
     return _row_to_dict(row)
 
 
+def _map_asset_class(quote_type: str, sector: str, category: str, symbol: str):
+    qt  = (quote_type or "").upper()
+    sec = (sector   or "").lower()
+    cat = (category or "").lower()
+
+    if qt == "ETF":
+        # Gold symbols — Foreign Exchange before generic commodity check
+        if symbol.upper() in ("GLD", "IAU", "SGOL", "GLDM", "BAR"):
+            return "Foreign Exchange"
+        if "gold" in cat:
+            return "Foreign Exchange"
+        # Currency
+        if any(x in cat for x in ["currency", "forex", "pound", "euro", "yen"]):
+            return "Foreign Exchange"
+        # Commodities — check before International to avoid false "commodities focused" → international
+        if any(x in cat for x in ["commodit", "energy", "metal", "agriculture", "oil", "silver", "copper", "natural resource"]):
+            return "Commodities"
+        # Fixed Income
+        if any(x in cat for x in ["bond", "treasury", "fixed income", "corporate bond", "credit", "inflation-protected", "government", "muni", "high yield"]):
+            return "Domestic Fixed Income"
+        # International — includes "region" categories (e.g. "China Region", "Miscellaneous Region")
+        if any(x in cat for x in ["international", "foreign", "emerging", "world", "global", "europe", "asia", "pacific", "latin", "region", "china", "japan", "india"]):
+            return "International Equities"
+        # Digital Assets
+        if any(x in cat for x in ["bitcoin", "crypto", "digital asset", "blockchain", "digital currency"]):
+            return "Digital Assets"
+        return "Domestic Equities"  # default ETF
+
+    if qt == "EQUITY":
+        if any(x in sec for x in ["international", "foreign"]):
+            return "International Equities"
+        return "Domestic Equities"
+
+    if qt in ("CRYPTOCURRENCY", "CRYPTO"):
+        return "Digital Assets"
+
+    if qt == "CURRENCY":
+        return "Foreign Exchange"
+
+    return None  # futures, unknown — user fills manually
+
+
+@router.get("/lookup/{symbol}")
+def lookup_ticker(symbol: str, db: Session = Depends(get_db)):
+    """
+    Task 4.7 — On-demand yfinance metadata lookup for a ticker symbol.
+    Returns suggestions only — never writes to DB. Graceful on all errors.
+    """
+    import yfinance as yf
+
+    symbol = symbol.upper().strip()
+
+    already_exists = db.query(Ticker).filter(Ticker.ticker == symbol).first() is not None
+
+    try:
+        info = yf.Ticker(symbol).info
+
+        # yfinance returns minimal/empty dict for invalid symbols
+        if not info or (info.get("regularMarketPrice") is None and info.get("navPrice") is None and info.get("previousClose") is None):
+            return {
+                "symbol":         symbol,
+                "found":          False,
+                "suggestions":    None,
+                "already_exists": already_exists,
+                "notes":          "Symbol not found on Yahoo Finance",
+            }
+
+        description  = info.get("longName") or info.get("shortName") or None
+        sector       = info.get("sector") or info.get("category") or None
+        asset_class  = _map_asset_class(
+            quote_type = info.get("quoteType"),
+            sector     = info.get("sector"),
+            category   = info.get("category"),
+            symbol     = symbol,
+        )
+
+        notes = None
+        if already_exists:
+            notes = "Ticker already exists in Signal Matrix"
+        elif description is None or asset_class is None or sector is None:
+            notes = "Some fields could not be determined — please review"
+
+        return {
+            "symbol": symbol,
+            "found":  True,
+            "suggestions": {
+                "description": description,
+                "asset_class": asset_class,
+                "sector":      sector,
+            },
+            "already_exists": already_exists,
+            "notes":          notes,
+        }
+
+    except Exception as e:
+        logger.warning(f"Lookup failed for {symbol}: {e}")
+        return {
+            "symbol":         symbol,
+            "found":          False,
+            "suggestions":    None,
+            "already_exists": already_exists,
+            "notes":          "Lookup failed — please enter details manually",
+        }
+
+
 @router.put("/{symbol}")
 def update_ticker(symbol: str, body: dict, db: Session = Depends(get_db)):
     symbol = symbol.upper()

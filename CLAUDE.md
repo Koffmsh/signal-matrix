@@ -99,11 +99,11 @@ signal-matrix/
 ├── src/
 │   ├── components/
 │   │   ├── Admin/
-│   │   │   └── AdminPanel.js              ← Task 5 — admin panel, password gated
+│   │   │   └── AdminPanel.js              ← Tasks 4.6/4.7 — ticker CRUD + yfinance lookup
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
 │   │   └── shared/                        ← placeholder
 │   ├── data/
-│   │   └── tickers.js                     ← Tier 1 + Tier 2 seed tickers, source of truth
+│   │   └── tickers.js                     ← Seed data only — source of truth is SQLite tickers table
 │   ├── hooks/                             ← placeholder
 │   ├── utils/                             ← placeholder
 │   ├── App.css
@@ -130,7 +130,8 @@ signal-matrix/
 │   └── routers/
 │       ├── market_data.py
 │       ├── signals.py                     ← Task 3.3/3.4 — Signal endpoints ✅
-│       └── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
+│       ├── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
+│       └── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -162,6 +163,54 @@ signal-matrix/
 - Must be run AFTER REFRESH DATA (price history must be current)
 - Calls: `/api/signals/hurst` → `/api/signals/pivots` → `/api/signals/output` in sequence
 - Signal engine reads from `price_cache` SQLite table — NEVER calls yfinance directly
+
+---
+
+## Phase 4 — Task 4.6: Tickers Table + Dynamic Backend ✅
+
+### Overview
+- SQLite `tickers` table is the source of truth — replaces `tickers.js` + localStorage
+- `tickers.js` retained as seed-only bootstrap file — never modified directly
+- `seed_tickers_if_empty(db)` runs on FastAPI startup — inserts 52 rows if table is empty (AMZN excluded from Tier 2 seed due to UNIQUE constraint, add via admin if needed)
+- `market_data.py` and `signals.py` both call `get_active_tickers(db)` — no hardcoded list
+- `App.js` fetches ticker universe from `GET /api/tickers?active=true` on mount
+
+### Tickers API Endpoints
+```
+GET    /api/tickers              ← list all (active filter optional; admin fetches all)
+POST   /api/tickers              ← create new ticker (409 if exists)
+PUT    /api/tickers/{symbol}     ← update any field
+DELETE /api/tickers/{symbol}     ← soft-delete (active=false) — never hard-delete
+GET    /api/tickers/lookup/{sym} ← Task 4.7: yfinance suggestions (registered BEFORE /{symbol})
+```
+
+### Field Mapping
+| DB / API | React state | Notes |
+|---|---|---|
+| `ticker` | `ticker` | Locked after creation |
+| `description` | `description` | |
+| `asset_class` | `assetClass` | |
+| `sector` | `sector` | |
+| `tier` | `tier` | 1 or 2 |
+| `parent_ticker` | `parentTicker` | Tier 2 only |
+| `active` | `active` | Soft-delete flag |
+| `display_order` | `displayOrder` | |
+
+### Admin Panel UX (Task 4.6/4.7)
+- Add ticker: click `+ ADD TICKER` → type symbol → optionally click `LOOK UP` → edit cells → click `SAVE` (or Enter)
+- Lookup pre-fills empty fields only — never overwrites existing values
+- `_isNew` local flag: row posts on SAVE; existing rows PUT on any cell commit
+- `newTickerValues` state tracks keystroke input independently to prevent focus loss on re-render
+- Ticker cell locked (disabled) after row is saved — symbol cannot be changed
+- Deactivate: soft-delete via DELETE API; Reactivate: PUT with `active: true`
+
+### Task 4.7 — yfinance Lookup
+- `GET /api/tickers/lookup/{symbol}` — calls yfinance, returns `{found, suggestions, already_exists, notes}`
+- Returns: `description` (longName), `asset_class` (mapped), `sector` (category)
+- `_map_asset_class()` maps yfinance quoteType + category to Signal Matrix vocabulary
+- ETF gold symbols hardcoded: GLD, IAU, SGOL, GLDM, BAR → "Foreign Exchange"
+- Category keywords used (not quoteType alone) — covers edge cases like "Miscellaneous Region" → International
+- Suggestions only — never auto-saves
 
 ---
 
@@ -206,7 +255,12 @@ Read-only, no recalculation.
 
 ### FastAPI Endpoints (Phase 4)
 ```
-GET /api/scheduler/status   ← Task 4.2 ✅  (read-only status)
+GET /api/scheduler/status         ← Task 4.2 ✅  (read-only status)
+GET /api/tickers                  ← Task 4.6 ✅  (list all, optional ?active filter)
+POST /api/tickers                 ← Task 4.6 ✅  (create)
+PUT /api/tickers/{symbol}         ← Task 4.6 ✅  (update)
+DELETE /api/tickers/{symbol}      ← Task 4.6 ✅  (soft-delete)
+GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 ```
 
 ---
@@ -665,6 +719,7 @@ Each LRR/HRR cell uses its **own timeframe's direction** color, not the overall 
   - `4ab3208` — Task 4.2: EOD Scheduler (APScheduler + NYSE calendar)
   - `96346bc` — Fix scheduler run_date timezone (ET date, not UTC)
   - `0e510dd` — Fix cache_date timezone (ET date, not UTC)
+  - `cd15150` — Task 4.6: Tickers table + dynamic backend + Task 4.7: yfinance lookup
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -731,7 +786,7 @@ git checkout -- .   # roll back if needed
 | Phase 1 | Dashboard Refinement | ✅ Complete |
 | Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ✅ Complete |
-| Phase 4 | Backend & Database | 🔄 Task 4.2 (EOD Scheduler) complete — tickers DB pending |
+| Phase 4 | Backend & Database | 🔄 Tasks 4.2/4.6/4.7 complete — Task 4.4 (deploy) deferred |
 | Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV |
 | Phase 6 | Cloud Deployment | ⬜ Supabase, cloud provider, remote access |
 

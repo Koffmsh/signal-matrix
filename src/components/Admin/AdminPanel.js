@@ -184,6 +184,9 @@ export default function AdminPanel() {
   const [hoveredRow, setHoveredRow] = useState(null);
   const [toast, setToast] = useState(null);
   const [filter, setFilter] = useState("all"); // all | active | inactive
+  const [lookupLoading, setLookupLoading] = useState(null); // idx of row being looked up
+  const [lookupNotes, setLookupNotes] = useState({});       // idx → note string
+  const [newTickerValues, setNewTickerValues] = useState({}); // idx → raw input string (avoids rows re-render on keystroke)
 
   const showToast = (msg) => {
     setToast(msg);
@@ -254,11 +257,40 @@ export default function AdminPanel() {
     setRows(prev => [...prev, { ...BLANK_TICKER, displayOrder: maxOrder + 1 }]);
   };
 
+  const handleLookup = async (idx, symbol) => {
+    if (!symbol) return;
+    setLookupLoading(idx);
+    setLookupNotes(prev => ({ ...prev, [idx]: null }));
+    try {
+      const res = await fetch(`${API}/lookup/${symbol}`);
+      const data = await res.json();
+      if (data.found && data.suggestions) {
+        setRows(prev => prev.map((r, i) => {
+          if (i !== idx) return r;
+          return {
+            ...r,
+            description: r.description || data.suggestions.description || r.description,
+            assetClass:  r.assetClass  || data.suggestions.asset_class  || r.assetClass,
+            sector:      r.sector      || data.suggestions.sector        || r.sector,
+          };
+        }));
+      }
+      const note = data.already_exists
+        ? `⚠ ${symbol} already exists in Signal Matrix`
+        : data.notes || (data.found ? null : "Symbol not found — enter details manually");
+      setLookupNotes(prev => ({ ...prev, [idx]: note }));
+    } catch {
+      setLookupNotes(prev => ({ ...prev, [idx]: "Lookup failed — enter details manually" }));
+    }
+    setLookupLoading(null);
+  };
+
   const deactivate = async (idx) => {
     const row = rows[idx];
     if (row._isNew) {
-      // Just remove from local state — not in DB yet
       setRows(prev => prev.filter((_, i) => i !== idx));
+      setLookupNotes(prev => { const n = { ...prev }; delete n[idx]; return n; });
+      setNewTickerValues(prev => { const n = { ...prev }; delete n[idx]; return n; });
       return;
     }
     try {
@@ -319,7 +351,7 @@ export default function AdminPanel() {
           </div>
         </div>
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-          <span style={{ fontSize: "10px", color: "#667788" }}>{rows.filter(r => r.active && !r._isNew).length} active · {rows.filter(r => !r.active).length} inactive · {rows.filter(r => !r._isNew).length} total</span>
+          <span style={{ fontSize: "10px", color: "#8899aa" }}>{rows.filter(r => r.active && !r._isNew).length} active · {rows.filter(r => !r.active).length} inactive · {rows.filter(r => !r._isNew).length} total</span>
           <button style={S.addBtn} onClick={addRow}>+ ADD TICKER</button>
           <button style={S.backBtn} onClick={() => window.location.href = "/"}>← DASHBOARD</button>
         </div>
@@ -334,7 +366,7 @@ export default function AdminPanel() {
             style={{ background: filter === val ? "#0d2a45" : "transparent", border: `1px solid ${filter === val ? "#0077ff" : "#1a2e45"}`, color: filter === val ? "#0099ff" : "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.05em" }}
           >{label}</button>
         ))}
-        <span style={{ marginLeft: "auto", fontSize: "10px", color: "#667788" }}>{visibleRows.length} showing · Click any cell to edit · Tab/Enter to confirm</span>
+        <span style={{ marginLeft: "auto", fontSize: "10px", color: "#8899aa" }}>{visibleRows.length} showing · Click any cell to edit · Tab/Enter to confirm</span>
       </div>
 
       {/* Table */}
@@ -379,12 +411,44 @@ export default function AdminPanel() {
                     >●</span>
                   </td>
 
-                  {/* Ticker — editable only on new rows */}
-                  <EditCell
-                    value={row.ticker}
-                    disabled={!row._isNew}
-                    onCommit={v => updateField(idx, "ticker", v.toUpperCase().trim())}
-                  />
+                  {/* Ticker — custom input+lookup for new rows, locked for existing */}
+                  {row._isNew ? (
+                    <td style={{ padding: "4px 8px" }}>
+                      <div style={{ display: "flex", gap: "5px", alignItems: "center" }}>
+                        <input
+                          value={newTickerValues[idx] || ""}
+                          onChange={e => setNewTickerValues(prev => ({ ...prev, [idx]: e.target.value.toUpperCase().replace(/\s/g, "") }))}
+                          onKeyDown={e => { const v = newTickerValues[idx] || ""; if (e.key === "Enter" && v) updateField(idx, "ticker", v); }}
+                          placeholder="SYMBOL"
+                          style={{ ...S.input, width: "80px" }}
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleLookup(idx, newTickerValues[idx] || "")}
+                          disabled={!newTickerValues[idx] || lookupLoading === idx}
+                          style={{ background: "#001a2e", border: "1px solid #0077ff", borderRadius: "2px", color: "#0099ff", padding: "3px 8px", fontSize: "9px", cursor: newTickerValues[idx] ? "pointer" : "default", fontFamily: "inherit", letterSpacing: "0.05em", opacity: newTickerValues[idx] ? 1 : 0.4, whiteSpace: "nowrap" }}
+                        >
+                          {lookupLoading === idx ? "LOOKING UP..." : "LOOK UP"}
+                        </button>
+                        <button
+                          onClick={() => { const v = newTickerValues[idx] || ""; if (v) updateField(idx, "ticker", v); }}
+                          disabled={!newTickerValues[idx] || !!rows[idx]?._isNew === false}
+                          style={{ background: "#001a0e", border: "1px solid #00e5a0", borderRadius: "2px", color: "#00e5a0", padding: "3px 8px", fontSize: "9px", cursor: newTickerValues[idx] ? "pointer" : "default", fontFamily: "inherit", letterSpacing: "0.05em", opacity: newTickerValues[idx] ? 1 : 0.4, whiteSpace: "nowrap" }}
+                        >
+                          SAVE
+                        </button>
+                      </div>
+                      {lookupNotes[idx] && (
+                        <div style={{ fontSize: "9px", color: "#f0b429", marginTop: "3px", letterSpacing: "0.03em" }}>{lookupNotes[idx]}</div>
+                      )}
+                    </td>
+                  ) : (
+                    <EditCell
+                      value={row.ticker}
+                      disabled={true}
+                      onCommit={() => {}}
+                    />
+                  )}
 
                   {/* Description */}
                   <EditCell
