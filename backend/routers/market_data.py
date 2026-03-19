@@ -4,6 +4,9 @@ from database import get_db
 from models.price_cache import PriceCache
 from services.yahoo_finance import fetch_ticker_data, RateLimitError
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 import json
 import logging
 
@@ -114,7 +117,7 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
 
 def refresh_data(db: Session) -> dict:
     """Core refresh logic — callable by scheduler or HTTP endpoint."""
-    today        = str(date.today())
+    today        = datetime.now(_ET).strftime("%Y-%m-%d")  # ET date — NYSE trading day
     results      = []
     rate_limited = False
 
@@ -153,7 +156,7 @@ def get_quote(ticker: str, db: Session = Depends(get_db)):
     Single ticker quote.
     Use for debugging: http://localhost:8000/api/market-data/quote/AAPL
     """
-    today = str(date.today())
+    today = datetime.now(_ET).strftime("%Y-%m-%d")  # ET date
     data  = get_or_fetch(ticker.upper(), today, db)
     if data is None:
         return {"error": f"No data available for {ticker}"}
