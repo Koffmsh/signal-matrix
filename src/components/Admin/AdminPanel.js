@@ -184,6 +184,8 @@ export default function AdminPanel() {
   const [hoveredRow, setHoveredRow] = useState(null);
   const [toast, setToast] = useState(null);
   const [filter, setFilter] = useState("all"); // all | active | inactive
+  const [filterAssetClass, setFilterAssetClass] = useState("all");
+  const [filterSector, setFilterSector] = useState("all");
   const [lookupLoading, setLookupLoading] = useState(null); // idx of row being looked up
   const [lookupNotes, setLookupNotes] = useState({});       // idx → note string
   const [newTickerValues, setNewTickerValues] = useState({}); // idx → raw input string (avoids rows re-render on keystroke)
@@ -321,11 +323,20 @@ export default function AdminPanel() {
 
   const tier1Tickers = rows.filter(r => r.tier === 1 && r.ticker && !r._isNew).map(r => r.ticker);
 
+  // Sectors available for the currently selected asset class (for the sector dropdown)
+  const availableSectors = [...new Set(
+    rows
+      .filter(r => !r._isNew && r.sector && (filterAssetClass === "all" || r.assetClass === filterAssetClass))
+      .map(r => r.sector)
+  )].sort();
+
   const visibleRows = rows
     .map((r, originalIdx) => ({ ...r, originalIdx }))
     .filter(r => {
-      if (filter === "active") return r.active;
-      if (filter === "inactive") return !r.active;
+      if (filter === "active" && !r.active) return false;
+      if (filter === "inactive" && r.active) return false;
+      if (filterAssetClass !== "all" && r.assetClass !== filterAssetClass) return false;
+      if (filterSector !== "all" && r.sector !== filterSector) return false;
       return true;
     })
     .sort((a, b) => {
@@ -358,7 +369,7 @@ export default function AdminPanel() {
       </div>
 
       {/* Filter bar */}
-      <div style={{ background: "#0a1422", borderBottom: "1px solid #131f2e", padding: "10px 24px", display: "flex", gap: "6px", alignItems: "center" }}>
+      <div style={{ background: "#0a1422", borderBottom: "1px solid #131f2e", padding: "10px 24px", display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
         {[["all", "ALL"], ["active", "ACTIVE"], ["inactive", "INACTIVE"]].map(([val, label]) => (
           <button
             key={val}
@@ -366,6 +377,23 @@ export default function AdminPanel() {
             style={{ background: filter === val ? "#0d2a45" : "transparent", border: `1px solid ${filter === val ? "#0077ff" : "#1a2e45"}`, color: filter === val ? "#0099ff" : "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.05em" }}
           >{label}</button>
         ))}
+        <div style={{ width: "1px", height: "20px", background: "#1a2e45", margin: "0 4px" }} />
+        <select
+          value={filterAssetClass}
+          onChange={e => { setFilterAssetClass(e.target.value); setFilterSector("all"); }}
+          style={{ background: filterAssetClass !== "all" ? "#0d2a45" : "#0a1220", border: `1px solid ${filterAssetClass !== "all" ? "#0077ff" : "#1a2e45"}`, color: filterAssetClass !== "all" ? "#0099ff" : "#8899aa", padding: "4px 10px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.03em", outline: "none" }}
+        >
+          <option value="all">ALL ASSET CLASSES</option>
+          {ASSET_CLASSES.map(ac => <option key={ac} value={ac}>{ac.toUpperCase()}</option>)}
+        </select>
+        <select
+          value={filterSector}
+          onChange={e => setFilterSector(e.target.value)}
+          style={{ background: filterSector !== "all" ? "#0d2a45" : "#0a1220", border: `1px solid ${filterSector !== "all" ? "#0077ff" : "#1a2e45"}`, color: filterSector !== "all" ? "#0099ff" : "#8899aa", padding: "4px 10px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.03em", outline: "none" }}
+        >
+          <option value="all">ALL SECTORS</option>
+          {availableSectors.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+        </select>
         <span style={{ marginLeft: "auto", fontSize: "10px", color: "#8899aa" }}>{visibleRows.length} showing · Click any cell to edit · Tab/Enter to confirm</span>
       </div>
 
