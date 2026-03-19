@@ -15,8 +15,8 @@ def get_scheduler_status(db: Session = Depends(get_db)):
     Returns last run info for dashboard display.
     Read-only — no recalculation triggered.
     """
-    today_str = date.today().strftime("%Y-%m-%d")
     et        = ZoneInfo("America/New_York")
+    today_str = datetime.now(et).strftime("%Y-%m-%d")  # ET date — matches run_date storage
 
     last     = db.query(SchedulerLog).order_by(SchedulerLog.id.desc()).first()
     today_ok = db.query(SchedulerLog).filter(

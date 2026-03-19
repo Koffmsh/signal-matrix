@@ -37,10 +37,11 @@ def run_eod_job(trigger: str = "scheduled") -> None:
     3. Run calculate_signals (CALCULATE SIGNALS equivalent)
     4. Write result to scheduler_log
     """
-    today = date.today()
+    # Use ET date throughout — NYSE trading days are ET-based
+    et_date = datetime.now(ZoneInfo("America/New_York")).date()
 
-    if not _is_trading_day(today):
-        logger.info(f"Scheduler: {today} is not a trading day — skipping")
+    if not _is_trading_day(et_date):
+        logger.info(f"Scheduler: {et_date} is not a trading day — skipping")
         return
 
     logger.info(f"Scheduler: starting EOD job (trigger={trigger})")
@@ -70,7 +71,7 @@ def run_eod_job(trigger: str = "scheduled") -> None:
     finally:
         duration = round(time.monotonic() - t0, 2)
         db.add(SchedulerLog(
-            run_date   = today.strftime("%Y-%m-%d"),
+            run_date   = et_date.strftime("%Y-%m-%d"),
             trigger    = trigger,
             status     = status,
             refresh_ok = refresh_ok,
@@ -89,14 +90,14 @@ async def run_catchup_on_startup() -> None:
     On startup, check if today's EOD job was missed and run it if so.
     Only fires if: trading day + past 4:15 PM ET + no successful run today.
     """
-    today = date.today()
+    et        = ZoneInfo("America/New_York")
+    now_et    = datetime.now(et)
+    today_et  = now_et.date()   # ET date — consistent with run_date storage
 
-    if not _is_trading_day(today):
+    if not _is_trading_day(today_et):
         logger.info("Scheduler: startup catchup — not a trading day")
         return
 
-    et        = ZoneInfo("America/New_York")
-    now_et    = datetime.now(et)
     cutoff_et = now_et.replace(hour=16, minute=15, second=0, microsecond=0)
 
     if now_et < cutoff_et:
@@ -107,7 +108,7 @@ async def run_catchup_on_startup() -> None:
     db = SessionLocal()
     try:
         already_ran = db.query(SchedulerLog).filter(
-            SchedulerLog.run_date == today.strftime("%Y-%m-%d"),
+            SchedulerLog.run_date == today_et.strftime("%Y-%m-%d"),
             SchedulerLog.status   == "success",
         ).first()
     finally:
