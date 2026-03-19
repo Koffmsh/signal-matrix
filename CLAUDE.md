@@ -161,8 +161,43 @@ signal-matrix/
 - Added to dashboard header alongside REFRESH DATA
 - Manual trigger only — never auto-calculates on page load
 - Must be run AFTER REFRESH DATA (price history must be current)
-- Calls: `/api/signals/hurst` → `/api/signals/pivots` → `/api/signals/output` in sequence
+- Calls: `GET /api/signals/calculate` — runs full pipeline (hurst → pivots → output → snapshot) in one call
 - Signal engine reads from `price_cache` SQLite table — NEVER calls yfinance directly
+
+---
+
+## Phase 4 — Task 4.3: Signal History Daily Snapshots ✅
+
+### Overview
+- Every time `calculate_signals()` runs (manual or scheduled), a snapshot of all `signal_output` rows is written to `signal_history`
+- Idempotent — one snapshot per ticker/timeframe per ET calendar day; re-runs same day are skipped
+- Trigger string (`"manual"`, `"scheduled"`, `"catchup"`) recorded per snapshot
+
+### signal_history Table
+```sql
+id, snapshot_date (ET YYYY-MM-DD), trigger, ticker, timeframe,
+lrr, hrr, structural_state, trade_direction, conviction, h_value,
+viewpoint, alert, vol_signal, warning, lrr_warn, hrr_warn,
+pivot_b, pivot_c, calculated_at (copied from signal_output), created_at (UTC)
+
+INDEX: (snapshot_date, ticker)
+No UNIQUE constraint — idempotency enforced in Python, not DB
+```
+
+### Snapshot Logic (`snapshot_signals` in `signals.py`)
+- Called inside `calculate_signals()` after output is written — failure is non-fatal (logged, not raised)
+- Checks for existing row with same `snapshot_date` + `ticker` + `timeframe` before inserting
+- `snapshot_date` uses ET timezone — `datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")`
+
+### History API Endpoint
+`GET /api/signals/history` — query params: `ticker`, `timeframe`, `start_date`, `end_date`, `limit` (default 30, max 500)
+- Returns rows newest-first
+- Used for signal trend analysis; not currently wired to dashboard UI
+
+### CALCULATE SIGNALS Button Fix (Task 4.3 related)
+- Old behavior: frontend called `/hurst` → `/pivots` → `/output` individually — snapshot never fired
+- **Fixed:** frontend now calls `GET /api/signals/calculate` which runs full pipeline + snapshot in one call
+- `/calculate` returns output results in same shape as `/output` — no frontend shape change needed
 
 ---
 
@@ -256,6 +291,8 @@ Read-only, no recalculation.
 ### FastAPI Endpoints (Phase 4)
 ```
 GET /api/scheduler/status         ← Task 4.2 ✅  (read-only status)
+GET /api/signals/calculate        ← Task 4.3 ✅  (full pipeline + snapshot)
+GET /api/signals/history          ← Task 4.3 ✅  (query snapshots, not wired to UI yet)
 GET /api/tickers                  ← Task 4.6 ✅  (list all, optional ?active filter)
 POST /api/tickers                 ← Task 4.6 ✅  (create)
 PUT /api/tickers/{symbol}         ← Task 4.6 ✅  (update)
