@@ -128,11 +128,27 @@ def run_output(db: Session) -> dict:
             data = compute_output(ticker, db)
             now  = datetime.utcnow()
 
+            # ── viewpoint_since — track when current aligned viewpoint began ──
+            new_viewpoint = data["viewpoint"]
+            now_et        = datetime.now(ZoneInfo("America/New_York")).isoformat()
+            existing_ref  = db.query(SignalOutput).filter(
+                SignalOutput.id == f"{ticker}_trade"
+            ).first()
+
+            if existing_ref is None:
+                viewpoint_since = now_et if new_viewpoint in ("Bullish", "Bearish") else None
+            elif new_viewpoint in ("Bullish", "Bearish") and new_viewpoint != existing_ref.viewpoint:
+                viewpoint_since = now_et                        # transition to aligned state
+            elif new_viewpoint in ("Bullish", "Bearish") and new_viewpoint == existing_ref.viewpoint:
+                viewpoint_since = existing_ref.viewpoint_since  # preserve existing timestamp
+            else:
+                viewpoint_since = None                          # Neutral — clear
+
             for tf in ("trade", "trend", "lt"):
                 tf_data  = data[tf]
                 row_id   = f"{ticker}_{tf}"
 
-                conviction = data["conviction"] if data["viewpoint"] != "Neutral" else None
+                conviction = data["conviction"] if new_viewpoint != "Neutral" else None
 
                 fields = dict(
                     ticker           = ticker,
@@ -143,7 +159,8 @@ def run_output(db: Session) -> dict:
                     trade_direction  = tf_data.get("direction"),
                     conviction       = conviction,
                     h_value          = tf_data.get("h_value"),
-                    viewpoint        = data["viewpoint"],
+                    viewpoint        = new_viewpoint,
+                    viewpoint_since  = viewpoint_since,
                     alert            = data["alert"],
                     vol_signal       = data["vol_signal"],
                     warning          = tf_data.get("warning"),
@@ -305,11 +322,12 @@ def get_stored_signals(db: Session = Depends(get_db)):
         t = row.ticker
         if t not in by_ticker:
             by_ticker[t] = {
-                "ticker":     t,
-                "viewpoint":  row.viewpoint,
-                "conviction": None,
-                "vol_signal": row.vol_signal,
-                "alert":      bool(row.alert) if row.alert is not None else False,
+                "ticker":          t,
+                "viewpoint":       row.viewpoint,
+                "viewpoint_since": row.viewpoint_since,
+                "conviction":      None,
+                "vol_signal":      row.vol_signal,
+                "alert":           bool(row.alert) if row.alert is not None else False,
                 "trade": None, "trend": None, "lt": None,
             }
         by_ticker[t][row.timeframe] = {

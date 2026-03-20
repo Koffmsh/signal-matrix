@@ -172,8 +172,9 @@ function mergeSignalData(row, signalMap) {
     tradeB:       sig.trade?.pivot_b           ?? null,
     trendC:       sig.trend?.pivot_c           ?? null,
     trendB:       sig.trend?.pivot_b           ?? null,
-    ltC:          sig.lt?.pivot_c              ?? null,
-    ltB:          sig.lt?.pivot_b              ?? null,
+    ltC:           sig.lt?.pivot_c              ?? null,
+    ltB:           sig.lt?.pivot_b              ?? null,
+    viewpointSince: sig.viewpoint_since         ?? null,
   };
 }
 
@@ -647,12 +648,22 @@ function Dashboard() {
         const fmtPrice = (v) => v != null ? `$${v.toFixed(2)}` : "—";
         const fmtHurst = (v) => v != null ? v.toFixed(4) : "—";
         const fmtConv  = (v) => v != null ? `${v.toFixed(1)}%` : "—";
+        const fmtSince = (iso) => {
+          if (!iso) return "—";
+          const d = new Date(iso);
+          const date = d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" });
+          const time = d.toLocaleString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" });
+          return `${date} · ${time} ET`;
+        };
 
         // fields: [label, value, color, isState, warnTip?]
         // warnTip = string → wraps value in <span title> for ⚠ tooltip
         const fields = [
           ["Close",        fmtPrice(row.close),                                                          "#c8d8e8",                              false],
           ["Viewpoint",    row.viewpoint,                                                                  vpColor(row.viewpoint),                 false],
+          ...(row.viewpoint !== "Neutral" && row.viewpointSince ? [
+            ["Aligned since", fmtSince(row.viewpointSince),                                               vpColor(row.viewpoint),                 false],
+          ] : []),
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
           ["Vol Signal",   row.volSignal,                                                                  volColor(row.volSignal),                false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],

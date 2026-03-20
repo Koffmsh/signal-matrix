@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime, Boolean, UniqueConstraint
+from sqlalchemy import Column, String, Float, Text, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -17,6 +17,7 @@ class SignalOutput(Base):
     conviction       = Column(Float,  nullable=True)   # 0.0 – 100.0
     h_value          = Column(Float,   nullable=True)   # Hurst for this timeframe
     viewpoint        = Column(String,  nullable=True)   # ticker-level: Bullish|Bearish|Neutral
+    viewpoint_since  = Column(Text,    nullable=True)   # ISO timestamp ET — when current viewpoint began
     alert            = Column(Boolean, nullable=True)   # ticker-level alert flag
     vol_signal       = Column(String,  nullable=True)   # ticker-level: Confirming|Diverging|Neutral
     warning          = Column(Boolean, nullable=True)   # per-timeframe WARNING flag (IV-driven)
