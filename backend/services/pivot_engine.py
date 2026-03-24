@@ -100,6 +100,8 @@ def _find_uptrend_abc(pivot_highs: list, pivot_lows: list):
     """
     Uptrend: A = pivot low, B = pivot high, C = pivot low (C > A).
     Walk backwards from the most recent pivot low as C candidate.
+    For each (C, B) pair, try all A candidates (not just the most recent)
+    so that a valid C > A match is found even when the nearest A is above C.
     Returns dict or None.
     """
     if len(pivot_lows) < 2 or len(pivot_highs) < 1:
@@ -114,18 +116,17 @@ def _find_uptrend_abc(pivot_highs: list, pivot_lows: list):
             continue
         b_idx, b_price = b_candidates[-1]
 
-        # Most recent pivot low before B
+        # Try all pivot lows before B as A — newest first — stop at first C > A
         a_candidates = [(i, p) for i, p in pivot_lows if i < b_idx]
         if not a_candidates:
             continue
-        a_idx, a_price = a_candidates[-1]
-
-        if c_price > a_price:   # uptrend confirmed: C higher than A
-            return dict(
-                direction="uptrend",
-                a=a_price, b=b_price, c=c_price,
-                a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
-            )
+        for a_idx, a_price in reversed(a_candidates):
+            if c_price > a_price:   # uptrend confirmed: C higher than A
+                return dict(
+                    direction="uptrend",
+                    a=a_price, b=b_price, c=c_price,
+                    a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
+                )
 
     return None
 
@@ -134,6 +135,8 @@ def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
     """
     Downtrend: A = pivot high, B = pivot low, C = pivot high (C < A).
     Walk backwards from the most recent pivot high as C candidate.
+    For each (C, B) pair, try all A candidates (not just the most recent)
+    so that a valid C < A match is found even when the nearest A is below C.
     Returns dict or None.
     """
     if len(pivot_highs) < 2 or len(pivot_lows) < 1:
@@ -148,18 +151,17 @@ def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
             continue
         b_idx, b_price = b_candidates[-1]
 
-        # Most recent pivot high before B
+        # Try all pivot highs before B as A — newest first — stop at first C < A
         a_candidates = [(i, p) for i, p in pivot_highs if i < b_idx]
         if not a_candidates:
             continue
-        a_idx, a_price = a_candidates[-1]
-
-        if c_price < a_price:   # downtrend confirmed: C lower than A
-            return dict(
-                direction="downtrend",
-                a=a_price, b=b_price, c=c_price,
-                a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
-            )
+        for a_idx, a_price in reversed(a_candidates):
+            if c_price < a_price:   # downtrend confirmed: C lower than A
+                return dict(
+                    direction="downtrend",
+                    a=a_price, b=b_price, c=c_price,
+                    a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
+                )
 
     return None
 
