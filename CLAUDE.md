@@ -26,9 +26,9 @@ indicators.
 ## Current Tech Stack
 - **Frontend:** React (Create React App)
 - **Container:** Docker + docker-compose
-- **Data:** Real EOD prices via Yahoo Finance — FastAPI backend with SQLite cache
-- **Backend:** Python FastAPI running at localhost:8000
-- **Database:** SQLite cache at `backend/signal_matrix.db`
+- **Data:** EOD prices via Schwab Trader API (primary) / Yahoo Finance (fallback) — FastAPI backend
+- **Backend:** Python FastAPI running at localhost:8000 (local) / api.signal.suttonmc.com (production)
+- **Database:** Supabase (managed Postgres) in production — SQLite (`backend/signal_matrix.db`) for local dev only
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
@@ -41,12 +41,22 @@ indicators.
 ---
 
 ## Infrastructure & Domain
-- **Domain:** suttonmc.com — DNS and nameservers transferred to Cloudflare (Free plan)
+- **Domain:** suttonmc.com — Cloudflare nameservers active (kinsley + kyrie)
 - **Cloudflare:** Active — DNS management, DDoS protection, free SSL. No hosting.
-- **Fly.io:** Account created, CLI installed and authenticated — ready for deployment (Task 4.4, deferred)
-- **Current hosting:** Local only — Docker on Windows PC at localhost:3000
-- **Deployment trigger:** Phase 5 Schwab OAuth requires a stable public URL — that is the forcing function for Fly.io deployment
-- **ngrok:** Available for 1-off demos — `ngrok http 3000` gives temporary public URL
+- **Supabase:** Managed Postgres — project `signal-matrix`, US East, free tier
+  - Project ID: wxqioudsteiwaazrgbao
+  - Direct connection: port 5432 (Alembic migrations only)
+  - Pooled connection: port 6543, Transaction mode (app runtime)
+- **Fly.io:** Two apps — `signal-matrix-api` (512MB) + `signal-matrix-web` (256MB), region `iad`
+  - signal-matrix-web → signal.suttonmc.com
+  - signal-matrix-api → api.signal.suttonmc.com
+  - auto_stop_machines = false on API app (scheduler must stay running)
+- **Current hosting:** Local Docker (dev) + Fly.io (production) — Phase 5
+- **Schwab App:** Signal Matrix — Production, Ready For Use
+  - Callback URL: https://signal.suttonmc.com/api/auth/schwab/callback
+  - APIs: Accounts and Trading Production + Market Data Production
+  - Order Limit: 0 (order execution not in scope)
+- **ngrok:** Available for 1-off demos — `ngrok http 3000`
 
 ---
 
@@ -215,7 +225,8 @@ signal-matrix/
 ## Phase 1 — COMPLETE ✅
 ## Phase 2 — COMPLETE ✅
 ## Phase 3 — COMPLETE ✅
-## Phase 4 — IN PROGRESS 🔄
+## Phase 4 — COMPLETE ✅
+## Phase 5 — IN PROGRESS 🔄
 
 ### Phase 3 Build Sequence
 
@@ -233,7 +244,7 @@ signal-matrix/
 | 4.1 | GitHub private repo + .env history cleanup | ✅ Complete |
 | 4.2 | EOD Scheduler (APScheduler + NYSE calendar) | ✅ Complete |
 | 4.3 | Signal History daily snapshots | ✅ Complete |
-| 4.4 | Fly.io cloud deployment | ⬜ Deferred — triggers at Phase 5 (Schwab OAuth) |
+| 4.4 | Fly.io cloud deployment | ⬜ Absorbed into Phase 5 |
 | 4.5 | Auto-load cache on page load | ✅ Complete |
 | 4.6 | Tickers table + dynamic backend | ✅ Complete |
 | 4.7 | yfinance lookup endpoint for new tickers | ✅ Complete |
@@ -243,6 +254,17 @@ signal-matrix/
 | 4.11 | Conviction rebalance (65/35, Rel IV removed) | ✅ Complete |
 | 4.12 | OBV pivot engine | ✅ Complete |
 | 4.13 | VIX header indicator | ✅ Complete |
+
+### Phase 5 Build Sequence
+
+| Task | Deliverable | Status |
+|---|---|---|
+| 5.1 | Supabase setup + SQLAlchemy migration (SQLite → Postgres) | ⬜ Pending |
+| 5.2 | Fly.io deployment — Docker, secrets, signal.suttonmc.com DNS | ⬜ Pending |
+| 5.3 | Schwab OAuth — token exchange, storage, proactive auto-refresh | ⬜ Pending |
+| 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ⬜ Pending |
+| 5.5 | IV Percentile — options chain fetch, iv_history table | ⬜ Pending |
+| 5.6 | OBV source swap — volume_history_json from Schwab | ⬜ Pending |
 
 ### New Button — CALCULATE SIGNALS
 - Added to dashboard header alongside REFRESH DATA
@@ -483,6 +505,49 @@ ASSET_CLASS_OVERRIDES = {
 3. Graceful on missing data — `null` fields returned, no error
 4. Never writes to DB — suggestions only
 5. yfinance inference runs as fallback for unknown tickers
+
+---
+
+## Phase 5 — Infrastructure Decisions (LOCKED)
+
+### Database: Supabase (Postgres)
+- Replaces SQLite in production — all existing tables migrated via Alembic
+- Two new tables: `schwab_tokens` (encrypted OAuth tokens), `iv_history` (rolling IV per ticker)
+- `price_cache` gains `data_source` column: `'schwab'` | `'yahoo'` | `'yahoo_fallback'`
+- Direct connection string → Alembic migrations only
+- Pooled connection string (Transaction mode, port 6543) → app runtime
+
+### Schwab API: schwab-py library
+- `pip install schwab-py` — do not write raw HTTP calls against Schwab API
+- Token storage: Fernet-encrypted in `schwab_tokens` table
+- Token refresh: proactive background task every 25 minutes (APScheduler)
+- Fallback: all Schwab calls fall back to Yahoo Finance on token expiry or API error
+- Data source tagged in `price_cache.data_source` — visible in dashboard header
+
+### EOD Scheduler: Updated Flow (Phase 5)
+```
+4:00 PM ET — Schwab data fetch (NEW)
+    schwab_fetch_quotes()    1 request, all 51 tickers
+    schwab_fetch_history()   51 requests, 0.5s delay between calls
+    schwab_fetch_iv()        47 requests (options-eligible only)
+                             writes price_cache + iv_history
+
+4:15 PM ET — calculate_signals() (unchanged)
+```
+
+### IV-Eligible Tickers
+All Tier 1 tickers EXCEPT: VIX, $DJI, SPX, NDX — index options have different chain structure.
+
+### Yahoo Finance Role (Phase 5+)
+Yahoo Finance is a permanent silent fallback — never removed. Called automatically when:
+- Schwab token is expired or missing
+- Schwab API returns an error
+- Manual REFRESH DATA during development
+
+### REACT_APP_API_URL
+Must be environment-variable driven — not hardcoded to localhost:8000.
+- Local `.env`: `REACT_APP_API_URL=http://localhost:8000`
+- Fly.io secret: `REACT_APP_API_URL=https://api.signal.suttonmc.com`
 
 ---
 
@@ -1054,6 +1119,14 @@ git checkout -- .   # roll back if needed
 40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
 41. **OBV pivot bar_window = 9 bars** — confirmed pivots require bar_window on both sides, same rule as price pivot engine
 42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
+43. **schwab-py is the only Schwab API client** — never write raw HTTP calls against Schwab endpoints
+44. **Yahoo Finance is a permanent fallback** — never remove it; always called when Schwab is unavailable
+45. **Token encryption is mandatory** — Schwab tokens must be Fernet-encrypted before writing to DB
+46. **REACT_APP_API_URL must be env-variable driven** — never hardcode localhost:8000 in production code
+47. **auto_stop_machines = false on API app** — Fly.io must not stop the API container or scheduler won't fire
+48. **Alembic manages all schema changes** — never modify Supabase tables directly via dashboard
+49. **IV-eligible tickers exclude VIX, $DJI, SPX, NDX** — index options chains have different structure
+50. **data_source column must be written on every price_cache upsert** — 'schwab', 'yahoo', or 'yahoo_fallback'
 
 ---
 
@@ -1064,9 +1137,9 @@ git checkout -- .   # roll back if needed
 | Phase 1 | Dashboard Refinement | ✅ Complete |
 | Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ✅ Complete |
-| Phase 4 | Backend & Database | 🔄 In Progress — 4.1–4.3, 4.5–4.12 complete; 4.4 (Fly.io) deferred to Phase 5 |
-| Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV — triggers Fly.io deployment |
-| Phase 6 | Cloud Deployment | ⬜ Supabase migration, production hardening |
+| Phase 4 | Backend & Database | ✅ Complete — all tasks 4.1–4.13 done |
+| Phase 5 | Schwab API + Cloud Deployment | 🔄 In Progress — Supabase, Fly.io, OAuth, IV Percentile |
+| Phase 6 | Production Hardening | ⬜ Volume surge, positions display, Supabase hardening |
 
 ---
 
