@@ -2,9 +2,10 @@
 
 ## Important Note for Neo
 The `.docx` spec files in `Docs/` cannot be read by Claude Code.
-A readable `.txt` copy exists at `Docs/SignalMatrix_Spec_v1.5.txt` —
-Neo should read this before making any methodology or architecture changes.
-When QuadTracker build begins, a corresponding `.txt` will be added.
+Readable `.txt` copies exist:
+- `Docs/SignalMatrix_Spec_v1.5.txt` — full platform spec (methodology, signal engine, architecture)
+- `Docs/SignalMatrix_Phase5_Spec_v1.0.txt` — Phase 5 spec (Supabase, Fly.io, Schwab OAuth, IV)
+Neo should read the relevant spec before making methodology or architecture changes.
 CLAUDE.md remains the authoritative source for rules and current state.
 
 ---
@@ -169,8 +170,9 @@ signal-matrix/
 │   ├── launch.json
 │   └── settings.local.json
 ├── Docs/
-│   ├── SignalMatrix_Spec_v1.4.docx        ← spec — NOT readable by Neo (.docx)
-│   ├── SignalMatrix_Spec_v1.4.txt         ← ✅ Neo's readable copy — full spec
+│   ├── SignalMatrix_Spec_v1.5.txt         ← ✅ Neo's readable copy — full spec (v1.5)
+│   ├── SignalMatrix_Phase5_Spec_v1.0.docx ← spec — NOT readable by Neo (.docx)
+│   ├── SignalMatrix_Phase5_Spec_v1.0.txt  ← ✅ Neo's readable copy — Phase 5 spec
 │   └── QuadTracker_Spec_v1.1.docx        ← spec — NOT readable by Neo (.docx)
 ├── public/
 ├── src/
@@ -1165,11 +1167,12 @@ git checkout -- .   # roll back if needed
 ---
 
 ## What Is NOT In Scope Yet
-- Schwab API (real-time streaming, options IV)
-- Supabase / PostgreSQL cloud database
-- Fly.io deployment (deferred until Phase 5 Schwab OAuth forces a public URL)
-- Quad Tracker dashboard
-- Quad alignment column in Signal Matrix table (deferred to Quad Tracker phase)
+- Account positions display (deferred — manage in ThinkorSwim; Phase 6 or later)
+- WebSocket streaming (deferred — REST polling is sufficient for EOD signals)
+- Volume surge icon on dashboard rows (deferred to Phase 6)
+- Schwab order execution (permanently out of scope)
+- Quad Tracker dashboard (Phase QT)
+- Quad alignment column in Signal Matrix table (Phase QT)
 - Tier 2 auto-surfacing based on conviction threshold
 - MA20/50/100 display in dashboard UI
 - Signal history UI (table exists, endpoint exists — frontend consumption is future scope)
