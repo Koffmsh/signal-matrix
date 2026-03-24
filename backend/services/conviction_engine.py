@@ -121,17 +121,20 @@ def _volume_multiplier(vol_signal: str) -> float:
 def _infer_pivot_direction(pivot_row) -> str | None:
     """
     Infer 'uptrend' | 'downtrend' | None from the pivot row.
-    BREAK and NO_STRUCTURE always return None (direction = Neutral).
-    FORMING and EXTENDED fall through to pivot level comparison.
+    NO_STRUCTURE returns None — no pivot data exists.
+    BREAK states still infer direction from pivot levels so LRR/HRR
+    can be computed and displayed grey. _compute_direction forces Neutral
+    for BREAK states regardless of what this returns.
     """
     state = pivot_row.structural_state or "NO_STRUCTURE"
-    if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "NO_STRUCTURE"):
+    if state == "NO_STRUCTURE":
         return None
     if "UPTREND" in state:
         return "uptrend"
     if "DOWNTREND" in state:
         return "downtrend"
-    # FORMING / EXTENDED / WARNING — infer from pivot levels
+    # FORMING / EXTENDED / WARNING / BREAK_OF_TRADE / BREAK_OF_TREND
+    # — pivot levels exist, infer direction from them
     if pivot_row.pivot_a is not None and pivot_row.pivot_b is not None:
         return "uptrend" if pivot_row.pivot_b > pivot_row.pivot_a else "downtrend"
     return None

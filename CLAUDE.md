@@ -2,7 +2,7 @@
 
 ## Important Note for Neo
 The `.docx` spec files in `Docs/` cannot be read by Claude Code.
-A readable `.txt` copy exists at `Docs/SignalMatrix_Spec_v1.4.txt` —
+A readable `.txt` copy exists at `Docs/SignalMatrix_Spec_v1.5.txt` —
 Neo should read this before making any methodology or architecture changes.
 When QuadTracker build begins, a corresponding `.txt` will be added.
 CLAUDE.md remains the authoritative source for rules and current state.
@@ -230,6 +230,12 @@ signal-matrix/
 | 4.5 | Auto-load cache on page load | ✅ Complete |
 | 4.6 | Tickers table + dynamic backend | ✅ Complete |
 | 4.7 | yfinance lookup endpoint for new tickers | ✅ Complete |
+| 4.8 | viewpoint_since timestamp | ✅ Complete |
+| 4.9 | FORMING state direction fix | ✅ Complete |
+| 4.10 | Staleness thresholds (pivot engine) | ✅ Complete |
+| 4.11 | Conviction rebalance (65/35, Rel IV removed) | ✅ Complete |
+| 4.12 | OBV pivot engine | ✅ Complete |
+| 4.13 | VIX header indicator | ✅ Complete |
 
 ### New Button — CALCULATE SIGNALS
 - Added to dashboard header alongside REFRESH DATA
@@ -522,16 +528,12 @@ Not used in conviction formula.
 **H does not determine direction. H drives conviction and LRR position only.**
 
 ```python
-# Uptrend validity — price must be above higher of LRR or C
-effective_floor = max(lrr, c)
-if price > effective_floor:
-    trade_dir = "Bullish"
-else:
+# Direction check — C is the only invalidation level, LRR has no role in direction
+if structural_state == "BREAK_OF_TRADE":
     trade_dir = "Neutral"
-
-# Downtrend validity — price must be below lower of HRR or C
-effective_ceiling = min(hrr, c)
-if price < effective_ceiling:
+elif direction == "uptrend" and current_price > c:
+    trade_dir = "Bullish"
+elif direction == "downtrend" and current_price < c:
     trade_dir = "Bearish"
 else:
     trade_dir = "Neutral"
@@ -547,10 +549,11 @@ else:
 
 | Condition | Direction |
 |---|---|
-| Price above MAX(LRR, C) — valid uptrend | Bullish |
-| Price below MIN(HRR, C) — valid downtrend | Bearish |
-| Break of Trade (price closes through C) | Neutral |
-| FORMING — no new C confirmed yet | Neutral |
+| Uptrend + price above C | Bullish |
+| Downtrend + price below C | Bearish |
+| Break of Trade (one close through C) | Neutral — immediate, no two-close rule |
+| FORMING — pullback from D, price still above C | Bullish (trend intact) |
+| FORMING — bounce from D, price still below C | Bearish (trend intact) |
 | Insufficient pivot history | Neutral |
 | Everything else | Neutral |
 
@@ -743,14 +746,32 @@ Downtrend: HRR pushed up, LRR pulled down (same widening logic, mirrored).
 
 **Critical rules:**
 - **C is the line in the sand** — Break of Trade/Trend fires on price closing through C
-- **Break of Trade = Trade Dir → Neutral immediately** — no intermediate state
+- **One close below C = BREAK_OF_TRADE immediately** — no two-close rule, no grace period
+- **Price recovers above C** → Trade Dir = Bullish restored (engine recalculates fresh each run)
+- **Intraday violations irrelevant** — engine uses EOD closes only
+- **Break of Trade = reduce to minimum position** — Trend break = go to zero
 - **WARNING state is IV-driven only** — never price-driven
-- **LRR/HRR always show** — color reflects state (green/red/grey)
-- **Effective floor (uptrend) = MAX(LRR, C)** — Bullish only when price above this
-- **Effective ceiling (downtrend) = MIN(HRR, C)** — Bearish only when price below this
-- **Direction determined by pivots only** — H has no role
+- **LRR/HRR always show** — color reflects state (green/red/grey); BREAK states show grey LRR/HRR
+- **Direction determined by pivots only — C only** — LRR has no role in direction check
 - **Trade and Trend states are independent** — Trend break does not auto-flip Trade
 - **C updates dynamically** — always references most recent confirmed higher low / lower high
+
+**Staleness thresholds (`pivot_engine.py` — `_STALE_C_DAYS`):**
+```
+Trade:     C older than  60 trading days → NO_STRUCTURE (structure too old to trade)
+Trend:     C older than 100 trading days → NO_STRUCTURE (structure too old for directional bias)
+Long Term: No cutoff                     → LT structures are inherently old
+```
+
+**ABC transition to bearish after uptrend break:**
+```
+When uptrend breaks (BREAK_OF_TREND):
+  Bearish A = old bullish D             (highest confirmed point — already exists)
+  Bearish C = first lower high after D  (lower high — already confirmed, C < A ✅)
+  Bearish B = first confirmed lower low (confirms AFTER the break — needs bar_window bars after)
+  DOWNTREND_VALID fires as soon as bearish B confirms — bearish C already existed
+```
+No new downtrend can print until bearish B confirms (bar_window × 2 bars minimum after the break).
 
 ### Database Tables (Phase 3)
 ```sql
@@ -871,6 +892,15 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 - Admin panel at localhost:3000/admin — password protected
 - Ticker universe: loaded from `/api/tickers?active=true` on page load
 
+### VIX Regime Indicator — Dashboard Header
+Reads from existing `VIX` row in `price_cache` — no new data fetch needed:
+```
+VIX < 19   → Green dot  — investable
+VIX 19–29  → Amber dot  — choppy
+VIX ≥ 30   → Red dot    — danger
+```
+Displayed in dashboard header alongside SCHED indicator.
+
 ## Dashboard Columns (current, in order)
 | Column | Description |
 |--------|-------------|
@@ -895,6 +925,7 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 |---|---|
 | Close | Live price |
 | Viewpoint | Bullish / Bearish / Neutral |
+| Aligned Since | ET timestamp — when current Bullish/Bearish viewpoint began. Hidden when Neutral |
 | Conviction | % or — when Neutral |
 | Vol Signal | Confirming / Diverging / Neutral — OBV-based |
 | OBV Direction | Bullish / Bearish / Neutral — OBV pivot trend direction |
@@ -1002,8 +1033,8 @@ git checkout -- .   # roll back if needed
 26. **Direction determined by pivots only** — H has no role in direction or viewpoint
 27. **LRR/HRR always show** — grey when Neutral, green when Bullish, red when Bearish
 28. **Viewpoint has three states only** — Bullish, Bearish, Neutral (no Diverging)
-29. **Effective floor (uptrend) = MAX(LRR, C)** — Bullish only when price above this
-30. **Effective ceiling (downtrend) = MIN(HRR, C)** — Bearish only when price below this
+29. **Direction check uses C only** — `price > c` for Bullish, `price < c` for Bearish; LRR is not part of the direction check
+30. **LRR/HRR always compute for BREAK states** — `_infer_pivot_direction` infers underlying direction even for BREAK_OF_TRADE/BREAK_OF_TREND so LRR/HRR render grey
 31. **LRR/HRR cell color = timeframe direction** — use `dirRangeColor(dir, isWarn)`, NOT viewpoint color
 32. **Per-cell ⚠ warn flags are price-based** — separate from IV-driven `warning` structural state
 33. **Warning scope is timeframe-specific** — Trade: full (C+B); Trend: C-based only; LT: none
@@ -1012,6 +1043,10 @@ git checkout -- .   # roll back if needed
 36. **tickers.js is seed data only** — never import it for the live ticker universe; use `/api/tickers`
 37. **Asset class overrides checked first** — add new entries to `ASSET_CLASS_OVERRIDES` in `tickers.py` when yfinance returns wrong asset class
 38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
+39. **One close below C = BREAK_OF_TRADE immediately** — no two-close rule, no grace period; recovery above C restores direction on next calculation
+40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
+41. **OBV pivot bar_window = 9 bars** — confirmed pivots require bar_window on both sides, same rule as price pivot engine
+42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
 
 ---
 
@@ -1022,7 +1057,7 @@ git checkout -- .   # roll back if needed
 | Phase 1 | Dashboard Refinement | ✅ Complete |
 | Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ✅ Complete |
-| Phase 4 | Backend & Database | 🔄 In Progress — 4.1–4.3, 4.5–4.7 complete; 4.4 (Fly.io) deferred to Phase 5 |
+| Phase 4 | Backend & Database | 🔄 In Progress — 4.1–4.3, 4.5–4.12 complete; 4.4 (Fly.io) deferred to Phase 5 |
 | Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV — triggers Fly.io deployment |
 | Phase 6 | Cloud Deployment | ⬜ Supabase migration, production hardening |
 

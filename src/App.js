@@ -146,18 +146,18 @@ function mergeSignalData(row, signalMap) {
     volSignal:  sig.vol_signal ?? row.volSignal,
     isAlert:    sig.alert      ?? row.isAlert,
     tradeDir:   sig.trade?.direction         ?? row.tradeDir,
-    tradeLRR:   sig.trade?.lrr               ?? row.tradeLRR,
-    tradeHRR:   sig.trade?.hrr               ?? row.tradeHRR,
+    tradeLRR:   sig.trade?.lrr               ?? null,
+    tradeHRR:   sig.trade?.hrr               ?? null,
     tradeWarn:  sig.trade?.warning           ?? false,
     tradeState: sig.trade?.structural_state  ?? null,
     trendDir:   sig.trend?.direction         ?? row.trendDir,
-    trendLRR:   sig.trend?.lrr               ?? row.trendLRR,
+    trendLRR:   sig.trend?.lrr               ?? null,
     trendHRR:   sig.trend?.hrr               ?? null,
     trendWarn:  sig.trend?.warning           ?? false,
     trendState: sig.trend?.structural_state  ?? null,
     ltDir:      sig.lt?.direction            ?? row.ltDir,
-    ltLRR:      sig.lt?.lrr                 ?? row.ltLRR,
-    ltHRR:      sig.lt?.hrr                 ?? null,
+    ltLRR:      sig.lt?.lrr                  ?? null,
+    ltHRR:      sig.lt?.hrr                  ?? null,
     ltState:    sig.lt?.structural_state     ?? null,
     hurstTrade: sig.trade?.h_value           ?? row.hurstTrade,
     hurstTrend:   sig.trend?.h_value           ?? row.hurstTrend,
@@ -550,6 +550,13 @@ function Dashboard() {
             })()}
             <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end", marginTop: "2px" }}>
               <div style={{ color: "#00e5a0" }}>● LIVE</div>
+              {(() => {
+                const vix = realDataMap.get("VIX")?.close;
+                if (vix == null) return null;
+                const color = vix < 19 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
+                const label = vix < 19 ? "investable" : vix < 30 ? "choppy" : "danger";
+                return <div title={`VIX ${vix.toFixed(2)} — ${label}`} style={{ color, cursor: "default" }}>● VIX {vix.toFixed(2)}</div>;
+              })()}
               {schedulerStatus && (() => {
                 const done  = schedulerStatus.today_complete;
                 const fail  = schedulerStatus.last_run_status === "failure";

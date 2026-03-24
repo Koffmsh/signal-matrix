@@ -1,0 +1,571 @@
+Signal Matrix Platform
+Master Specification Document
+Version 1.5  |  March 2026  |  Confidential
+Change Log v1.4 -> v1.5
+- Conviction score rebalanced: Rel IV removed, weights now 65% Trade H / 35% Trend H
+- Volume signal replaced: price-momentum proxy removed, OBV pivot engine implemented
+- FORMING state direction fix: FORMING no longer forces Neutral — direction driven by price vs C only
+- ABC transition to bearish structure clarified: dual-role pivot documented
+- Staleness thresholds added to pivot engine: Trade 60 days, Trend 100 days, LT no cutoff
+- Break of Trade / recovery behavior locked: one close below C = break, recovery restores Bullish
+- viewpoint_since timestamp added to signal_output
+- Phase 3 marked complete, Phase 4 tasks updated
+- VIX macro regime indicator added to roadmap
+- OBV pivot engine fully specified
+================================================================================
+1. Project Overview
+Signal Matrix is a multi-timeframe, probabilistic trading signal platform designed to identify
+high-conviction trade opportunities across a diversified universe of ~51 assets. Built around
+the principle that simplicity and structural clarity outperform complex over-engineered systems.
+Methodology is rooted in fractal market theory, wave structure analysis, and probabilistic
+statistics.
+Core Philosophy
+- Fewer, higher quality signals beat more, lower quality signals
+- Trend alignment across timeframes is the primary filter
+- Risk ranges are mathematically derived, not discretionary
+- The system tells you where the market is, not where you want it to be
+================================================================================
+2. Methodology
+2.1 Timeframe Definitions
+Timeframe    Duration       Purpose
+Trade        <= 3 weeks     Entry/exit timing
+Trend        <= 3 months    Directional bias filter
+Long Term    3 years        Macro structural context (display only)
+================================================================================
+2.2 ABC Wave Structure
+Four-point pivot structure (A, B, C, D) that applies identically to uptrends and downtrends.
+Uptrend Structure
+Point    Example Price    Description
+A        $100             Pivot low
+B        $110             Pivot high -- higher high
+C        $105             Higher low -- C > A confirms uptrend
+D        $120             Running high -- updates as price climbs above B
+Downtrend Structure
+Point    Example Price    Description
+A        $100             Pivot high
+B        $90              Pivot low -- lower low
+C        $95              Lower high -- C < A confirms downtrend
+D        $85              Running low -- updates as price falls below B
+Pivot Bar Windows
+Timeframe    Bar Window    Confirmation Rule
+Trade        5 bars        5 bars before AND 5 bars after required
+Trend        20 bars       20 bars before AND 20 bars after required
+Long Term    90 bars       90 bars before AND 90 bars after required
+---
+C Update Logic -- CRITICAL
+C is NOT set once and frozen. C updates dynamically as the trend develops.
+# UPTREND -- C walks UP (higher lows)
+new_pivot_low = find_most_recent_confirmed_pivot_low(prices, bar_window)
+if new_pivot_low > current_C:
+    current_C = new_pivot_low  # Update to higher low
+# DOWNTREND -- C walks DOWN (lower highs)
+new_pivot_high = find_most_recent_confirmed_pivot_high(prices, bar_window)
+if new_pivot_high < current_C:
+    current_C = new_pivot_high  # Update to lower high
+# Break check always uses CURRENT C -- never stale C
+if direction == UPTREND and current_price < current_C: BREAK_OF_TRADE
+if direction == DOWNTREND and current_price > current_C: BREAK_OF_TRADE
+Example -- GLD trade timeframe:
+Initial C = $427.13  Feb 2   (first confirmed higher low)
+Updated C = $448.20  Feb 17  (new higher low -- C walks up)
+Break of trade = price closes below $448.20 (current C, not $427.13)
+---
+ABC Transition to Bearish -- Dual-Role Pivot (CRITICAL)
+When an uptrend breaks, the bearish structure builds using pivots that already exist.
+The dual-role pivot is the key insight:
+  Bearish A = old bullish D        (the highest confirmed point -- pivot high)
+  Bearish C = old bullish new B    (the lower high that formed before the break --
+                                    already confirmed with bar_window on both sides,
+                                    satisfies C < A immediately)
+  Bearish B = first lower low      (confirms AFTER the break of bullish C)
+  Bearish D = running low          (tracks down once DOWNTREND_VALID fires)
+Sequence after uptrend break:
+1. Price closes below bullish C         -> BREAK_OF_TRADE, Trade = Neutral
+2. Old bullish new B becomes bearish C  -> already confirmed, C < bearish A
+3. Price makes first lower low          -> bearish B confirms (bar_window both sides)
+4. DOWNTREND_VALID fires               -> Trade = Bearish
+5. Bearish D tracks lower              -> running low
+Why DOWNTREND_VALID fires quickly: bearish C was already confirmed before the break.
+The engine only needs bearish B to confirm -- then the full A/B/C structure exists.
+The same logic applies in reverse for a bearish-to-bullish transition:
+  Bullish A = old bearish D        (lowest confirmed point)
+  Bullish B = old bearish C        (the lower high that becomes the first higher high > A)
+  Bullish C = first higher low     (confirms after the break, C > A)
+  Bullish D = price closes above B -> UPTREND_VALID fires
+---
+Pivot Staleness Thresholds
+If pivot C is stale (too old), the structure is unreliable. Override to NO_STRUCTURE:
+Timeframe    Max C Age          Rationale
+Trade        60 trading days    Trade timeframe -- stale C after ~3 months is meaningless
+Trend        100 trading days   Trend timeframe -- stale C after ~5 months unreliable
+Long Term    No cutoff          LT structures are inherently old by design
+Implementation: use pandas_market_calendars for trading day count (already imported).
+If C date > threshold -> override state to NO_STRUCTURE, null all pivot values.
+---
+Key Rules
+- D is established when price closes above B (uptrend) or below B (downtrend)
+- D is a running value -- updates continuously, never a confirmed pivot
+- Today's incomplete bar must be excluded before pivot detection runs
+- Pivot confirmation requires bar_window bars on BOTH sides -- before AND after
+- The ABC structure always references the most recent confirmed pattern
+- C updates dynamically -- always the most recent confirmed higher low / lower high
+================================================================================
+2.3 Signal Components
+1. Fractal Dimension (D)
+- D -> 1.0 = trending, D -> 1.5 = choppy, D -> 2.0 = mean-reverting
+- Derived from Hurst Exponent: D = 2 - H
+2. Hurst Exponent (H) -- DFA Method
+Timeframe    DFA Lookback                  Role
+Trade        63 trading days (~3 months)   Primary signal -- drives conviction score
+Trend        252 trading days (~1 year)    Alignment filter -- confirms direction
+Long Term    756 trading days (~3 years)   Context only -- popup display, not in conviction formula
+3. Relative Implied Volatility (Rel IV%)
+- IV expressed as percentile of its own 52-week range
+- PRIMARY role: scales LRR/HRR width (ATR equivalent)
+- Rel IV is NOT in the conviction score formula -- LRR/HRR width scaling only
+- High IV = wider range = trade breathes more. Low IV = tighter range = precise entry.
+4. OBV (On-Balance Volume) Signal -- REPLACES price-momentum proxy
+- Applied as a multiplier to conviction score after base score is calculated
+- OBV direction determined by pivot structure applied to OBV series (bar_window = 9)
+- Confirming: OBV direction matches viewpoint direction
+- Diverging: OBV direction opposes viewpoint direction
+- Neutral: OBV direction mixed or no confirmed structure
+5. VIX Macro Regime (dashboard header indicator -- Phase 4)
+- Not a per-ticker signal -- a market-wide regime read
+- VIX < 19   -> Green  -- investable, VCFs mechanically adding equity exposure
+- VIX 20-29  -> Amber  -- choppy, reduce size, tighter stops
+- VIX >= 30  -> Red    -- danger, defensive posture, minimal exposure
+- Reads from existing VIX price_cache -- no new data fetch needed
+================================================================================
+2.4 Conviction Score
+Base Score Formula (v1.5 -- UPDATED)
+Component               Weight    Notes
+Trade H (DFA, 63-day)   65%       Primary signal -- dominant weight
+Trend H (DFA, 252-day)  35%       Alignment filter
+Rel IV REMOVED from conviction formula.
+Rel IV retained for LRR/HRR width scaling only -- no longer in conviction score.
+Previous formula (v1.4 -- DEPRECATED):
+  Trade H x 55% + Trend H x 25% + IV Score x 20%  <- DO NOT USE
+OBV Volume Multiplier (applied after base score)
+OBV Signal      Multiplier    Condition
+Confirming      x 1.15        OBV direction matches viewpoint
+Neutral         x 1.00        OBV direction neutral or mixed
+Diverging       x 0.80        OBV direction opposes viewpoint
+Final Conviction = Base Score x OBV Volume Multiplier
+CRITICAL: Conviction is BLANK when Viewpoint = Neutral.
+================================================================================
+2.5 Viewpoint States -- Final (Three States Only)
+Viewpoint    Condition                                          Conviction
+Bullish      Trade Bullish + Trend Bullish -- fully aligned     Calculated normally
+Bearish      Trade Bearish + Trend Bearish -- fully aligned     Calculated normally
+Neutral      Any other combination                              BLANK
+No Diverging state. Three states only: Bullish, Bearish, Neutral.
+================================================================================
+2.6 Direction Determination -- Pivots Only
+H has no role in direction. H drives conviction and LRR position only.
+Direction check -- C is the only gate. LRR has no role in direction determination.
+# UPTREND direction
+if structural_state == "BREAK_OF_TRADE":
+    trade_dir = "Neutral"
+elif current_price > c:          # price above invalidation level
+    trade_dir = "Bullish"
+else:
+    trade_dir = "Neutral"
+# DOWNTREND direction
+if structural_state == "BREAK_OF_TRADE":
+    trade_dir = "Neutral"
+elif current_price < c:          # price below invalidation level
+    trade_dir = "Bearish"
+else:
+    trade_dir = "Neutral"
+# Viewpoint
+if trade_dir == "Bullish" and trend_dir == "Bullish": viewpoint = "Bullish"
+elif trade_dir == "Bearish" and trend_dir == "Bearish": viewpoint = "Bearish"
+else: viewpoint = "Neutral"
+Direction lookup table:
+Condition                                     Direction
+Price above C -- uptrend, C unviolated        Bullish
+Price below C -- downtrend, C unviolated      Bearish
+Break of Trade (price closes through C)       Neutral
+FORMING -- no new C confirmed yet             Bullish or Bearish (price vs C still checked)
+EXTENDED -- price beyond D, no new C          Bullish or Bearish (price vs C still checked)
+WARNING -- IV-driven range expansion          Bullish or Bearish (price vs C still checked)
+NO_STRUCTURE -- insufficient pivot history    Neutral
+BREAK_OF_TRADE                                Neutral (explicit override)
+BREAK_OF_TREND                                Neutral for trend timeframe only
+CRITICAL: FORMING, EXTENDED, and WARNING do NOT force Neutral.
+Direction is always determined by price vs C -- structural state affects display only.
+---
+Break of Trade / Recovery Behavior (LOCKED)
+One close below C    -> BREAK_OF_TRADE fires immediately, Trade = Neutral
+Price recovers above C  -> Trade = Bullish restored (engine recalculates fresh each run)
+Intraday violations  -> Irrelevant -- engine uses EOD closes only
+Two-close rule       -> Explicitly rejected -- not implemented
+Position management at break (trader decision framework, not engine logic):
+- Trade breaks, Trend intact  -> Reduce to minimum position, watch for recovery or Trend break
+- Trade breaks, Trend breaks  -> Full exit, zero position -- no discretion
+- Trade recovers above C      -> Re-engage at LRR if conviction supports
+================================================================================
+2.7 LRR / HRR -- Always Show
+LRR and HRR always calculate and always display regardless of viewpoint.
+Color communicates the state:
+- Bullish viewpoint -> green (#00e5a0)
+- Bearish viewpoint -> red (#ff4d6d)
+- Neutral viewpoint -> grey (#8899aa)
+LRR/HRR cell color uses the TIMEFRAME's own direction, not the overall viewpoint.
+dirRangeColor(dir, isWarn) -> amber if warn flag true, otherwise dirColor(dir)
+================================================================================
+2.8 LRR / HRR Naming Convention
+LRR (Lower Risk Range) = always the lower price value.
+HRR (Higher Risk Range) = always the higher price value.
+Names are directional by price level, not by trend direction.
+Trend Direction    Entry Level                           Profit Target
+Uptrend            LRR -- enter long at or near level    HRR -- profit target above D
+Downtrend          HRR -- enter short on bounce to C     LRR -- profit target below D
+================================================================================
+2.9 LRR / HRR Calculation
+LRR Formula -- Uptrend
+Base LRR = C + (B - C) x H_factor
+H_factor lookup:
+  H > 0.65        ->  0.95  (near B -- strong trend)
+  H 0.55 - 0.65   ->  0.50  (midpoint -- moderate trend)
+  H 0.50 - 0.55   ->  0.05  (near C -- weak trend)
+  H < 0.50        ->  0.00  (defaults to C -- LRR shown grey)
+LRR always calculates and always displays.
+H < 0.50 defaults LRR to C, shown in grey.
+HRR Formula -- Uptrend
+Base HRR = D + (1-sigma of recent returns)
+HRR vs prior D interpretation:
+  HRR well above prior D  -> full conviction, full size
+  HRR near prior D        -> moderate conviction, reduced size
+  HRR below prior D       -> caution confirmed, minimum size
+Downtrend Mirror Formulas
+Base HRR = C - (C - B) x H_factor   (entry on bounce -- higher price)
+Base LRR = D - (1-sigma of recent returns)  (profit target -- lower price)
+Rel IV Scaling (ATR Equivalent)
+Rel IV%    LRR Adjustment (Uptrend)    HRR Adjustment (Uptrend)
+0-30%      x 0.99 (tight)             x 1.02
+31-60%     x 1.00 (neutral)           x 1.05
+61-80%     x 0.97 (wider)             x 1.10
+> 80%      x 0.94 (maximum)           x 1.15
+Downtrend: HRR pushed up, LRR pulled down.
+No hard floor or ceiling -- IV can push LRR below C or HRR above C -> WARNING state.
+================================================================================
+2.10 Structural States
+State                           Uptrend Condition                    Downtrend Condition              Dashboard
+UPTREND_VALID / DOWNTREND_VALID C > A, price above C                C < A, price below C             Normal green/red
+FORMING                         Pullback from D, no new C yet        Bounce from D, no new C yet      LRR/HRR show, grey
+EXTENDED                        Price above D, new C not formed      Price below D, new C not formed  LRR/HRR shown, grey
+WARNING                         LRR drifted below C (IV-driven only) HRR drifted above C (IV-only)   LRR or HRR cell amber
+BREAK_OF_TRADE                  Price closes below C (trade tf)      Price closes above C (trade tf)  Trade Dir Neutral, grey
+BREAK_OF_TREND                  Price closes below C (trend tf)      Price closes above C (trend tf)  Trend Dir Neutral, grey
+NO_STRUCTURE                    Insufficient pivot history            Insufficient pivot history        LRR/HRR grey
+STALE (-> NO_STRUCTURE)         C older than staleness threshold      C older than staleness threshold  LRR/HRR grey
+Critical Rules
+- C is the line in the sand -- Break of Trade/Trend fires on price CLOSING through C
+- Break of Trade = Trade Dir -> Neutral immediately -- no intermediate state
+- FORMING does NOT force Neutral -- direction still determined by price vs C
+- WARNING state is IV-driven only -- never price-driven
+- LRR/HRR always show -- color reflects state (green/red/grey)
+- Direction determined by pivots only -- H has no role
+- Trade and Trend states are independent -- Trend break does not auto-flip Trade
+- C updates dynamically -- always most recent confirmed higher low / lower high
+- Intraday violations are irrelevant -- EOD closes only
+- Recovery above C after break restores Bullish -- engine recalculates fresh each run
+================================================================================
+2.11 OBV Pivot Engine (v1.5 -- NEW)
+Replaces the price-momentum proxy (_volume_signal) entirely.
+Rationale
+- Price 5-day / 20-day momentum proxy was redundant with Hurst and provided no independent signal
+- OBV (On-Balance Volume) measures net volume flow -- independent from price trend persistence
+- OBV structural breakout leads price: OBV makes new highs before price breaks B or D
+- During a mature bullish trend, OBV impulses, consolidates, and impulses again
+- OBV breaking its prior structural high signals the start of a new price impulse
+OBV Calculation
+def _build_obv(closes, volumes):
+    obv = [0.0]
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i-1]:
+            obv.append(obv[-1] + volumes[i])
+        elif closes[i] < closes[i-1]:
+            obv.append(obv[-1] - volumes[i])
+        else:
+            obv.append(obv[-1])
+    return obv
+OBV Direction Detection
+- Same pivot logic as price pivot engine -- applied to OBV series
+- Bar window: 9 bars (both sides required -- same rule as price pivot engine)
+- Bullish OBV: higher highs AND higher lows in OBV series
+- Bearish OBV: lower highs AND lower lows in OBV series
+- Neutral: mixed or insufficient confirmed pivots
+def _obv_direction(closes, volumes, bar_window=9):
+    obv = _build_obv(closes, volumes)
+    # Find confirmed pivot highs and lows in OBV
+    # Requires bar_window bars on BOTH sides
+    # Returns "Bullish", "Bearish", or "Neutral"
+Confirming Logic
+- OBV direction == viewpoint direction -> Confirming (x 1.15)
+- OBV direction != viewpoint direction -> Diverging (x 0.80)
+- OBV direction == Neutral             -> Neutral (x 1.00)
+- Viewpoint == Neutral                 -> OBV direction stored but multiplier irrelevant
+Data Requirements
+- volume_history_json: 60-day daily volume series stored in price_cache
+  (parallel to history_json -- same date alignment, same ET date exclusion)
+- Populated in yahoo_finance.py at fetch time from hist["Volume"]
+- PHASE 5 TODO comment in yahoo_finance.py marks the Schwab swap point
+- OBV engine is source-agnostic -- reads volume_history_json regardless of origin
+Phase 5 OBV Upgrade
+When Schwab streaming is live:
+- Swap volume_history_json source from Yahoo Finance to Schwab streaming
+- No changes to OBV pivot engine logic
+- Real-time intraday volume makes OBV signal more current and accurate
+- Consider adding volume surge icon to dashboard row (150%+ of 20-day avg)
+================================================================================
+2.12 Alert Flag Trigger Conditions
+Fires when ALL THREE conditions are simultaneously true:
+1. Trade H > 0.55 AND Trend H > 0.55
+2. Viewpoint = Bullish OR Bearish (never fires on Neutral)
+3. Final Conviction >= 70% (after OBV volume multiplier applied)
+================================================================================
+2.13 Viewpoint Timestamp (viewpoint_since)
+When viewpoint transitions TO Bullish or Bearish (Trade + Trend align):
+- Timestamp is recorded in signal_output.viewpoint_since (ISO format, ET timezone)
+- Clock resets on any new alignment transition (Neutral -> Bullish, Bullish -> Bearish, etc.)
+- Clock preserves existing timestamp when viewpoint stays in same aligned state
+- Timestamp clears (null) when viewpoint = Neutral
+- Displayed in popup as "Aligned since" -- hidden when Neutral
+- Purpose: trade duration analytics, future backtesting of signal persistence
+================================================================================
+2.14 Multi-Timeframe Signal Logic Flow
+1. Long Term H -> structurally trending? (context only -- popup display)
+2. Trend H -> trending over 3 months? (alignment filter)
+3. Trade H -> short term aligned? (primary signal)
+4. ABC pivot structure -> where are we in the wave?
+5. OBV pivot direction -> is volume flow confirming the trend?
+6. Rel IV -> where in the volatility distribution? (LRR/HRR width only)
+7. VIX regime -> what is the macro investability environment?
+8. Output -> LRR, HRR, structural state, conviction score (0-100%)
+Primary filter: Trade and Trend must be aligned (same direction) for Viewpoint to be Bullish/Bearish.
+================================================================================
+3. Asset Universe
+3.1 Tier 1 -- Core Watchlist (~51 tickers, Static)
+Asset Class              Sector                   Tickers
+Domestic Equities        Index                    SPX, NDX, $DJI, VIX
+Domestic Equities        Broad Market             SPY, QQQ, IWM
+Domestic Equities        Technology               XLK, AAPL, MSFT, NVDA, AVGO
+Domestic Equities        Communication Services   XLC, GOOGL, META, NFLX
+Domestic Equities        Consumer Discretionary   XLY, AMZN, TSLA
+Domestic Equities        Financials               XLF
+Domestic Equities        Energy                   XLE
+Domestic Equities        Health Care              XLV
+Domestic Equities        Industrials              XLI
+Domestic Equities        Consumer Staples         XLP
+Domestic Equities        Materials                XLB
+Domestic Equities        Utilities                XLU
+Domestic Equities        Real Estate              XLRE
+Domestic Equities        Factor                   SMH, CIBR, GRID, QTUM, ROBO, SATS
+Domestic Fixed Income    Treasury                 TLT
+Digital Assets           Cryptocurrency           IBIT
+Foreign Exchange         Gold                     GLD
+Foreign Exchange         Currency                 USD, JPY
+International Equities   China                    KWEB
+International Equities   Country ETF              EWJ, EWW, TUR, UAE
+Commodities              Energy                   USO
+Commodities              Precious Metals          SLV, PALL
+Commodities              Agricultural             CANE
+Commodities              Materials                WOOD
+================================================================================
+4. Dashboard
+4.1 Current State (v1.5)
+- React application running locally via Docker at localhost:3000
+- Phases 1, 2, 3, and most of Phase 4 complete
+- All signal columns live: Conviction, LRR, HRR, Trade Dir, Trend Dir
+- OBV pivot engine live in conviction_engine.py
+- Conviction score: 65% Trade H / 35% Trend H (Rel IV removed)
+- REFRESH DATA: manual trigger only, populates price_cache
+- CALCULATE SIGNALS: manual trigger only, reads from price_cache (never Yahoo)
+- EOD Scheduler: fires at 4:15 PM ET on NYSE trading days (APScheduler)
+- Admin panel at localhost:3000/admin -- password protected
+4.2 Dashboard Columns
+Column          Description                                                      Status
+>               Tier 2 expand/collapse chevron                                   Built
+⚡              Alert flag -- high conviction aligned signal                      Built
+Ticker          Symbol                                                           Built
+Description     Asset name / ETF name                                            Built
+Asset Class     Classification                                                   Built
+Sector          GICS sector / type                                               Built
+Close           Last closing price -- real from Yahoo Finance                    Built (real)
+Trend           SVG sparkline -- 60-day price history                            Built (real)
+Viewpoint       Bullish / Bearish / Neutral                                      Built (live)
+Conviction %    0-100% -- blank when Neutral                                     Built (live)
+Trade Dir       Bullish / Bearish / Neutral                                      Built (live)
+Trade LRR       Lower risk range -- trade timeframe                              Built (live)
+Trade HRR       Higher risk range -- trade timeframe                             Built (live)
+Trend Dir       Bullish / Bearish / Neutral                                      Built (live)
+Trend LRR       Support level -- trend timeframe                                 Built (live)
+Asset Class     Classification badge                                             Built
+Sector          GICS sector badge                                                Built
+================================================================================
+5. Phase 3 -- Signal Engine Build Specification (COMPLETE)
+5.1 Build Sequence
+Task    Deliverable                           File                                        Status
+3.1     Hurst + Fractal Dimension (DFA)       backend/services/signal_engine.py           Complete
+3.2     ABC Pivot Detector                    backend/services/pivot_engine.py            Complete
+3.3     LRR/HRR + Conviction Engine           backend/services/conviction_engine.py       Complete
+3.4     Wire to Dashboard                     src/App.js                                  Complete
+5.2 Conviction Engine -- Current Implementation
+Inputs:
+Input                Source                Used For
+H(Trade), H(Trend)   signal_hurst table    Conviction score (65/35)
+A, B, C, D prices    signal_pivots table   LRR/HRR base calculation
+Structural state     signal_pivots table   Warning / break detection
+Rel IV%              price_cache           LRR/HRR width scaling only
+OBV series           price_cache           OBV direction pivot engine
+volume_history_json  price_cache           OBV calculation input
+Database Table: signal_output
+ticker TEXT, timeframe TEXT,
+lrr REAL, hrr REAL, structural_state TEXT,
+trade_direction TEXT, conviction REAL, h_value REAL,
+viewpoint TEXT,
+viewpoint_since TEXT,        <- ISO timestamp ET -- when current aligned viewpoint began
+alert BOOLEAN,
+vol_signal TEXT,             <- Confirming | Neutral | Diverging (OBV-based)
+warning BOOLEAN,             <- IV-driven WARNING flag
+lrr_warn BOOLEAN,            <- price-based LRR threshold flag
+hrr_warn BOOLEAN,            <- price-based HRR threshold flag
+pivot_b REAL,                <- B pivot value for UI comparison
+pivot_c REAL,                <- C pivot value for UI comparison
+obv_direction TEXT,          <- OBV pivot trend: Bullish | Bearish | Neutral
+obv_confirming BOOLEAN,      <- True when OBV direction matches viewpoint
+calculated_at TEXT
+UNIQUE(ticker, timeframe)
+FastAPI Endpoints (Phase 3)
+GET /api/signals/hurst    -- Task 3.1
+GET /api/signals/pivots   -- Task 3.2
+GET /api/signals/output   -- Task 3.3 (recalculates + writes to DB)
+GET /api/signals/stored   -- Task 3.4 (read-only, grouped by ticker, page load)
+================================================================================
+6. Phase 4 -- Backend & Database (IN PROGRESS)
+6.1 Build Sequence
+Task    Deliverable                              Status
+4.1     GitHub private repo + .env cleanup       Complete
+4.2     EOD Scheduler (APScheduler + NYSE)        Complete
+4.3     Signal History daily snapshots           Complete
+4.4     Fly.io cloud deployment                  Deferred -- triggers at Phase 5 Schwab OAuth
+4.5     Auto-load cache on page load             Complete
+4.6     Tickers table + dynamic backend          Complete
+4.7     yfinance lookup endpoint                 Complete
+4.8     viewpoint_since timestamp               Complete
+4.9     FORMING state direction fix              Complete
+4.10    Pivot staleness thresholds               Complete
+4.11    Conviction rebalance (65/35)             Complete
+4.12    OBV pivot engine                         Complete
+4.13    VIX header indicator                     Pending -- next task
+6.2 EOD Scheduler
+- APScheduler AsyncIOScheduler inside FastAPI lifespan
+- Fires at 4:15 PM ET on NYSE trading days only (pandas_market_calendars)
+- Startup catchup: if past 4:15 PM ET, trading day, no successful run today -> runs immediately
+- All dates use ET timezone -- never UTC
+EOD Flow:
+APScheduler
+  -> refresh_data()       writes -> price_cache
+  -> calculate_signals()  writes -> signal_hurst, signal_pivots, signal_output, signal_history
+  -> scheduler_log        writes -> success/failure entry
+Scheduler Indicator in Dashboard Header:
+- Green dot  -- today's EOD run complete
+- Amber dot  -- scheduled, not yet run today
+- Red dot    -- last run failed
+6.3 Signal History
+- Every calculate_signals() run writes snapshot to signal_history
+- Idempotent -- one snapshot per ticker/timeframe per ET calendar day
+- Trigger string recorded: "manual", "scheduled", "catchup"
+- GET /api/signals/history -- not yet wired to dashboard UI
+6.4 Tickers Table
+- SQLite tickers table is source of truth -- replaces tickers.js
+- get_active_tickers(db) is the only way backend retrieves ticker list
+- Admin panel at localhost:3000/admin -- CRUD + yfinance lookup
+6.5 VIX Header Indicator (Task 4.13 -- PENDING)
+Display VIX regime in dashboard header alongside SCHED indicator:
+- VIX < 19   -> Green  -- investable
+- VIX 20-29  -> Amber  -- choppy
+- VIX >= 30  -> Red    -- danger
+- Reads from existing VIX price_cache -- no new data fetch
+- Backed by Volatility Control Fund (VCF) mechanics:
+  VCFs mechanically buy when realized vol falls (VIX < 19)
+  VCFs mechanically sell when realized vol spikes (VIX > 30)
+  Systematic flows represent >50% of investable capital
+FastAPI Endpoints (Phase 4)
+GET /api/scheduler/status         -- Task 4.2
+GET /api/signals/calculate        -- Task 4.3 (full pipeline + snapshot)
+GET /api/signals/history          -- Task 4.3
+GET /api/tickers                  -- Task 4.6
+POST /api/tickers                 -- Task 4.6
+PUT /api/tickers/{symbol}         -- Task 4.6
+DELETE /api/tickers/{symbol}      -- Task 4.6
+GET /api/tickers/lookup/{symbol}  -- Task 4.7
+================================================================================
+7. Technical Architecture
+7.1 Current Stack
+Component          Technology                           Status
+Frontend           React (CRA)                          Running
+Container          Docker + docker-compose               Running
+Backend            Python FastAPI -- localhost:8000      Running
+Database           SQLite -- backend/signal_matrix.db   Running
+Price Data         Yahoo Finance EOD via FastAPI         Running
+Signal Engine      Python -- DFA, pivots                 Running
+Conviction Engine  Python -- LRR/HRR, OBV, conviction   Running
+Scheduler          APScheduler -- EOD 4:15 PM ET        Running
+7.2 Data Layer Rules
+- Signal engine NEVER calls yfinance directly -- always reads from price_cache
+- REFRESH DATA populates cache -- CALCULATE SIGNALS reads from it
+- Same-day cache invalidation -- stale rows reset before re-fetch
+- Price history excludes today's incomplete bar before pivot detection
+- Auto-loading from SQLite cache on page load IS allowed (local DB read, not Yahoo call)
+- All cache_date and run_date writes use ET date -- never UTC
+7.3 price_cache Schema (key fields)
+ticker TEXT, cache_date TEXT (ET), close REAL,
+history_json TEXT,           <- 60-day close price series (JSON array)
+volume REAL,                 <- today's volume
+volume_history_json TEXT,    <- 60-day daily volume series (JSON array) -- OBV input
+rel_iv REAL, vol_signal TEXT, updated_at DATETIME
+================================================================================
+8. Statistical Framework
+Component                       Framework      Rationale
+Hurst Exponent (H)              Frequentist    Objective measurement of price series property
+Fractal Dimension (D)           Frequentist    Derived from H: D = 2 - H
+Gaussian Return Distribution    Frequentist    Historical return frequency -> confidence intervals
+Relative IV Percentile          Frequentist    Rank within own 52-week historical distribution
+Conviction Score                Frequentist    Trend persistence measurement (H-based)
+LRR / HRR Ranges                Frequentist    Anchored to Gaussian sigma bands and pivot points
+OBV Pivot Direction             Frequentist    Structural pivot detection applied to volume flow
+Quad Probability Distribution   Bayesian       Continuously updated belief across 4 quads
+Forward Quarter Projections     Bayesian       Prior decay without new confirming evidence
+Policy Signal Modifiers         Bayesian       Discrete evidence updates to forward projections
+================================================================================
+9. Roadmap
+Phase    Description               Status         Key Tasks
+Phase 1  Dashboard Refinement      Complete        UI/UX, sparklines, columns, Tier 2, Admin
+Phase 2  Real Data Integration     Complete        Yahoo Finance EOD, real prices, Rel IV, volume
+Phase 3  Signal Engine             Complete        DFA Hurst, ABC Pivots, LRR/HRR, Wire to Dashboard
+Phase 4  Backend & Database        In Progress     Scheduler, History, Tickers, OBV, viewpoint_since
+                                                   4.13 VIX header indicator pending
+Phase 5  Schwab API                Pending         OAuth, real-time streaming, options IV
+                                                   Triggers Fly.io deployment
+                                                   OBV volume source swap (yahoo_finance.py TODO)
+                                                   Volume surge icon on dashboard row (150%+ avg)
+Phase 6  Cloud Deployment          Pending         Supabase migration, production hardening
+Phase QT Quad Tracker              Pending         Macro regime detection, forward quad probability
+================================================================================
+10. Open Questions / TBD
+Item                            Options                                     Status
+Pivot bar_window before side    Currently: bar_window before AND after       TBD -- review after live
+Tier 2 auto-surfacing           Auto vs manual conviction threshold trigger   TBD -- post Phase 3
+Quad alignment column           Deferred until Quad Tracker is built          Phase QT
+Cloud provider                  AWS vs Azure vs GCP vs Fly.io                 TBD -- Phase 6
+Schwab API OAuth                Developer account approved, setup pending      Phase 5
+Mobile responsive design        Confirm requirements                           TBD
+OBV surge threshold             150% vs 200% of 20-day avg for icon trigger   Phase 5
+Rel IV flag on LRR/HRR cells    Visual flag when Rel IV > 60% or > 80%        Phase 4 consideration
+Schwab IV Percentile            Replaces Yahoo Finance Rel IV proxy            Phase 5
+================================================================================
+Signal Matrix Platform  |  Master Specification  |  v1.5  |  March 2026  |  Confidential
