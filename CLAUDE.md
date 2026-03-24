@@ -121,6 +121,13 @@ Critical issues already resolved — do not reintroduce these bugs:
 - FORMING, EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID all allow Bullish/Bearish
 - LRR above current price during a FORMING pullback is expected — do not treat as a break
 
+### ABC Pivot Search — All A Candidates Tried (`pivot_engine.py`)
+- Old behavior: `_find_uptrend_abc` / `_find_downtrend_abc` used only the single nearest pivot low/high before B as A
+- When the nearest A is above C (uptrend) or below C (downtrend), a valid ABC exists with an older A — but the engine was moving to the next C candidate instead
+- **Fixed:** For each (C, B) pair, iterate all A candidates newest-first and stop at the first satisfying `C > A` (uptrend) or `C < A` (downtrend)
+- **Example:** SPX trend — engine was finding A=10/10/25 (6552.51) which is above C=11/20/25 (6538.76), causing the uptrend check to fail; correct A is 04/08/25 (4982.77); old engine fell back to a stale ABC (C=10/10/25, 111 trading days) and fired NO_STRUCTURE
+- **Rule:** Never assume the nearest A before B is the correct A — always scan all candidates
+
 ### OBV Pivot Engine Replaces Price-Momentum Proxy (`conviction_engine.py`)
 - Old `_volume_signal` used 5-day / 20-day price momentum — not real volume
 - **Replaced with:** `_build_obv` + `_obv_direction` — pivot-based OBV trend detection
