@@ -1,0 +1,409 @@
+
+
+
+Signal Matrix Platform
+Phase 5 Specification
+Schwab API Integration + Cloud Deployment
+Version 1.0  |  March 2026  |  Confidential
+
+
+
+
+1. Overview
+Phase 5 delivers two major capabilities: cloud deployment of Signal Matrix to signal.suttonmc.com via Fly.io, and integration of the Charles Schwab Trader API as the primary data source replacing Yahoo Finance. The Schwab API provides real options IV data, accurate EOD quotes, and true exchange volume — replacing the proxy-based approximations used through Phase 4.
+
+1.1 Phase 5 Scope
+TaskDeliverableStatus5.1Supabase setup + SQLAlchemy migration (SQLite -> Postgres)Pending5.2Fly.io deployment — Docker, secrets, signal.suttonmc.com DNSPending5.3Schwab OAuth — token exchange, storage, proactive auto-refreshPending5.4Schwab quote polling — replaces Yahoo Finance EOD fetchPending5.5IV Percentile — options chain fetch, iv_history table, replaces Rel IV proxyPending5.6OBV source swap — volume_history_json from Schwab volume historyPending
+1.2 Decisions Locked
+DecisionChoiceData fetch strategyPolling (REST, scheduled) — not WebSocket streamingDatabaseSupabase (managed Postgres) — replaces SQLite entirelyIV fetch scopeAll options-eligible tickers (~47) — skip VIX, $DJI, SPX, NDXToken refreshProactive — background task every 25 minutesIV fallbackYahoo Finance Rel IV proxy when Schwab options chain failsAccount positionsDropped from Phase 5 — add in Phase 6 or laterSchwab callback URLhttps://signal.suttonmc.com/api/auth/schwab/callbackSchwab Python libraryschwab-py (pip install schwab-py) — do not write raw HTTP callsFly.io app structureTwo separate apps: signal-matrix-api and signal-matrix-webYahoo FinancePermanent silent fallback — never removed
+1.3 Infrastructure Summary
+ComponentServiceCostDatabaseSupabase (managed Postgres, US East)$0/monthApp hosting — APIFly.io signal-matrix-api (512MB RAM, shared-cpu-1x)~$3/monthApp hosting — WebFly.io signal-matrix-web (256MB RAM, shared-cpu-1x)~$2/monthDNS + SSLCloudflare (existing, proxy enabled)$0/monthSchwab APITrader API Individual — Production approved$0/monthTotal~$5/month
+
+
+2. Task 5.1 — Supabase / Postgres Migration
+2.1 Overview
+SQLite is replaced by Supabase (managed Postgres) as the production database. All existing SQLAlchemy models remain structurally identical — only the connection driver and string change. Two new tables are added in Phase 5: schwab_tokens and iv_history.
+SQLite file is retained locally as a backup and continues to be used for local development. Do not delete signal_matrix.db until Supabase has been running stably in production for at least two weeks.
+
+2.2 New Dependencies
+PackagePurposeasyncpgAsync Postgres driver — replaces aiosqlitealembicDatabase migration tool — generates and runs schema migration scriptsschwab-pyOfficial Python wrapper for Schwab Trader API (pip install schwab-py)cryptographyFernet symmetric encryption for token storage at rest
+2.3 Connection Strings
+Two connection strings are required. Both are saved in .env locally and as Fly.io secrets in production.
+
+Direct connection (Alembic migrations only — never used by the running app):
+SUPABASE_CONNECTION_STRING=postgresql+asyncpg://postgres:[PASSWORD]@db.wxqioudsteiwaazrgbao.supabase.co:5432/postgres?ssl=require
+
+Transaction pooler (app runtime — Fly.io and local dev against Supabase):
+SUPABASE_POOLED_CONNECTION_STRING=postgresql+asyncpg://postgres.wxqioudsteiwaazrgbao:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres?ssl=require
+
+backend/database.py reads SUPABASE_POOLED_CONNECTION_STRING at runtime. SUPABASE_CONNECTION_STRING is only used by Alembic CLI commands.
+
+2.4 Migration Strategy
+• Run alembic init alembic to initialize migration tooling in backend/
+• Configure alembic.ini to use SUPABASE_CONNECTION_STRING (direct, not pooled)
+• Run alembic revision --autogenerate -m 'initial schema' to generate migration from existing models
+• Review generated migration script before applying
+• Run alembic upgrade head against Supabase to create all tables
+• Verify all tables exist in Supabase dashboard before proceeding to Task 5.2
+
+2.5 Full Table Inventory — Supabase
+TablePhaseNotesprice_cache2Migrated from SQLite. Add data_source column (Phase 5).signal_hurst3Migrated from SQLite. No changes.signal_pivots3Migrated from SQLite. No changes.signal_output3Migrated from SQLite. No changes.signal_history4Migrated from SQLite. No changes.scheduler_log4Migrated from SQLite. No changes.tickers4Migrated from SQLite. No changes.schwab_tokens5 NEWNew in Phase 5. Stores encrypted OAuth tokens.iv_history5 NEWNew in Phase 5. Rolling 52-week daily IV per ticker.
+2.6 New Table: schwab_tokens
+id                INTEGER PRIMARY KEY
+access_token      TEXT NOT NULL        -- Fernet encrypted
+refresh_token     TEXT NOT NULL        -- Fernet encrypted
+expires_at        TEXT                 -- ISO timestamp ET
+created_at        TEXT                 -- UTC timestamp
+updated_at        TEXT                 -- UTC timestamp
+
+Encryption key stored as Fly.io secret: SCHWAB_TOKEN_ENCRYPTION_KEY
+Generate once: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+Tokens are encrypted before write, decrypted after read. Transparent to all callers.
+
+2.7 New Table: iv_history
+id                INTEGER PRIMARY KEY AUTOINCREMENT
+ticker            TEXT NOT NULL
+iv_date           TEXT NOT NULL        -- ET date YYYY-MM-DD
+implied_vol       REAL NOT NULL        -- raw IV from Schwab (e.g. 0.187 = 18.7%)
+created_at        TEXT                 -- UTC timestamp
+
+UNIQUE(ticker, iv_date)
+INDEX: (ticker, iv_date)
+
+2.8 price_cache Schema Addition
+One new column added to price_cache for data source tracking:
+data_source       TEXT DEFAULT 'yahoo'  -- 'schwab' | 'yahoo' | 'yahoo_fallback'
+
+
+
+3. Task 5.2 — Fly.io Deployment
+3.1 Overview
+Two separate Fly.io apps are deployed: signal-matrix-api (FastAPI backend) and signal-matrix-web (React frontend). Both are deployed from existing Dockerfiles with no changes to local docker-compose.yml, which remains the local development configuration.
+
+3.2 App Configuration
+signal-matrix-api (fly.api.toml)
+app = 'signal-matrix-api'
+primary_region = 'iad'  # US East — consistent with ET timezone + Supabase region
+
+[build]
+  dockerfile = 'backend/Dockerfile'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false  # Keep running for scheduler
+  auto_start_machines = true
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+signal-matrix-web (fly.web.toml)
+app = 'signal-matrix-web'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+CRITICAL: auto_stop_machines = false on the API app. The APScheduler EOD job must keep running — if Fly.io stops the machine to save resources the 4:15 PM ET scheduler will not fire.
+
+3.3 Fly.io Secrets
+Set all secrets via Fly CLI before first deploy. These replace .env in production.
+
+API app secrets:
+fly secrets set SUPABASE_POOLED_CONNECTION_STRING=... --app signal-matrix-api
+fly secrets set SCHWAB_CLIENT_ID=... --app signal-matrix-api
+fly secrets set SCHWAB_CLIENT_SECRET=... --app signal-matrix-api
+fly secrets set SCHWAB_CALLBACK_URL=https://signal.suttonmc.com/api/auth/schwab/callback --app signal-matrix-api
+fly secrets set SCHWAB_TOKEN_ENCRYPTION_KEY=... --app signal-matrix-api
+
+Web app secrets:
+fly secrets set REACT_APP_ADMIN_PASSWORD=... --app signal-matrix-web
+fly secrets set REACT_APP_API_URL=https://api.signal.suttonmc.com --app signal-matrix-web
+
+3.4 Cloudflare DNS Records
+Add two CNAME records in Cloudflare dashboard after Fly.io apps are created. Proxy must be ON (orange cloud) for SSL termination.
+TypeNameTargetProxyCNAMEsignalsignal-matrix-web.fly.devON (orange cloud)CNAMEapi.signalsignal-matrix-api.fly.devON (orange cloud)
+3.5 Deploy Commands
+# First deploy (from project root)
+fly deploy --config fly.api.toml --app signal-matrix-api
+fly deploy --config fly.web.toml --app signal-matrix-web
+
+# Subsequent deploys
+fly deploy --config fly.api.toml
+fly deploy --config fly.web.toml
+
+3.6 REACT_APP_API_URL Update
+App.js currently calls localhost:8000 for all API requests. This must be environment-variable driven before Fly.io deploy. Update all fetch calls to use process.env.REACT_APP_API_URL as the base URL.
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+Local .env: REACT_APP_API_URL=http://localhost:8000 (unchanged for local dev)
+Fly.io secret: REACT_APP_API_URL=https://api.signal.suttonmc.com
+
+
+
+4. Task 5.3 — Schwab OAuth Flow
+4.1 Overview
+schwab-py handles the OAuth 2.0 three-legged flow, token exchange, and token file management. FastAPI wraps schwab-py to expose the auth flow via HTTP endpoints and store tokens encrypted in Supabase. A proactive background refresh task keeps the access token fresh.
+
+4.2 New Files
+FilePurposebackend/models/schwab_tokens.pySQLAlchemy model for schwab_tokens tablebackend/services/schwab_client.pyschwab-py client init, token load/save, encryptionbackend/routers/auth.pyOAuth endpoints: login, callback, status, logout
+4.3 OAuth Flow
+• User visits signal.suttonmc.com, sees red SCHWAB indicator in header
+• User clicks indicator ? navigates to GET /api/auth/schwab/login
+• FastAPI redirects browser to Schwab authorization URL via schwab-py
+• User logs in with Schwab brokerage credentials on Schwab's site
+• Schwab redirects to https://signal.suttonmc.com/api/auth/schwab/callback?code=XXXX
+• FastAPI receives code, schwab-py exchanges for access + refresh tokens
+• Tokens encrypted with Fernet and stored in schwab_tokens table in Supabase
+• SCHWAB indicator turns green — app is authenticated
+This flow only needs to happen once. The proactive refresh task handles all subsequent token renewal automatically.
+
+4.4 FastAPI Endpoints
+EndpointBehaviorGET /api/auth/schwab/loginRedirects browser to Schwab OAuth authorization URLGET /api/auth/schwab/callbackReceives auth code, exchanges for tokens, stores encrypted in SupabaseGET /api/auth/schwab/statusReturns connected/disconnected + token age in secondsDELETE /api/auth/schwab/logoutClears tokens from Supabase — requires re-authentication
+4.5 Proactive Token Refresh
+Access tokens expire after ~30 minutes. A background task in FastAPI lifespan fires every 25 minutes to refresh proactively — ensuring the 4:00 PM ET data fetch never encounters an expired token mid-run.
+# In main.py lifespan context manager (alongside existing APScheduler)
+scheduler.add_job(refresh_schwab_token, 'interval', minutes=25)
+
+Refresh logic in schwab_client.py:
+• Load tokens from Supabase, decrypt
+• Call schwab-py refresh — returns new access token + new refresh token (rolling window)
+• Encrypt and write updated tokens back to Supabase
+• On refresh failure: mark token as expired, log error, SCHWAB indicator turns red
+• Fallback: all Schwab data calls fall back to Yahoo Finance automatically
+
+4.6 Token Expiry Edge Case
+If the app is down for more than 7 days (e.g., Fly.io maintenance + extended downtime), the refresh token expires and cannot be renewed automatically. Recovery:
+• SCHWAB indicator turns red on next page load
+• All data falls back to Yahoo Finance automatically — dashboard remains functional
+• User clicks red SCHWAB indicator to re-authenticate
+• OAuth flow runs once — normal operation resumes
+
+4.7 Dashboard — SCHWAB Header Indicator
+Small status dot added to dashboard header alongside existing SCHED and VIX indicators:
+StateDisplayConditionConnected? SCHWAB (green)Token valid, last refresh < 25 min agoAging? SCHWAB (amber)Token valid but refresh token > 6 days oldDisconnected? SCHWAB (red, clickable)Token expired or missing — click to re-auth
+
+
+5. Task 5.4 — Schwab Quote Polling
+5.1 Overview
+schwab-py replaces Yahoo Finance as the primary EOD data source. The EOD scheduler gains a new step at 4:00 PM ET for Schwab data fetch, 15 minutes before the existing signal calculation at 4:15 PM ET. Yahoo Finance remains as a silent fallback — it is never removed.
+
+5.2 New File
+backend/services/schwab_market_data.py
+Contains all Schwab data fetch logic using schwab-py. Yahoo Finance functions in yahoo_finance.py remain untouched — called only as fallback.
+
+5.3 Updated EOD Scheduler Flow
+4:00 PM ET — schwab_fetch_all()
+    schwab_fetch_quotes()          1 request, all 51 tickers
+    schwab_fetch_history()         51 requests, ~26 seconds with 0.5s delay
+    writes to price_cache          data_source = 'schwab'
+
+    on SchwabTokenExpiredError:
+        yahoo_fetch()              data_source = 'yahoo_fallback'
+    on SchwabAPIError:
+        yahoo_fetch()              data_source = 'yahoo_fallback'
+
+4:15 PM ET — calculate_signals()   unchanged — reads from price_cache
+
+5.4 Schwab API Endpoints Used
+EndpointDataCalls per EODmarketdata/v1/quotesLast price, volume for all tickers1 (batch)marketdata/v1/pricehistoryDaily OHLCV — 60 days per ticker51 (one per ticker)
+5.5 Rate Limit Safety
+• Schwab limit: 120 requests per minute
+• Total EOD requests: 52 (1 batch quote + 51 history calls)
+• 0.5 second delay between history calls — completes in ~26 seconds
+• Well under 120/min limit — no throttling risk
+
+5.6 price_cache Fields Populated by Schwab
+FieldSchwab SourceNotescloselastPriceFrom quotes endpointvolumetotalVolumeFrom quotes endpointhistory_jsoncandles[].close60-day series from pricehistoryvolume_history_jsoncandles[].volume60-day series — OBV input (Task 5.6)rel_ivSee Task 5.5Populated by schwab_options.pydata_source'schwab''yahoo_fallback' if Schwab fails
+5.7 Dashboard — Data Source Indicator
+The existing timestamp in the dashboard header gains a source tag:
+Schwab active:   EOD · 03/24/26 16:00  ? SCHWAB  ? SCHED  ? VIX 17.4
+Yahoo fallback:  EOD · 03/24/26 16:00  ? SCHWAB  ? SCHED  ? VIX 17.4
+The half-filled circle on SCHWAB indicates data came from Yahoo fallback. Hover tooltip explains the reason (token expired, API error, etc.).
+
+
+
+6. Task 5.5 — IV Percentile
+6.1 Overview
+Real implied volatility from Schwab options chains replaces the Yahoo Finance realized volatility proxy. IV Percentile is computed as the rank of today's IV within the rolling 252-trading-day history stored in iv_history. Yahoo Rel IV proxy remains as fallback when Schwab is unavailable.
+
+6.2 New File
+backend/services/schwab_options.py
+Fetches ATM implied volatility from Schwab options chains for each IV-eligible ticker. Writes daily IV to iv_history and computes IV Percentile for price_cache.rel_iv.
+
+6.3 IV-Eligible Tickers
+All Tier 1 tickers with standard options chains (~47). Excluded:
+TickerReason for ExclusionVIXVolatility index — options exist but not tradeable in standard way$DJIDow Jones index — no standard options chainSPXIndex options (different chain structure from SPY)NDXIndex options (different chain structure from QQQ)
+6.4 Schwab API Endpoint
+GET /marketdata/v1/chains
+  symbol=SPY
+  contractType=ALL
+  includeUnderlyingQuote=false
+  strikeCount=1          # ATM only — minimize response size
+  expMonth=ALL
+
+Extract: response['volatility'] — the ATM implied volatility for the front-month contract. This is the single number written to iv_history.implied_vol per ticker per day.
+
+6.5 IV Percentile Calculation
+# For each IV-eligible ticker at EOD:
+today_iv = schwab_options_chain(ticker)['volatility']
+
+# Fetch last 252 trading days from iv_history
+history = db.query(IVHistory)
+    .filter(IVHistory.ticker == ticker)
+    .order_by(IVHistory.iv_date.desc())
+    .limit(252).all()
+
+# Rank today's IV within history (0-100)
+from scipy.stats import percentileofscore
+iv_values = [row.implied_vol for row in history]
+iv_percentile = percentileofscore(iv_values, today_iv, kind='rank')
+
+# Write to price_cache
+cache_row.rel_iv = iv_percentile
+cache_row.iv_source = 'schwab'
+
+6.6 Bootstrap Period
+On day one, iv_history is empty. IV Percentile becomes more meaningful as history accumulates. Cold start approach: use Yahoo Finance Rel IV proxy tagged as 'proxy' until sufficient Schwab IV history exists.
+History AvailableIV SourceAccuracy0-20 daysYahoo proxy (fallback)Approximate — realized vol proxy21-63 daysSchwab IV (partial history)Directionally correct64-252 daysSchwab IV (growing history)Increasingly accurate252+ daysSchwab IV (full 52-week)Full accuracy — true IV Percentile
+6.7 EOD Flow Addition
+4:00 PM ET
+    schwab_fetch_quotes()          existing — quotes + price history
+    schwab_fetch_iv()              NEW — 47 options chain calls
+        ~0.5s delay between calls  ~24 seconds total
+        writes iv_history row per ticker
+        computes iv_percentile
+        writes price_cache.rel_iv + iv_source
+
+    Rate limit check:
+    52 (price) + 47 (IV) = 99 requests total
+    120 requests/minute limit — safe with 0.5s delays
+
+6.8 Dashboard Label Update
+Minor label update in popup only — main table column header unchanged:
+LocationBefore (Phase 4)After (Phase 5)Main table headerRel IV%IV% (no change to column)Popup field labelRel IV%IV% — schwab or IV% — proxy
+
+
+7. Task 5.6 — OBV Source Swap
+7.1 Overview
+The OBV pivot engine in conviction_engine.py reads volume_history_json from price_cache. This field is populated by yahoo_finance.py today and will be populated by schwab_market_data.py in Phase 5. The OBV engine itself requires zero changes — it is source-agnostic by design.
+
+7.2 Change Required
+In yahoo_finance.py, the PHASE 5 TODO comment marks the exact swap point:
+# PHASE 5 TODO: Replace this block with Schwab volume history
+# volume_history_json is populated here from hist['Volume']
+# After swap: schwab_market_data.py populates this field instead
+# conviction_engine.py OBV engine reads volume_history_json regardless of source
+
+After swap: schwab_market_data.py populates volume_history_json from candles[].volume in the Schwab pricehistory response. Same JSON array format, same date alignment as history_json. The yahoo_finance.py block is commented out (not deleted) as reference.
+
+7.3 Volume Quality Improvement
+Schwab pricehistory returns true exchange volume — the same number visible on ThinkorSwim. Yahoo Finance volume can differ due to after-hours and pre-market aggregation methodology. Schwab volume is cleaner input for OBV pivot detection.
+
+7.4 Phase 5 OBV Upgrade — Volume Surge (Future)
+Deferred to Phase 6 but noted here for continuity. When Schwab streaming is live:
+• Swap volume_history_json source from Schwab REST to Schwab streaming
+• Add volume surge icon to dashboard row (150%+ of 20-day avg)
+• Real-time intraday volume makes OBV signal more current and accurate
+
+
+
+8. Environment Variables & Secrets Reference
+8.1 Local .env File (Complete — Phase 5)
+# Existing (unchanged)
+REACT_APP_ADMIN_PASSWORD=...
+REACT_APP_API_URL=http://localhost:8000
+
+# Supabase (new)
+SUPABASE_CONNECTION_STRING=postgresql+asyncpg://postgres:[PW]@db.wxqioudsteiwaazrgbao.supabase.co:5432/postgres?ssl=require
+SUPABASE_POOLED_CONNECTION_STRING=postgresql+asyncpg://postgres.wxqioudsteiwaazrgbao:[PW]@aws-0-us-east-1.pooler.supabase.com:6543/postgres?ssl=require
+SUPABASE_DB_PASSWORD=...
+
+# Schwab (new)
+SCHWAB_CLIENT_ID=...
+SCHWAB_CLIENT_SECRET=...
+SCHWAB_CALLBACK_URL=https://signal.suttonmc.com/api/auth/schwab/callback
+SCHWAB_TOKEN_ENCRYPTION_KEY=...
+
+8.2 Fly.io Secrets — API App
+fly secrets set SUPABASE_POOLED_CONNECTION_STRING=... --app signal-matrix-api
+fly secrets set SCHWAB_CLIENT_ID=... --app signal-matrix-api
+fly secrets set SCHWAB_CLIENT_SECRET=... --app signal-matrix-api
+fly secrets set SCHWAB_CALLBACK_URL=https://signal.suttonmc.com/api/auth/schwab/callback --app signal-matrix-api
+fly secrets set SCHWAB_TOKEN_ENCRYPTION_KEY=... --app signal-matrix-api
+
+8.3 Fly.io Secrets — Web App
+fly secrets set REACT_APP_ADMIN_PASSWORD=... --app signal-matrix-web
+fly secrets set REACT_APP_API_URL=https://api.signal.suttonmc.com --app signal-matrix-web
+
+8.4 Schwab App Registration — Reference
+FieldValueApp NameSignal MatrixEnvironmentProductionStatusReady For UseCallback URLhttps://signal.suttonmc.com/api/auth/schwab/callbackOrder Limit0 (order execution not in scope)APIsAccounts and Trading Production + Market Data ProductionCreated03/24/2026
+
+
+9. File Inventory
+9.1 New Files — Neo Creates
+FilePurposebackend/models/schwab_tokens.pySQLAlchemy model — schwab_tokens tablebackend/models/iv_history.pySQLAlchemy model — iv_history tablebackend/services/schwab_client.pyschwab-py client init, token load/save, Fernet encryptionbackend/services/schwab_market_data.pyQuotes + price history fetch via schwab-pybackend/services/schwab_options.pyOptions chain IV fetch, iv_history writes, IV Percentile calcbackend/routers/auth.pyOAuth endpoints: login, callback, status, logoutfly.api.tomlFly.io config for signal-matrix-apifly.web.tomlFly.io config for signal-matrix-webalembic.ini + alembic/Alembic migration tooling — initialized in backend/
+9.2 Modified Files — Neo Updates
+FileChangebackend/database.pyConnection string -> SUPABASE_POOLED_CONNECTION_STRINGbackend/main.pyAdd proactive token refresh job to APScheduler lifespanbackend/models/price_cache.pyAdd data_source and iv_source columnsbackend/services/yahoo_finance.pyOBV source swap at PHASE 5 TODO comment. Becomes fallback only.backend/routers/market_data.pyCall schwab_fetch_all() first, yahoo_fetch() as fallbackbackend/services/scheduler.pyAdd 4:00 PM ET Schwab data fetch job before 4:15 PM signalsbackend/requirements.txtAdd: asyncpg, alembic, schwab-py, cryptography, scipysrc/App.jsREACT_APP_API_URL env var for API base URL. SCHWAB header indicator.
+9.3 Unchanged Files
+The following are explicitly unchanged in Phase 5:
+• backend/services/conviction_engine.py — OBV engine is source-agnostic, no changes
+• backend/services/signal_engine.py — Hurst/DFA calculation unchanged
+• backend/services/pivot_engine.py — ABC pivot detection unchanged
+• backend/routers/signals.py — signal endpoints unchanged
+• backend/routers/tickers.py — ticker CRUD unchanged
+• docker-compose.yml — local dev configuration unchanged
+• All React components except App.js — no changes
+
+
+
+10. Build Sequence & Verification
+10.1 Recommended Order
+Tasks must be completed in order. Each task has a verification step before proceeding.
+
+#TaskVerificationDependency5.1Supabase migration — Alembic, all tables createdAll tables visible in Supabase dashboardNone5.2Fly.io deployment — both apps, DNS, secretssignal.suttonmc.com loads dashboard5.15.3Schwab OAuth — login, callback, token storageSCHWAB indicator green in header5.2 (needs live URL)5.4Schwab quote polling — EOD fetchprice_cache.data_source = 'schwab'5.35.5IV Percentile — options chain, iv_historyiv_history rows populating daily5.35.6OBV source swap — volume from SchwabOBV running on Schwab volume, signals unchanged5.4
+10.2 Pre-Deploy Checklist
+Before running fly deploy for the first time:
+• All Fly.io secrets set for both apps (Section 8.2 and 8.3)
+• Cloudflare CNAME records added for signal and api.signal (Section 3.4)
+• Supabase tables verified in dashboard (Section 2.5)
+• REACT_APP_API_URL updated in App.js to use environment variable
+• auto_stop_machines = false confirmed in fly.api.toml
+• Local docker-compose.yml tested and working before any Fly.io deploy
+
+10.3 Post-Deploy Verification
+• Visit https://signal.suttonmc.com — dashboard loads
+• SCHED indicator visible in header
+• VIX indicator visible in header
+• SCHWAB indicator shows red (not yet authenticated)
+• Click SCHWAB indicator — Schwab login page opens
+• Complete OAuth — SCHWAB turns green
+• REFRESH DATA button — triggers Schwab fetch, data_source = 'schwab' in DB
+• CALCULATE SIGNALS — signals calculate, all columns populate
+• Wait for 4:15 PM ET EOD run — verify scheduler_log shows success
+• Git commit all Phase 5 changes
+
+
+
+11. Updated Roadmap
+PhaseDescriptionStatusKey TasksPhase 1Dashboard RefinementCompleteUI/UX, sparklines, columns, Tier 2, AdminPhase 2Real Data IntegrationCompleteYahoo Finance EOD, prices, Rel IV, volumePhase 3Signal EngineCompleteDFA Hurst, ABC Pivots, LRR/HRR, OBVPhase 4Backend & DatabaseCompleteScheduler, History, Tickers, VIX indicatorPhase 5Schwab API + CloudIn ProgressSupabase, Fly.io, OAuth, quotes, IV PercentilePhase 6Cloud HardeningPendingSupabase production hardening, volume surge, positionsPhase QTQuad TrackerPendingMacro regime detection, forward quad probability
+11.1 Out of Scope — Phase 5
+• Account positions display (deferred — managed in ThinkorSwim)
+• WebSocket streaming (deferred — polling is sufficient for EOD signals)
+• Volume surge icon on dashboard rows (deferred to Phase 6)
+• Quad Tracker dashboard (Phase QT)
+• Quad alignment column in Signal Matrix table (Phase QT)
+• Schwab order execution (permanently out of scope)
+
+
+Signal Matrix Platform  |  Phase 5 Specification  |  v1.0  |  March 2026  |  Confidential

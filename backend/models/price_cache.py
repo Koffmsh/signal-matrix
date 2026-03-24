@@ -20,3 +20,5 @@ class PriceCache(Base):
     volume_history_json = Column(Text, nullable=True)  # JSON array of daily volume aligned to history_json
     updated_at         = Column(DateTime(timezone=True), server_default=func.now())
     cache_date         = Column(String)    # YYYY-MM-DD — cache invalidation key
+    data_source        = Column(String, default="yahoo")  # 'schwab' | 'yahoo' | 'yahoo_fallback'
+    iv_source          = Column(String, nullable=True)    # 'schwab' | 'proxy' — populated by IV task
