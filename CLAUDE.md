@@ -73,14 +73,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Fixed:** Added `existing.updated_at = datetime.utcnow()` to upsert path
 - Stamps actual fetch time on every successful refresh
 
-### `updated_at` Format Consistent (`market_data.py`)
-- **Fixed:** `row.updated_at.strftime("%m/%d/%y %H:%M")` — matches frontend expectation
+### `updated_at` Format and Timezone (`market_data.py`)
+- `updated_at` is stored as UTC naive datetime via `datetime.utcnow()`
+- Old display: `row.updated_at.strftime(...)` — formatted UTC directly, showed wrong date after 8 PM ET
+- **Fixed:** `row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M")` in `serialize_cache_row`
 - Do not use `str(row.updated_at)` — format mismatch breaks timestamp display
+- Do not call `datetime.now(_ET)` at write time — store UTC, convert at display
 
 ### EOD Timestamp Dynamic in Header (`App.js`)
 - Old behavior: "EOD · 03/11/26" was hardcoded in JSX
 - **Fixed:** Now reads from first ticker's `updated` field in `realDataMap`
 - Never hardcode dates in JSX
+
+### `updated` Timestamp Uses ET in `yahoo_finance.py`
+- Old behavior: `datetime.now()` in Docker returns UTC — after 8 PM ET the date flips to the next day
+- **Fixed:** `datetime.now(_ET).strftime("%m/%d/%y %H:%M")` — always stamps ET time
+- `_ET = ZoneInfo("America/New_York")` declared at module level in `yahoo_finance.py`
 
 ### Cache Date Reset Pattern
 - When `history_json` is NULL on existing rows (schema migration artifact), cache_date guard prevents re-fetch
@@ -104,6 +112,29 @@ Critical issues already resolved — do not reintroduce these bugs:
   ```
 - **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
 - **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
+
+### FORMING State Does Not Override Direction (`conviction_engine.py`)
+- FORMING state was incorrectly forcing `trade_dir = Neutral` via `max(lrr, c)` floor check
+- **Fixed:** Direction determined solely by `price > c` (uptrend) / `price < c` (downtrend)
+- FORMING only affects display (LRR/HRR color grey) — never direction
+- **States that force Neutral:** `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `NO_STRUCTURE` only
+- FORMING, EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID all allow Bullish/Bearish
+- LRR above current price during a FORMING pullback is expected — do not treat as a break
+
+### OBV Pivot Engine Replaces Price-Momentum Proxy (`conviction_engine.py`)
+- Old `_volume_signal` used 5-day / 20-day price momentum — not real volume
+- **Replaced with:** `_build_obv` + `_obv_direction` — pivot-based OBV trend detection
+- Volume history stored in `price_cache.volume_history_json` (aligned to `history_json` dates)
+- OBV bar_window = 9 — requires confirmed pivots on both sides (same rule as price pivot engine)
+- Confirming = OBV direction matches viewpoint; Diverging = opposes; Neutral = mixed or no structure
+- `obv_direction` + `obv_confirming` stored in `signal_output`, served via `/api/signals/stored`
+- Phase 5 swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py` — OBV engine is source-agnostic
+
+### Conviction Score Rebalance — Rel IV Removed
+- Old weights: Trade H × 0.55 + Trend H × 0.25 + IV Score × 0.20
+- **New weights:** Trade H × 0.65 + Trend H × 0.35
+- Rel IV retained for LRR/HRR width scaling only — no longer in conviction formula
+- Volume multiplier unchanged: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (now OBV-driven)
 
 ### yfinance Asset Class Mapping — ETFs Default to Domestic Equities
 - yfinance returns `quoteType: 'ETF'` for most ETFs but `category` is often empty or uses Morningstar taxonomy
@@ -468,14 +499,15 @@ def dfa(prices, window):
 ### Conviction Score Formula
 ```
 Base Score = weighted average:
-  Trade H (DFA, 63-day)   → 55%   primary signal
-  Trend H (DFA, 252-day)  → 25%   alignment filter
-  Rel IV% inverted        → 20%   IV Score = (100 - RelIV%) / 100
+  Trade H (DFA, 63-day)   → 65%   primary signal
+  Trend H (DFA, 252-day)  → 35%   alignment filter
 
-Volume Multiplier (applied after base score):
-  Confirming  → × 1.15
-  Neutral     → × 1.00
-  Diverging   → × 0.80
+Rel IV removed from conviction formula — used for LRR/HRR width scaling only.
+
+Volume Multiplier (OBV pivot direction — applied after base score):
+  Confirming  → × 1.15   OBV direction matches viewpoint
+  Neutral     → × 1.00   OBV direction Neutral or mixed
+  Diverging   → × 0.80   OBV direction opposes viewpoint
 
 Final Conviction = Base Score × Volume Multiplier
 
@@ -733,10 +765,13 @@ signal_pivots:  ticker, timeframe, bar_window,
 
 signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 trade_direction, conviction, h_value,
-                viewpoint, alert, vol_signal,
+                viewpoint, viewpoint_since, ← ISO timestamp ET — when current aligned viewpoint began
+                alert, vol_signal,
                 warning,                    ← IV-driven WARNING flag (per timeframe)
                 lrr_warn, hrr_warn,         ← price-based pivot threshold flags (per timeframe)
                 pivot_b, pivot_c,           ← pivot values for UI comparison
+                obv_direction,              ← OBV pivot trend: Bullish | Bearish | Neutral
+                obv_confirming,             ← True when OBV direction aligns with viewpoint
                 calculated_at
                 UNIQUE(ticker, timeframe)
 ```
@@ -861,7 +896,9 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 | Close | Live price |
 | Viewpoint | Bullish / Bearish / Neutral |
 | Conviction | % or — when Neutral |
-| Vol Signal | Confirming / Diverging / Neutral |
+| Vol Signal | Confirming / Diverging / Neutral — OBV-based |
+| OBV Direction | Bullish / Bearish / Neutral — OBV pivot trend direction |
+| OBV Signal | Confirming ✓ / Diverging ✗ / Neutral — — green/amber/grey |
 | Trade Dir | Direction + icon |
 | Trade LRR | Color = trade dir; ⚠ + hover tooltip when warn |
 | Trade HRR | Color = trade dir; ⚠ + hover tooltip when warn |
@@ -988,6 +1025,27 @@ git checkout -- .   # roll back if needed
 | Phase 4 | Backend & Database | 🔄 In Progress — 4.1–4.3, 4.5–4.7 complete; 4.4 (Fly.io) deferred to Phase 5 |
 | Phase 5 | Schwab API | ⬜ OAuth, real-time streaming, options IV — triggers Fly.io deployment |
 | Phase 6 | Cloud Deployment | ⬜ Supabase migration, production hardening |
+
+---
+
+## Phase 5 — Planned Features
+
+### Phase 5 — Volume Surge Indicator (deferred from Phase 4)
+- OBV pivot engine now live in `conviction_engine.py` — replaces price-momentum proxy
+- Phase 5 upgrade: swap Yahoo Finance `volume_history_json` for Schwab streaming volume history
+- Swap point flagged with `# PHASE 5 TODO` comment in `yahoo_finance.py`
+- OBV engine is source-agnostic — reads from `volume_history_json` regardless of origin
+- Volume signal tiers (Phase 5 upgrade — Schwab real-time):
+  - Confirming:  today's volume > 20-day avg (any elevated volume)
+  - Surge:       today's volume > 150% of 20-day avg (exceptional participation)
+  - Neutral:     today's volume within normal range
+  - Diverging:   price moving on declining volume
+- Dashboard display: icon on conviction cell
+  - ▲ green = Confirming
+  - ▲▲ green = Surge (150%+)
+  - ▼ amber = Diverging
+  - no icon = Neutral
+- 20-day avg volume already available from Schwab streaming feed
 
 ---
 

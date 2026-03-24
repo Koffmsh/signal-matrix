@@ -2,7 +2,10 @@ import time
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 import logging
+
+_ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +72,14 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         history_prices = [round(float(p), 4) for p in history_closes.tolist()]
         history_dates  = [str(d.date()) for d in history_closes.index]
 
-        updated = datetime.now().strftime("%m/%d/%y %H:%M")
+        # Volume history — aligned to history_closes dates so OBV series stays in sync
+        # PHASE 5 TODO: Replace with Schwab streaming volume history
+        # Data source abstraction point — OBV engine in conviction_engine.py
+        # is source-agnostic, reads from volume_history_json regardless of origin
+        volume_series  = hist["Volume"].reindex(history_closes.index).fillna(0)
+        volume_history = [int(v) for v in volume_series.tolist()]
+
+        updated = datetime.now(_ET).strftime("%m/%d/%y %H:%M")
 
         time.sleep(0.5)  # Rate limit: pause between Yahoo Finance fetches
 
@@ -85,6 +95,7 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "spark_prices":    spark_prices,
             "history_prices":  history_prices,
             "history_dates":   history_dates,
+            "volume_history":  volume_history,
             "updated":         updated,
         }
 

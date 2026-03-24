@@ -168,6 +168,8 @@ def run_output(db: Session) -> dict:
                     hrr_warn         = tf_data.get("hrr_warn"),
                     pivot_b          = tf_data.get("pivot_b"),
                     pivot_c          = tf_data.get("pivot_c"),
+                    obv_direction    = data.get("obv_direction"),
+                    obv_confirming   = data.get("obv_confirming"),
                     calculated_at    = now,
                 )
 
@@ -327,6 +329,8 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "viewpoint_since": row.viewpoint_since,
                 "conviction":      None,
                 "vol_signal":      row.vol_signal,
+                "obv_direction":   row.obv_direction,
+                "obv_confirming":  bool(row.obv_confirming) if row.obv_confirming is not None else False,
                 "alert":           bool(row.alert) if row.alert is not None else False,
                 "trade": None, "trend": None, "lt": None,
             }

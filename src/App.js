@@ -175,6 +175,8 @@ function mergeSignalData(row, signalMap) {
     ltC:           sig.lt?.pivot_c              ?? null,
     ltB:           sig.lt?.pivot_b              ?? null,
     viewpointSince: sig.viewpoint_since         ?? null,
+    obvDirection:   sig.obv_direction           ?? "Neutral",
+    obvConfirming:  sig.obv_confirming          ?? false,
   };
 }
 
@@ -666,6 +668,8 @@ function Dashboard() {
           ] : []),
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
           ["Vol Signal",   row.volSignal,                                                                  volColor(row.volSignal),                false],
+          ["OBV Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
+          ["OBV Signal",   row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
           ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false, row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr") : null],
           ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false, row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr") : null],

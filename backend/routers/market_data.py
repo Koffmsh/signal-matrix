@@ -4,7 +4,7 @@ from database import get_db
 from models.price_cache import PriceCache
 from models.ticker import Ticker
 from services.yahoo_finance import fetch_ticker_data, RateLimitError
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 _ET = ZoneInfo("America/New_York")
@@ -30,7 +30,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "ma100":        row.ma100,
         "rel_iv":       row.rel_iv,
         "spark_prices": json.loads(row.spark_json),
-        "updated":      row.updated_at.strftime("%m/%d/%y %H:%M") if row.updated_at else None,
+        "updated":      row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
 
@@ -73,9 +73,10 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
         existing.ma50               = data["ma50"]
         existing.ma100              = data["ma100"]
         existing.rel_iv             = data["rel_iv"]
-        existing.spark_json         = json.dumps(data["spark_prices"])
-        existing.history_json       = json.dumps(data["history_prices"])
-        existing.history_dates_json = json.dumps(data["history_dates"])
+        existing.spark_json          = json.dumps(data["spark_prices"])
+        existing.history_json        = json.dumps(data["history_prices"])
+        existing.history_dates_json  = json.dumps(data["history_dates"])
+        existing.volume_history_json = json.dumps(data["volume_history"])
         existing.cache_date         = today
         existing.updated_at         = datetime.utcnow()
     else:
@@ -88,9 +89,10 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
             ma50                = data["ma50"],
             ma100               = data["ma100"],
             rel_iv              = data["rel_iv"],
-            spark_json          = json.dumps(data["spark_prices"]),
-            history_json        = json.dumps(data["history_prices"]),
-            history_dates_json  = json.dumps(data["history_dates"]),
+            spark_json           = json.dumps(data["spark_prices"]),
+            history_json         = json.dumps(data["history_prices"]),
+            history_dates_json   = json.dumps(data["history_dates"]),
+            volume_history_json  = json.dumps(data["volume_history"]),
             cache_date          = today,
         ))
 

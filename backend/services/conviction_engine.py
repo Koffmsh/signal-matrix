@@ -61,22 +61,57 @@ def _sigma(prices: list, window: int = 20) -> float:
     return float(np.std(log_returns) * arr[-1])
 
 
-def _volume_signal(prices: list) -> str:
+def _build_obv(closes: list, volumes: list) -> list:
+    """Compute OBV series from aligned close prices and volumes."""
+    if len(closes) != len(volumes) or len(closes) < 2:
+        return []
+    obv = [0.0]
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i - 1]:
+            obv.append(obv[-1] + volumes[i])
+        elif closes[i] < closes[i - 1]:
+            obv.append(obv[-1] - volumes[i])
+        else:
+            obv.append(obv[-1])
+    return obv
+
+
+def _obv_direction(closes: list, volumes: list, bar_window: int = 9) -> str:
     """
-    Price-momentum proxy for volume signal until Schwab Phase 5.
-    Returns 'Confirming' | 'Diverging' | 'Neutral'.
+    Determine OBV trend direction using pivot structure.
+    Same structural logic as price pivot engine — applied to OBV series.
+    Requires bar_window bars on BOTH sides of a pivot to confirm.
+    Returns: 'Bullish' | 'Bearish' | 'Neutral'
     """
-    if len(prices) < 21:
+    obv = _build_obv(closes, volumes)
+    n   = len(obv)
+
+    if n < bar_window * 2 + 2:
         return "Neutral"
-    mom5  = prices[-1] / prices[-6]  - 1
-    mom20 = prices[-1] / prices[-21] - 1
-    if mom5 > 0 and mom20 > 0:
-        return "Confirming"
-    if mom5 < 0 and mom20 < 0:
-        return "Confirming"
-    if abs(mom5) < 0.001:
+
+    pivot_highs = []
+    pivot_lows  = []
+
+    for i in range(bar_window, n - bar_window):
+        window = obv[i - bar_window : i + bar_window + 1]
+        if obv[i] == max(window):
+            pivot_highs.append((i, obv[i]))
+        if obv[i] == min(window):
+            pivot_lows.append((i, obv[i]))
+
+    if len(pivot_highs) < 2 or len(pivot_lows) < 2:
         return "Neutral"
-    return "Diverging"
+
+    last_high  = pivot_highs[-1][1]
+    prior_high = pivot_highs[-2][1]
+    last_low   = pivot_lows[-1][1]
+    prior_low  = pivot_lows[-2][1]
+
+    if last_high > prior_high and last_low > prior_low:
+        return "Bullish"
+    if last_high < prior_high and last_low < prior_low:
+        return "Bearish"
+    return "Neutral"
 
 
 def _volume_multiplier(vol_signal: str) -> float:
@@ -186,14 +221,15 @@ def is_warning(lrr: float | None, hrr: float | None,
 # ── Conviction Score ──────────────────────────────────────────────────────────
 
 def compute_conviction(h_trade: float | None, h_trend: float | None,
-                       rel_iv: int, vol_signal: str) -> float | None:
+                       vol_signal: str) -> float | None:
     """
     Base Score = weighted average:
-      Trade H (DFA 63-day)   → 55%
-      Trend H (DFA 252-day)  → 25%
-      Rel IV% inverted       → 20%   IV Score = (100 - RelIV%) / 100
+      Trade H (DFA 63-day)   → 65%
+      Trend H (DFA 252-day)  → 35%
 
-    Volume Multiplier:
+    Rel IV removed from conviction formula — used for LRR/HRR width scaling only.
+
+    Volume Multiplier (OBV-based):
       Confirming → × 1.15
       Neutral    → × 1.00
       Diverging  → × 0.80
@@ -203,8 +239,7 @@ def compute_conviction(h_trade: float | None, h_trend: float | None,
     """
     if h_trade is None or h_trend is None:
         return None
-    iv_score   = (100 - rel_iv) / 100
-    base       = (h_trade * 0.55 + h_trend * 0.25 + iv_score * 0.20) * 100
+    base       = (h_trade * 0.65 + h_trend * 0.35) * 100
     conviction = base * _volume_multiplier(vol_signal)
     return round(min(max(conviction, 0.0), 100.0), 2)
 
@@ -232,11 +267,18 @@ def compute_output(ticker: str, db) -> dict:
 
     price  = float(cache_row.close  or 0.0) if cache_row else 0.0
     rel_iv = int(cache_row.rel_iv   or 50)  if cache_row else 50
-    prices = []
+    prices  = []
+    volumes = []
     if cache_row and cache_row.history_json:
         prices = json.loads(cache_row.history_json)
+    if cache_row and cache_row.volume_history_json:
+        volumes = json.loads(cache_row.volume_history_json)
 
-    vol_signal = _volume_signal(prices)
+    # OBV pivot direction — replaces price-momentum proxy
+    if prices and volumes and len(prices) == len(volumes):
+        obv_dir = _obv_direction(prices, volumes, bar_window=9)
+    else:
+        obv_dir = "Neutral"
 
     h_map = {
         "trade": getattr(hurst_row, "h_trade", None) if hurst_row else None,
@@ -318,10 +360,20 @@ def compute_output(ticker: str, db) -> dict:
     else:
         viewpoint = "Neutral"
 
+    # ── OBV vol_signal — maps OBV direction to conviction multiplier tier ────
+    if viewpoint in ("Bullish", "Bearish") and obv_dir == viewpoint:
+        vol_signal = "Confirming"
+    elif obv_dir != "Neutral" and obv_dir != viewpoint:
+        vol_signal = "Diverging"
+    else:
+        vol_signal = "Neutral"
+
+    obv_confirming = vol_signal == "Confirming"
+
     # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
     conviction = None
     if viewpoint != "Neutral":
-        conviction = compute_conviction(h_map["trade"], h_map["trend"], rel_iv, vol_signal)
+        conviction = compute_conviction(h_map["trade"], h_map["trend"], vol_signal)
 
     # ── Alert flag ⚡ (all three conditions must be true) ───────────────────
     h_trade = h_map["trade"]
@@ -339,12 +391,14 @@ def compute_output(ticker: str, db) -> dict:
     )
 
     return {
-        "ticker":     ticker,
-        "viewpoint":  viewpoint,
-        "conviction": conviction,
-        "vol_signal": vol_signal,
-        "alert":      alert,
-        "trade":      timeframe_results["trade"],
+        "ticker":        ticker,
+        "viewpoint":     viewpoint,
+        "conviction":    conviction,
+        "vol_signal":    vol_signal,
+        "obv_direction": obv_dir,
+        "obv_confirming": obv_confirming,
+        "alert":         alert,
+        "trade":         timeframe_results["trade"],
         "trend":      timeframe_results["trend"],
         "lt":         timeframe_results["lt"],
     }
