@@ -253,6 +253,7 @@ function Dashboard() {
   const [isCalculating,   setIsCalculating]   = useState(false);
   const [calcStatus,      setCalcStatus]      = useState(null);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
+  const [schwabStatus,    setSchwabStatus]    = useState(null);
 
   // Load ticker universe from DB on page load
   useEffect(() => {
@@ -289,6 +290,14 @@ function Dashboard() {
     fetch(`${API_BASE}/api/scheduler/status`)
       .then(r => r.json())
       .then(data => setSchedulerStatus(data))
+      .catch(() => {});
+  }, []);
+
+  // Load Schwab auth status on page load
+  useEffect(() => {
+    fetch(`${API_BASE}/api/auth/schwab/status`)
+      .then(r => r.json())
+      .then(data => setSchwabStatus(data))
       .catch(() => {});
   }, []);
 
@@ -570,6 +579,26 @@ function Dashboard() {
                   ? `Last run failed — check scheduler_log`
                   : `Scheduled · next run ${schedulerStatus.next_run_time || "4:15 PM ET"}`;
                 return <div title={tip} style={{ color, cursor: "default" }}>{label}</div>;
+              })()}
+              {schwabStatus && (() => {
+                const state = schwabStatus.state;
+                const color = state === "connected" ? "#00e5a0"
+                            : state === "aging"     ? "#f0b429"
+                            : "#ff4d6d";
+                const tip   = state === "connected" ? `Schwab connected · token age ${schwabStatus.age_days ?? 0}d`
+                            : state === "aging"     ? `Schwab token aging (${schwabStatus.age_days}d) — re-auth soon`
+                            : state === "expired"   ? "Schwab token expired — click to re-authenticate"
+                            : "Schwab not connected — click to authenticate";
+                const clickable = !schwabStatus.connected;
+                return (
+                  <div
+                    title={tip}
+                    style={{ color, cursor: clickable ? "pointer" : "default" }}
+                    onClick={clickable ? () => { window.location.href = `${API_BASE}/api/auth/schwab/login`; } : undefined}
+                  >
+                    ● SCHWAB
+                  </div>
+                );
               })()}
             </div>
           </div>

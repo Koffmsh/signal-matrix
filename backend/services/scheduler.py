@@ -12,6 +12,7 @@ from database import SessionLocal
 from routers.market_data import refresh_data
 from routers.signals import calculate_signals
 from models.scheduler_log import SchedulerLog
+import services.schwab_client as schwab_client
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,15 @@ async def run_catchup_on_startup() -> None:
     await loop.run_in_executor(None, lambda: run_eod_job("catchup"))
 
 
+def _refresh_schwab_tokens_job() -> None:
+    """Proactive Schwab token refresh — runs every 25 minutes."""
+    db = SessionLocal()
+    try:
+        schwab_client.refresh_access_token(db)
+    finally:
+        db.close()
+
+
 def start() -> None:
     scheduler.add_job(
         run_eod_job,
@@ -130,8 +140,15 @@ def start() -> None:
         id="eod_job",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _refresh_schwab_tokens_job,
+        "interval",
+        minutes=25,
+        id="schwab_refresh",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("Scheduler: started — EOD job registered for 4:15 PM ET")
+    logger.info("Scheduler: started — EOD job 4:15 PM ET, Schwab refresh every 25 min")
 
 
 def shutdown() -> None:

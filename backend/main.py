@@ -5,6 +5,7 @@ from database import engine, Base, SQLALCHEMY_DATABASE_URL
 from routers import market_data, signals
 from routers.scheduler import router as scheduler_router
 from routers.tickers import router as tickers_router, seed_tickers_if_empty
+from routers.auth import router as auth_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from database import SessionLocal
@@ -87,6 +88,7 @@ app.include_router(market_data.router)
 app.include_router(signals.router)
 app.include_router(scheduler_router)
 app.include_router(tickers_router)
+app.include_router(auth_router)
 
 
 @app.get("/health")
