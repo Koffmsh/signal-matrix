@@ -295,7 +295,7 @@ signal-matrix/
 | 5.1 | Supabase setup + SQLAlchemy migration (SQLite → Postgres) | ✅ Complete |
 | 5.2 | Fly.io deployment — Docker, secrets, signal.suttonmc.com DNS | ✅ Complete |
 | 5.3 | Schwab OAuth — token exchange, storage, proactive auto-refresh | ✅ Complete |
-| 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ⬜ Pending |
+| 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ✅ Complete |
 | 5.5 | IV Percentile — options chain fetch, iv_history table | ⬜ Pending |
 | 5.6 | OBV source swap — volume_history_json from Schwab | ⬜ Pending |
 
