@@ -73,9 +73,11 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         history_dates  = [str(d.date()) for d in history_closes.index]
 
         # Volume history — aligned to history_closes dates so OBV series stays in sync
-        # PHASE 5 TODO: Replace with Schwab streaming volume history
-        # Data source abstraction point — OBV engine in conviction_engine.py
-        # is source-agnostic, reads from volume_history_json regardless of origin
+        # PHASE 5 SWAP COMPLETE: Schwab path populates volume_history_json from
+        # candles[].volume in schwab_market_data._schwab_fetch() — Task 5.6.
+        # This block is kept as the Yahoo fallback path only.
+        # conviction_engine.py OBV engine reads volume_history_json regardless of source.
+        # PHASE 6 TODO: swap to Schwab streaming volume for real-time OBV accuracy.
         volume_series  = hist["Volume"].reindex(history_closes.index).fillna(0)
         volume_history = [int(v) for v in volume_series.tolist()]
 
