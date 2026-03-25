@@ -565,8 +565,8 @@ function Dashboard() {
               {(() => {
                 const vix = realDataMap.get("VIX")?.close;
                 if (vix == null) return null;
-                const color = vix < 19 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
-                const label = vix < 19 ? "investable" : vix < 30 ? "choppy" : "danger";
+                const color = vix < 20 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
+                const label = vix < 20 ? "investable" : vix < 30 ? "choppy" : "danger";
                 return <div title={`VIX ${vix.toFixed(2)} — ${label}`} style={{ color, cursor: "default" }}>● VIX {vix.toFixed(2)}</div>;
               })()}
               {schedulerStatus && (() => {
