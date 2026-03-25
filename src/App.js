@@ -581,11 +581,22 @@ function Dashboard() {
                 return <div title={tip} style={{ color, cursor: "default" }}>{label}</div>;
               })()}
               {schwabStatus && (() => {
-                const state = schwabStatus.state;
+                const state      = schwabStatus.state;
+                // Derive data source from the first entry in realDataMap
+                const dataSource = realDataMap.size > 0
+                  ? (realDataMap.values().next().value?.data_source ?? "yahoo")
+                  : null;
+                const isYahooFallback = schwabStatus.connected && dataSource === "yahoo_fallback";
+
                 const color = state === "connected" ? "#00e5a0"
                             : state === "aging"     ? "#f0b429"
                             : "#ff4d6d";
-                const tip   = state === "connected" ? `Schwab connected · token age ${schwabStatus.age_days ?? 0}d`
+                // ◐ when connected but data came from Yahoo fallback
+                const icon  = isYahooFallback ? "◐" : "●";
+
+                const tip   = isYahooFallback
+                            ? "Schwab connected but data from Yahoo fallback — check logs"
+                            : state === "connected" ? `Schwab connected · token age ${schwabStatus.age_days ?? 0}d`
                             : state === "aging"     ? `Schwab token aging (${schwabStatus.age_days}d) — re-auth soon`
                             : state === "expired"   ? "Schwab token expired — click to re-authenticate"
                             : "Schwab not connected — click to authenticate";
@@ -596,7 +607,7 @@ function Dashboard() {
                     style={{ color, cursor: clickable ? "pointer" : "default" }}
                     onClick={clickable ? () => { window.location.href = `${API_BASE}/api/auth/schwab/login`; } : undefined}
                   >
-                    ● SCHWAB
+                    {icon} SCHWAB
                   </div>
                 );
               })()}

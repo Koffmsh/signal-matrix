@@ -33,6 +33,10 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
             _conn.execute(text("ALTER TABLE price_cache ADD COLUMN history_json TEXT"))
         if "history_dates_json" not in _cols:
             _conn.execute(text("ALTER TABLE price_cache ADD COLUMN history_dates_json TEXT"))
+        if "data_source" not in _cols:
+            _conn.execute(text("ALTER TABLE price_cache ADD COLUMN data_source TEXT DEFAULT 'yahoo'"))
+        if "iv_source" not in _cols:
+            _conn.execute(text("ALTER TABLE price_cache ADD COLUMN iv_source TEXT"))
         _conn.commit()
 
     with engine.connect() as _conn:

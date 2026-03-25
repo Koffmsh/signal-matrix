@@ -13,6 +13,7 @@ from routers.market_data import refresh_data
 from routers.signals import calculate_signals
 from models.scheduler_log import SchedulerLog
 import services.schwab_client as schwab_client
+from services.schwab_market_data import schwab_fetch_all
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,41 @@ def _refresh_schwab_tokens_job() -> None:
         db.close()
 
 
+def schwab_data_job() -> None:
+    """
+    4:00 PM ET — Schwab EOD data fetch.
+    Fires 15 minutes before signal calculation so price_cache is warm.
+    Falls back to Yahoo Finance automatically if Schwab is unavailable.
+    Only runs on NYSE trading days.
+    """
+    et_date = datetime.now(ZoneInfo("America/New_York")).date()
+    if not _is_trading_day(et_date):
+        logger.info("Schwab data job: not a trading day — skipping")
+        return
+
+    logger.info("Schwab data job: starting EOD data fetch")
+    db = SessionLocal()
+    try:
+        result = schwab_fetch_all(db)
+        logger.info(
+            f"Schwab data job: complete — "
+            f"fetched={result.get('fetched', 0)}, "
+            f"errors={result.get('errors', 0)}, "
+            f"source={result.get('data_source', 'unknown')}"
+        )
+    except Exception as e:
+        logger.error(f"Schwab data job: failed — {e}")
+    finally:
+        db.close()
+
+
 def start() -> None:
+    scheduler.add_job(
+        schwab_data_job,
+        CronTrigger(hour=16, minute=0, timezone="America/New_York"),
+        id="schwab_data_job",
+        replace_existing=True,
+    )
     scheduler.add_job(
         run_eod_job,
         CronTrigger(hour=16, minute=15, timezone="America/New_York"),
@@ -148,7 +183,7 @@ def start() -> None:
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Scheduler: started — EOD job 4:15 PM ET, Schwab refresh every 25 min")
+    logger.info("Scheduler: started — Schwab data 4:00 PM ET, EOD job 4:15 PM ET, Schwab refresh every 25 min")
 
 
 def shutdown() -> None:
