@@ -148,6 +148,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `obv_direction` + `obv_confirming` stored in `signal_output`, served via `/api/signals/stored`
 - Phase 5 swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py` — OBV engine is source-agnostic
 
+### VIX Regime Threshold — Green Cutoff is 20, Not 19 (`App.js`)
+- Correct thresholds: `VIX < 20` → Green, `20 ≤ VIX < 30` → Amber, `VIX ≥ 30` → Red
+- Bug: `App.js` line 568 was originally implemented with `vix < 19` — off by one on the green/amber boundary
+- **Fixed:** Both ternary expressions on line 568 updated to `vix < 20` (color and label)
+- **Do not** use 19 as the cutoff — VIX = 19 is investable territory, not choppy
+
+### Schwab IV Unit Convention — Percentage In, Decimal Stored (`schwab_options.py`)
+- Schwab `get_option_chain()` returns `volatility` as a percentage (e.g. `18.7` = 18.7%)
+- **Must divide by 100** before writing to `iv_history.implied_vol` — stored as decimal (e.g. `0.187`)
+- IV Percentile computed via `percentileofscore(252-day history, today_iv, kind='rank')` after writing today's row
+- Cold start: returns `50` (neutral percentile) when fewer than 5 observations in `iv_history`
+- Updates `price_cache.rel_iv` (replaces Yahoo proxy) + sets `price_cache.iv_source = 'schwab'`
+- **Per-ticker fallback:** on any per-ticker error, leaves Yahoo proxy `rel_iv` intact and tags `iv_source = 'proxy'`
+- **No-tokens fallback:** if Schwab token missing/expired, entire batch tagged `'proxy'` immediately — no options calls made
+- `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
+
 ### Conviction Score Rebalance — Rel IV Removed
 - Old weights: Trade H × 0.55 + Trend H × 0.25 + IV Score × 0.20
 - **New weights:** Trade H × 0.65 + Trend H × 0.35
@@ -232,17 +248,27 @@ signal-matrix/
 │   │   ├── signal_output.py               ← Task 3.3 — Output DB model
 │   │   ├── signal_history.py              ← Task 4.3 — Signal history snapshots DB model
 │   │   ├── scheduler_log.py               ← Task 4.2 — Scheduler run log DB model
-│   │   └── ticker.py                      ← Task 4.6 — Tickers DB model
+│   │   ├── ticker.py                      ← Task 4.6 — Tickers DB model
+│   │   ├── schwab_tokens.py               ← Task 5.3 — Schwab OAuth tokens DB model ✅
+│   │   └── iv_history.py                  ← Task 5.5 — IV history DB model ✅
+│   ├── alembic/                           ← Task 5.1 — DB migration tooling ✅
+│   │   ├── env.py
+│   │   └── versions/
+│   │       └── aa2d62ea88e4_initial_schema.py
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
 │   │   ├── pivot_engine.py                ← Task 3.2 — ABC Pivot Detector ✅
 │   │   ├── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine ✅
-│   │   └── scheduler.py                   ← Task 4.2 — APScheduler EOD job ✅
+│   │   ├── scheduler.py                   ← Task 4.2 — APScheduler EOD job ✅
+│   │   ├── schwab_client.py               ← Task 5.3 — Token management + Schwab client ✅
+│   │   ├── schwab_market_data.py          ← Task 5.4 — EOD quote + history fetch ✅
+│   │   └── schwab_options.py              ← Task 5.5 — IV fetch + iv_history write ✅
 │   └── routers/
 │       ├── market_data.py
 │       ├── signals.py                     ← Task 3.3/3.4/4.3 — Signal endpoints + history ✅
 │       ├── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
+│       ├── auth.py                        ← Task 5.3 — Schwab OAuth endpoints ✅
 │       └── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
@@ -297,7 +323,7 @@ signal-matrix/
 | 5.3 | Schwab OAuth — token exchange, storage, proactive auto-refresh | ✅ Complete |
 | 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ✅ Complete |
 | 5.5 | IV Percentile — options chain fetch, iv_history table | ✅ Complete |
-| 5.6 | OBV source swap — volume_history_json from Schwab | ⬜ Pending |
+| 5.6 | OBV source swap — volume_history_json from Schwab | ✅ Complete |
 
 ### New Button — CALCULATE SIGNALS
 - Added to dashboard header alongside REFRESH DATA
@@ -989,7 +1015,7 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 - React app running at localhost:3000 via Docker
 - Close prices: real — auto-loaded from SQLite cache on page load
 - Sparklines: real — 60-day price history
-- Rel IV: real — realized vol percentile proxy (Schwab IV Percentile in Phase 5)
+- Rel IV: real — Schwab IV Percentile from options chain (`iv_source = 'schwab'`); falls back to Yahoo proxy (`iv_source = 'proxy'`) on token expiry or per-ticker error
 - Volume: real — daily volume from Yahoo Finance
 - Signal columns: **live** — populated from `/api/signals/stored` on page load; recalculated on CALCULATE SIGNALS
 - REFRESH DATA: manual fetch only — forces fresh Yahoo Finance fetch outside scheduler window
@@ -1000,8 +1026,8 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 ### VIX Regime Indicator — Dashboard Header
 Reads from existing `VIX` row in `price_cache` — no new data fetch needed:
 ```
-VIX < 19   → Green dot  — investable
-VIX 19–29  → Amber dot  — choppy
+VIX < 20   → Green dot  — investable
+VIX 20–29  → Amber dot  — choppy
 VIX ≥ 30   → Red dot    — danger
 ```
 Displayed in dashboard header alongside SCHED indicator.
@@ -1171,7 +1197,7 @@ git checkout -- .   # roll back if needed
 | Phase 2 | Real Data Integration | ✅ Complete |
 | Phase 3 | Signal Engine | ✅ Complete |
 | Phase 4 | Backend & Database | ✅ Complete — all tasks 4.1–4.13 done |
-| Phase 5 | Schwab API + Cloud Deployment | 🔄 In Progress — Supabase, Fly.io, OAuth, IV Percentile |
+| Phase 5 | Schwab API + Cloud Deployment | ✅ Complete — all tasks 5.1–5.6 done |
 | Phase 6 | Production Hardening | ⬜ Volume surge, positions display, Supabase hardening |
 
 ---
