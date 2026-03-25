@@ -31,6 +31,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "rel_iv":       row.rel_iv,
         "spark_prices": json.loads(row.spark_json),
         "data_source":  row.data_source or "yahoo",
+        "iv_source":    row.iv_source,
         "updated":      row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 

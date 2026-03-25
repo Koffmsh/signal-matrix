@@ -14,6 +14,7 @@ from routers.signals import calculate_signals
 from models.scheduler_log import SchedulerLog
 import services.schwab_client as schwab_client
 from services.schwab_market_data import schwab_fetch_all
+from services.schwab_options import schwab_fetch_iv
 
 logger = logging.getLogger(__name__)
 
@@ -151,10 +152,16 @@ def schwab_data_job() -> None:
     try:
         result = schwab_fetch_all(db)
         logger.info(
-            f"Schwab data job: complete — "
+            f"Schwab data job: price fetch complete — "
             f"fetched={result.get('fetched', 0)}, "
             f"errors={result.get('errors', 0)}, "
             f"source={result.get('data_source', 'unknown')}"
+        )
+        iv_result = schwab_fetch_iv(db)
+        logger.info(
+            f"Schwab data job: IV fetch complete — "
+            f"fetched={iv_result.get('fetched', 0)}, "
+            f"errors={iv_result.get('errors', 0)}"
         )
     except Exception as e:
         logger.error(f"Schwab data job: failed — {e}")

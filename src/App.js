@@ -127,6 +127,7 @@ function mergeRealData(mockRow, realDataMap) {
                    ? real.spark_prices
                    : mockRow.sparkPrices,
     relIV:       real.rel_iv       ?? mockRow.relIV,
+    ivSource:    real.iv_source    ?? null,
     volume:      real.volume       ?? 0,
     ma20:        real.ma20         ?? null,
     ma50:        real.ma50         ?? null,
@@ -735,7 +736,8 @@ function Dashboard() {
           ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false],
           ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false],
           ["Hurst (LT)",   fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
-          ["Rel IV%",      `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
+          [row.ivSource === "schwab" ? "IV% \u2014 schwab" : "IV% \u2014 proxy",
+                           `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
           ["Updated",      row.updated,                                                                    "#667788",                              false],
         ];
 
