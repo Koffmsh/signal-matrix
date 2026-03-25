@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const API = "http://localhost:8000/api/tickers";
+const API = `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/api/tickers`;
 
 // ── Field mapping: API (snake_case) ↔ local state (camelCase) ────────────────
 const fromApi = (r) => ({

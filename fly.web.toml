@@ -1,0 +1,18 @@
+app = 'signal-matrix-web'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile.web.fly'
+  [build.args]
+    REACT_APP_API_URL = "https://api.signal.suttonmc.com"
+
+[http_service]
+  internal_port = 80
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1

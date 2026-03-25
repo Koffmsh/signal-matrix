@@ -154,6 +154,21 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Rel IV retained for LRR/HRR width scaling only — no longer in conviction formula
 - Volume multiplier unchanged: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (now OBV-driven)
 
+### Supabase Direct Connection — IPv6 Only from Docker (`alembic/env.py`)
+- `db.wxqioudsteiwaazrgbao.supabase.co:5432` resolves to **IPv6 only** inside the Docker container
+- Docker Desktop on Windows does not route IPv6 egress — connection fails with "Network is unreachable"
+- **Fix:** Use `SUPABASE_POOLED_CONNECTION_STRING` for all `alembic` CLI runs from Docker
+- Pooled host (`aws-1-us-east-1.pooler.supabase.com:6543`) resolves to IPv4 and is reachable from Docker
+- `alembic/env.py` prefers `SUPABASE_CONNECTION_STRING` but falls back to `SUPABASE_POOLED_CONNECTION_STRING` automatically
+- **Do not** attempt alembic migrations via the direct connection string from inside Docker
+
+### Supabase Runtime Uses psycopg2 Sync Engine — Not asyncpg (`database.py`)
+- All FastAPI routers use synchronous SQLAlchemy (`Session`, `Depends(get_db)`) — asyncpg would require rewriting every router
+- `database.py` converts `SUPABASE_POOLED_CONNECTION_STRING` (which has `postgresql+asyncpg://` prefix) to `postgresql+psycopg2://` via `_make_sync_url()`
+- `_make_sync_url()` also URL-encodes the password — the Supabase password contains `@`, `#`, `/` characters that break standard URL parsing if raw
+- **Do not** use `create_async_engine` or `AsyncSession` until a deliberate async migration is planned for all routers
+- The `asyncpg` package is still in `requirements.txt` (Alembic dependency + future use) but is not used by the running app
+
 ### yfinance Asset Class Mapping — ETFs Default to Domestic Equities
 - yfinance returns `quoteType: 'ETF'` for most ETFs but `category` is often empty or uses Morningstar taxonomy
 - The mapping layer falls through to `Domestic Equities` default for international, fixed income, FX, and commodity ETFs

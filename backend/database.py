@@ -29,9 +29,15 @@ def _make_sync_url(raw: str) -> str:
     return f"{scheme}://{user}:{encoded_password}@{hostpart}"
 
 
+# DATABASE_URL takes priority — use when the URL is already fully encoded (no shell-special chars).
+# SUPABASE_POOLED_CONNECTION_STRING is the fallback (requires _make_sync_url encoding pass).
+_db_url = os.environ.get("DATABASE_URL")
 _pooled = os.environ.get("SUPABASE_POOLED_CONNECTION_STRING")
 
-if _pooled:
+if _db_url:
+    SQLALCHEMY_DATABASE_URL = _db_url
+    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+elif _pooled:
     SQLALCHEMY_DATABASE_URL = _make_sync_url(_pooled)
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
 else:

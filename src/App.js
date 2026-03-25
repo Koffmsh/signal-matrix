@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect } from "react";
 import { fetchBatchMarketData } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
 
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+
 // ── API field mapping: snake_case → camelCase ─────────────────────────────────
 function tickerFromApi(r) {
   return {
@@ -254,7 +256,7 @@ function Dashboard() {
 
   // Load ticker universe from DB on page load
   useEffect(() => {
-    fetch("http://localhost:8000/api/tickers?active=true")
+    fetch(`${API_BASE}/api/tickers?active=true`)
       .then(r => r.json())
       .then(data => setTickerUniverse(data.map(tickerFromApi)))
       .catch(() => {});
@@ -272,7 +274,7 @@ function Dashboard() {
 
   // Load stored signals on page load (no recalculation)
   useEffect(() => {
-    fetch("http://localhost:8000/api/signals/stored")
+    fetch(`${API_BASE}/api/signals/stored`)
       .then(r => r.json())
       .then(data => {
         const m = new Map();
@@ -284,7 +286,7 @@ function Dashboard() {
 
   // Load scheduler status on page load (no polling)
   useEffect(() => {
-    fetch("http://localhost:8000/api/scheduler/status")
+    fetch(`${API_BASE}/api/scheduler/status`)
       .then(r => r.json())
       .then(data => setSchedulerStatus(data))
       .catch(() => {});
@@ -294,7 +296,7 @@ function Dashboard() {
     if (isCalculating) return;
     setIsCalculating(true);
     setCalcStatus(null);
-    fetch("http://localhost:8000/api/signals/calculate")
+    fetch(`${API_BASE}/api/signals/calculate`)
       .then(r => r.json())
       .then(outputData => {
         const m = new Map();
