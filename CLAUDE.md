@@ -169,6 +169,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Do not** use `create_async_engine` or `AsyncSession` until a deliberate async migration is planned for all routers
 - The `asyncpg` package is still in `requirements.txt` (Alembic dependency + future use) but is not used by the running app
 
+### Fly.io Web App — Production Build Required (nginx, not CRA dev server)
+- CRA dev server (`npm start`) exits immediately with code 0 on Fly.io Firecracker VMs (no TTY, headless)
+- Root cause was two bugs stacked: (1) no `.dockerignore` → `COPY . .` overwrote Linux node_modules with Windows binaries → instant clean exit; (2) 256MB Firecracker VM too small for webpack compilation
+- **Fix:** `Dockerfile.web.fly` uses a multi-stage build — `npm run build` on Depot's cloud builder (plenty of RAM), then `nginx:alpine` serves the static `build/` folder at runtime
+- Image size: 23MB (vs 403MB dev server image)
+- `REACT_APP_API_URL` is baked in at build time via Docker `ARG` + `ENV`, set in `fly.web.toml` `[build.args]`
+- **Rule:** Never deploy CRA with `npm start` to Fly.io — always `npm run build` → nginx
+- **Rule:** `.dockerignore` must always exclude `node_modules` — Windows binaries will crash Linux containers
+
+### Fly.io Secrets — Special Characters in Passwords
+- Fly.io's dotenv-style secret storage mangles passwords containing `#` (comment delimiter) and `$` (variable expansion)
+- Password `k,/2#RY@Jma$8rw` stored as `SUPABASE_POOLED_CONNECTION_STRING` was silently truncated by `#`
+- **Fix:** Store a pre-encoded `DATABASE_URL` secret where the password is already percent-encoded: `k%2C%2F2%23RY%40Jma%248rw` — no special chars to mangle
+- `database.py` checks `DATABASE_URL` first, falls back to `SUPABASE_POOLED_CONNECTION_STRING` (with `_make_sync_url()` encoding pass)
+- **Rule:** For any Fly.io secret containing `#`, `$`, `@`, `,`, or `/` in the password, pre-encode to percent-encoding before setting
+
 ### yfinance Asset Class Mapping — ETFs Default to Domestic Equities
 - yfinance returns `quoteType: 'ETF'` for most ETFs but `category` is often empty or uses Morningstar taxonomy
 - The mapping layer falls through to `Domestic Equities` default for international, fixed income, FX, and commodity ETFs
@@ -276,8 +292,8 @@ signal-matrix/
 
 | Task | Deliverable | Status |
 |---|---|---|
-| 5.1 | Supabase setup + SQLAlchemy migration (SQLite → Postgres) | ⬜ Pending |
-| 5.2 | Fly.io deployment — Docker, secrets, signal.suttonmc.com DNS | ⬜ Pending |
+| 5.1 | Supabase setup + SQLAlchemy migration (SQLite → Postgres) | ✅ Complete |
+| 5.2 | Fly.io deployment — Docker, secrets, signal.suttonmc.com DNS | ✅ Complete |
 | 5.3 | Schwab OAuth — token exchange, storage, proactive auto-refresh | ⬜ Pending |
 | 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ⬜ Pending |
 | 5.5 | IV Percentile — options chain fetch, iv_history table | ⬜ Pending |
