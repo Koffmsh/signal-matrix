@@ -25,11 +25,11 @@ export async function fetchBatchMarketData() {
     });
 
     console.info(`[API] Loaded real data for ${dataMap.size} tickers`);
-    return dataMap;
+    return { map: dataMap, dataSource: json.data_source || "yahoo" };
 
   } catch (err) {
     console.warn("[API] fetchBatchMarketData error — using mock data", err);
-    return new Map();
+    return { map: new Map(), dataSource: "yahoo" };
   }
 }
 

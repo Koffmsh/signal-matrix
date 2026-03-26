@@ -323,6 +323,7 @@ function Dashboard() {
 
   const [tickerUniverse,  setTickerUniverse]  = useState([]);
   const [realDataMap,     setRealDataMap]     = useState(new Map());
+  const [batchDataSource, setBatchDataSource] = useState(null);
   const [signalMap,       setSignalMap]       = useState(new Map());
   const [isRefreshing,    setIsRefreshing]    = useState(false);
   const [dataError,       setDataError]       = useState(false);
@@ -342,8 +343,9 @@ function Dashboard() {
   // Load market data from cache on page load (instant when cache is warm)
   useEffect(() => {
     fetchBatchMarketData()
-      .then(map => {
+      .then(({ map, dataSource }) => {
         setRealDataMap(map);
+        setBatchDataSource(dataSource);
         if (map.size === 0) setDataError(true);
       })
       .catch(() => setDataError(true));
@@ -401,8 +403,9 @@ function Dashboard() {
     setIsRefreshing(true);
     setDataError(false);
     fetchBatchMarketData()
-      .then(map => {
+      .then(({ map, dataSource }) => {
         setRealDataMap(map);
+        setBatchDataSource(dataSource);
         setIsRefreshing(false);
         if (map.size === 0) setDataError(true);
       })
@@ -707,11 +710,7 @@ function Dashboard() {
               })()}
               {schwabStatus && (() => {
                 const state      = schwabStatus.state;
-                // Derive data source from the first entry in realDataMap
-                const dataSource = realDataMap.size > 0
-                  ? (realDataMap.values().next().value?.data_source ?? "yahoo")
-                  : null;
-                const isYahooFallback = schwabStatus.connected && dataSource === "yahoo_fallback";
+                const isYahooFallback = schwabStatus.connected && batchDataSource === "yahoo_fallback";
 
                 const color = state === "connected" ? "#00e5a0"
                             : state === "aging"     ? "#f0b429"
