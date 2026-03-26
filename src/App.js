@@ -211,7 +211,6 @@ const volColor   = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? 
 const hurstColor = (h)  => h == null ? "#8899aa" : h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
 const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
 const sparkColor = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
-const rangeColor    = (viewpoint, isWarning) => isWarning ? "#f0b429" : vpColor(viewpoint);
 const dirRangeColor = (dir, isWarn) => isWarn ? "#f0b429" : dirColor(dir);
 const warnTip = (dir, which) => {
   if (dir === "Bullish")
