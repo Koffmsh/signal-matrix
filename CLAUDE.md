@@ -54,7 +54,8 @@ indicators.
   - auto_stop_machines = false on API app (scheduler must stay running)
 - **Current hosting:** Local Docker (dev) + Fly.io (production) — Phase 5
 - **Schwab App:** Signal Matrix — Production, Ready For Use
-  - Callback URL: https://signal.suttonmc.com/api/auth/schwab/callback
+  - Callback URL: https://api.signal.suttonmc.com/api/auth/schwab/callback ✅ (updated — was signal.suttonmc.com, corrected to api subdomain)
+  - Schwab portal status: "Modification Pending" — Schwab must approve before OAuth loop resolves (typically hours to 1-2 business days)
   - APIs: Accounts and Trading Production + Market Data Production
   - Order Limit: 0 (order execution not in scope)
 - **ngrok:** Available for 1-off demos — `ngrok http 3000`
@@ -144,8 +145,10 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Replaced with:** `_build_obv` + `_obv_direction` — pivot-based OBV trend detection
 - Volume history stored in `price_cache.volume_history_json` (aligned to `history_json` dates)
 - OBV bar_window = 9 — requires confirmed pivots on both sides (same rule as price pivot engine)
-- Confirming = OBV direction matches viewpoint; Diverging = opposes; Neutral = mixed or no structure
-- `obv_direction` + `obv_confirming` stored in `signal_output`, served via `/api/signals/stored`
+- **Vol Signal compared against Trade Dir** (not Viewpoint) — volume is a short-term signal; confirming/diverging against the trade timeframe move is methodologically correct
+- Confirming = OBV direction matches Trade Dir; Diverging = opposes Trade Dir; Neutral = OBV has no structure or Trade Dir is Neutral
+- Conviction math unaffected: multiplier only applies when Viewpoint ≠ Neutral, where Trade Dir always equals Viewpoint anyway
+- `obv_direction` (Vol Direction) + `obv_confirming` (Vol Signal) stored in `signal_output`, served via `/api/signals/stored`
 - Phase 5 swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py` — OBV engine is source-agnostic
 
 ### VIX Regime Threshold — Green Cutoff is 20, Not 19 (`App.js`)
@@ -153,6 +156,36 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Bug: `App.js` line 568 was originally implemented with `vix < 19` — off by one on the green/amber boundary
 - **Fixed:** Both ternary expressions on line 568 updated to `vix < 20` (color and label)
 - **Do not** use 19 as the cutoff — VIX = 19 is investable territory, not choppy
+
+### Vol Signal / Vol Direction — Popup Field Naming (`App.js`)
+- Backend field `vol_signal` (Confirming/Diverging/Neutral) is the OBV-based conviction multiplier tier — "Vol" is the right label because it communicates meaning to the trader; OBV is the calculation method detail
+- Popup shows two fields:
+  - **Vol Direction** — raw OBV pivot trend direction: Bullish / Bearish / Neutral (maps to `obv_direction`)
+  - **Vol Signal vs Trade** — Confirming ✓ / Diverging ✗ / Neutral — (maps to `obv_confirming`; compared against Trade Dir)
+- The old duplicate "Vol Signal" row that appeared above OBV Direction was removed — it was a leftover from the price-momentum proxy era
+- **Do not rename** `vol_signal` → `obv_signal` in the DB — "Vol Signal" is the correct trader-facing name
+
+### Warning Tooltip — C Pivot Price Injected Inline (`App.js`)
+- LRR/HRR ⚠ tooltips now include the C pivot value inline: e.g. `"LRR is below C ($448.20) — approaching trade invalidation level"`
+- `warnTip(dir, which, cVal, bVal)` helper builds the tooltip string — formats price as `$X,XXX.XX`
+- All 7 call sites (table rows + popup) pass `row.tradeC` / `row.tradeB` and `row.trendC` / `row.trendB`
+- C and B pivot values flow from `signal_output.pivot_c` / `signal_output.pivot_b` via `mergeSignalData()` → `tradeC`, `tradeB`, `trendC`, `trendB`
+
+### Filter UX — Dropdown Multi-Select (`App.js`)
+- Asset Class button row replaced with `MultiSelectDropdown` component — compact, multi-select, count badge, click-outside-to-close
+- New Sector dropdown added alongside Asset Class — same `MultiSelectDropdown` component
+- Both dropdowns populate dynamically from the active ticker universe (no hardcoded values)
+- Viewpoint, ALIGNED ONLY, and ALERTS filters unchanged (remain as buttons)
+- Filters apply instantly on selection — no submit button
+
+### ENTRY Signal Column — Null-Safe Sort Comparator (`App.js`)
+- `entrySignal` is computed in the `ALL_DATA` useMemo pipeline: `"BUY"` | `"SELL"` | `null`
+- **BUY conditions:** Viewpoint = Bullish AND Trade Dir = Bullish AND Trend Dir = Bullish AND `Math.abs(close - tradeLRR) / tradeLRR ≤ 0.02`
+- **SELL conditions:** Viewpoint = Bearish AND Trade Dir = Bearish AND Trend Dir = Bearish AND `Math.abs(close - tradeHRR) / tradeHRR ≤ 0.02`
+- Neutral viewpoint never triggers ENTRY signal regardless of price proximity
+- Sort comparator must handle `null` — `typeof null === "object"` causes NaN on subtraction
+- **Fix:** Null values explicitly sorted to bottom before string/numeric comparison in the sort function
+- `ENTRY` count shown in header summary row alongside BULLISH / BEARISH / ALIGNED / ALERTS
 
 ### Schwab IV Unit Convention — Percentage In, Decimal Stored (`schwab_options.py`)
 - Schwab `get_option_chain()` returns `volatility` as a percentage (e.g. `18.7` = 18.7%)
@@ -191,8 +224,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Fix:** `Dockerfile.web.fly` uses a multi-stage build — `npm run build` on Depot's cloud builder (plenty of RAM), then `nginx:alpine` serves the static `build/` folder at runtime
 - Image size: 23MB (vs 403MB dev server image)
 - `REACT_APP_API_URL` is baked in at build time via Docker `ARG` + `ENV`, set in `fly.web.toml` `[build.args]`
+- `REACT_APP_ADMIN_PASSWORD` must also be passed as a build arg — it is NOT available as a Fly.io runtime secret (React env vars bake in at build time)
 - **Rule:** Never deploy CRA with `npm start` to Fly.io — always `npm run build` → nginx
 - **Rule:** `.dockerignore` must always exclude `node_modules` — Windows binaries will crash Linux containers
+- **Rule:** All web deploys must use `deploy-web.sh` — never bare `fly deploy` (password won't bake in)
+
+### nginx SPA Routing — React Router 404 on Direct URL
+- Default nginx config has no fallback rule — `/admin` and any non-root route returns 404 Not Found
+- **Fix:** `nginx.conf` in project root with `try_files $uri $uri/ /index.html` — copied into image via `Dockerfile.web.fly`
+- Requires `COPY nginx.conf /etc/nginx/conf.d/default.conf` in `Dockerfile.web.fly`
+- **Rule:** Any new React route added to the app works automatically — no nginx changes needed
+
+### Web Deploy Script — `deploy-web.sh`
+- All web deploys run via `./deploy-web.sh` in project root — never bare `fly deploy`
+- Script sources `.env` to pick up `REACT_APP_ADMIN_PASSWORD` and passes it as `--build-arg`
+- `REACT_APP_API_URL` still set via `fly.web.toml` `[build.args]` — no duplication needed
+- `deploy-web.sh` is safe to commit (reads from `.env`, contains no secrets)
 
 ### Fly.io Secrets — Special Characters in Passwords
 - Fly.io's dotenv-style secret storage mangles passwords containing `#` (comment delimiter) and `$` (variable expansion)
@@ -285,7 +332,7 @@ signal-matrix/
 ## Phase 2 — COMPLETE ✅
 ## Phase 3 — COMPLETE ✅
 ## Phase 4 — COMPLETE ✅
-## Phase 5 — IN PROGRESS 🔄
+## Phase 5 — COMPLETE ✅
 
 ### Phase 3 Build Sequence
 
@@ -641,10 +688,10 @@ Base Score = weighted average:
 
 Rel IV removed from conviction formula — used for LRR/HRR width scaling only.
 
-Volume Multiplier (OBV pivot direction — applied after base score):
-  Confirming  → × 1.15   OBV direction matches viewpoint
-  Neutral     → × 1.00   OBV direction Neutral or mixed
-  Diverging   → × 0.80   OBV direction opposes viewpoint
+Volume Multiplier (OBV pivot direction vs Trade Dir — applied after base score):
+  Confirming  → × 1.15   Vol Direction matches Trade Dir
+  Neutral     → × 1.00   Vol Direction Neutral or mixed
+  Diverging   → × 0.80   Vol Direction opposes Trade Dir
 
 Final Conviction = Base Score × Volume Multiplier
 
@@ -822,46 +869,54 @@ NOT $427.13 (stale C)
 **Uptrend:** Enter at LRR, target HRR (above D)
 **Downtrend:** Enter at HRR (bounce), target LRR (below D)
 
-### LRR Formula — Uptrend
+### LRR / HRR Formula — Redesigned (conviction_engine.py)
+
+**Two bugs fixed from original formula:**
+1. H_factor was inverted — high H now correctly means shallow pullback (LRR near anchor), not deep
+2. Anchor switches from C to B when price has extended well beyond B, so old C is no longer the relevant anchor
+
+#### H_factor lookup (same values, applied as `1 − hf` for entry-side ranges)
 ```
-Base LRR = C + (B − C) × H_factor
-
-H_factor lookup:
-  H > 0.65        →  0.95  (near B — strong trend)
-  H 0.55 – 0.65   →  0.50  (midpoint — moderate trend)
-  H 0.50 – 0.55   →  0.05  (near C — weak trend)
-  H < 0.50        →  0.00  (default to C — LRR shows grey, no valid H signal)
-```
-
-LRR always calculates and always displays. H < 0.50 defaults LRR to C, shown in grey.
-
-### HRR Formula — Uptrend
-```
-Base HRR = D + (1σ of recent returns)
-
-HRR vs prior D interpretation:
-  HRR well above prior D → full conviction, full size
-  HRR near prior D       → moderate conviction, reduced size
-  HRR below prior D      → caution confirmed, minimum size
+H > 0.65   →  hf = 0.95  (strong trend  → shallow pullback → entry close to anchor)
+H 0.55–0.65 →  hf = 0.50  (moderate trend)
+H 0.50–0.55 →  hf = 0.05  (weak trend)
+H < 0.50   →  hf = 0.00  (mean-reverting → deep pullback → entry far from anchor)
 ```
 
-### Downtrend Mirror Formulas
-```
-Base HRR = C − (C − B) × H_factor   ← entry on bounce (higher price)
-Base LRR = D − (1σ of recent returns) ← profit target (lower price)
+#### Uptrend
+```python
+bc_range = abs(b - c)
+anchor   = c if d < b + bc_range else b   # switch to B when price extended well above B
+lrr = anchor + bc_range * (1 - hf) - sigma * lrr_mult   # entry on pullback
+hrr = d      + bc_range * hf        + sigma * hrr_mult   # target above D
 ```
 
-### Rel IV Scaling (ATR Equivalent)
-IV scales LRR/HRR width — behaves like ATR expanding and contracting with volatility.
+#### Downtrend (mirror)
+```python
+bc_range = abs(b - c)
+anchor   = c if d > b - bc_range else b   # switch to B when price extended well below B
+hrr = anchor - bc_range * (1 - hf) + sigma * hrr_mult   # entry on bounce
+lrr = d      - bc_range * hf        - sigma * lrr_mult   # target below D
+```
 
-| Rel IV% | LRR Adj (Uptrend) | HRR Adj (Uptrend) |
+**Rule: both sides use `sigma × lrr_mult` and `sigma × hrr_mult` directly — never `sigma × (1 − mult)`.**
+The brief contained an error on downtrend LRR (`1 - lrr_mult`); verified fix gives correct output.
+
+#### Rel IV Multipliers (sigma scaling)
+| Rel IV% | lrr_mult | hrr_mult |
 |---|---|---|
-| 0–30% | × 0.99 (tight) | × 1.02 |
-| 31–60% | × 1.00 (neutral) | × 1.05 |
-| 61–80% | × 0.97 (wider) | × 1.10 |
-| > 80% | × 0.94 (max) | × 1.15 |
+| 0–30%  | 0.99 | 1.02 |
+| 31–60% | 1.00 | 1.05 |
+| 61–80% | 0.97 | 1.10 |
+| > 80%  | 0.94 | 1.15 |
 
-Downtrend: HRR pushed up, LRR pulled down (same widening logic, mirrored).
+#### Verified output — SPX trade timeframe (Bearish FORMING)
+```
+B=6798.40  C=6946.13  D=6506.48  H=0.298  rel_iv=69
+anchor = B (D < B − bc_range → extended below B)
+Trade LRR = $6,454  ✅   (Hedgeye benchmark ~$6,465)
+Trade HRR = $6,710  ✅   (Hedgeye benchmark ~$6,707)
+```
 
 ### Structural States
 
@@ -922,8 +977,8 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 warning,                    ← IV-driven WARNING flag (per timeframe)
                 lrr_warn, hrr_warn,         ← price-based pivot threshold flags (per timeframe)
                 pivot_b, pivot_c,           ← pivot values for UI comparison
-                obv_direction,              ← OBV pivot trend: Bullish | Bearish | Neutral
-                obv_confirming,             ← True when OBV direction aligns with viewpoint
+                obv_direction,              ← Vol Direction: OBV pivot trend: Bullish | Bearish | Neutral
+                obv_confirming,             ← True when Vol Direction aligns with Trade Dir (not Viewpoint)
                 calculated_at
                 UNIQUE(ticker, timeframe)
 ```
@@ -1026,11 +1081,21 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 ### VIX Regime Indicator — Dashboard Header
 Reads from existing `VIX` row in `price_cache` — no new data fetch needed:
 ```
-VIX < 20   → Green dot  — investable
-VIX 20–29  → Amber dot  — choppy
-VIX ≥ 30   → Red dot    — danger
+VIX < 20   → Green  — INVESTABLE
+VIX 20–29  → Amber  — CHOPPY
+VIX ≥ 30   → Red    — DANGER
 ```
-Displayed in dashboard header alongside SCHED indicator.
+The old `● VIX X.XX` text indicator has been superseded by the VIX Gauge (see below). Regime logic unchanged.
+
+### VIX Gauge — Dashboard Header
+Horizontal gauge bar positioned between the title and summary counts (BULLISH / BEARISH / ALIGNED / ALERTS / ENTRY).
+- **Range:** 9 to 45+ (needle clamped at right edge when VIX > 45; numeric display shows actual value)
+- **Zone widths** (based on 36-unit span, 9–45):
+  - Green (9–20): 30.6% · Amber (20–30): 27.8% · Red (30–45): 41.6%
+- **Needle:** 3px wide, extends 4px above/below bar, colored to match current zone, glow + white inner shadow
+- **Scale labels:** 9 · 20 · 30 · 45+ at zone boundaries, 11px, `#8899aa`
+- **Needle position formula:** `Math.min(Math.max((vix - 9) / 36, 0), 1) * 100` percent
+- Labels: INVESTABLE (green) · CHOPPY (amber) · DANGER (red) shown inline next to numeric VIX value
 
 ## Dashboard Columns (current, in order)
 | Column | Description |
@@ -1043,6 +1108,7 @@ Displayed in dashboard header alongside SCHED indicator.
 | Trend | SVG sparkline — 60-day real price history |
 | Viewpoint | Bullish / Bearish / Neutral (three states only) |
 | Conviction % | 0-100% — blank when Neutral; green ≥70%, amber 50-69%, grey <50% |
+| ENTRY | ▲ BUY (green) or ▼ SELL (red) badge — see ENTRY Signal rules below; blank when conditions not met; sortable |
 | Trade Dir | Short-term direction |
 | Trade LRR | Lower risk range — color = trade direction; ⚠ when LRR < C (uptrend) or LRR > B (downtrend) |
 | Trade HRR | Higher risk range — color = trade direction; ⚠ when HRR < B (uptrend) or HRR > C (downtrend) |
@@ -1058,9 +1124,8 @@ Displayed in dashboard header alongside SCHED indicator.
 | Viewpoint | Bullish / Bearish / Neutral |
 | Aligned Since | ET timestamp — when current Bullish/Bearish viewpoint began. Hidden when Neutral |
 | Conviction | % or — when Neutral |
-| Vol Signal | Confirming / Diverging / Neutral — OBV-based |
-| OBV Direction | Bullish / Bearish / Neutral — OBV pivot trend direction |
-| OBV Signal | Confirming ✓ / Diverging ✗ / Neutral — — green/amber/grey |
+| Vol Direction | Bullish / Bearish / Neutral — OBV pivot trend direction (`obv_direction`) |
+| Vol Signal vs Trade | Confirming ✓ / Diverging ✗ / Neutral — compared against Trade Dir (`obv_confirming`) |
 | Trade Dir | Direction + icon |
 | Trade LRR | Color = trade dir; ⚠ + hover tooltip when warn |
 | Trade HRR | Color = trade dir; ⚠ + hover tooltip when warn |
@@ -1299,3 +1364,4 @@ const tickers = [
 ];
 // NOTE: AMZN excluded from Tier 2 seed — already exists as Tier 1. Add via admin panel if needed as Tier 2.
 ```
+                                  

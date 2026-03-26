@@ -149,28 +149,38 @@ def compute_lrr_hrr(b: float, c: float, d: float | None,
     Compute (lrr, hrr) for one ticker / timeframe.
     Returns (None, None) when H data is unavailable (h is None).
 
-    H < 0.50 → hf = 0.0 → LRR defaults to C (still computes, shown grey).
+    H < 0.50 → hf = 0.0 → deep pullback / shallow target (shown grey, Neutral viewpoint).
     LRR = always the lower price value.
     HRR = always the higher price value.
+
+    Anchor selection — switches from C to B when price has extended beyond one full
+    BC range past B, meaning the old C is no longer a relevant anchor:
+      Uptrend:   anchor = C if D < B + bc_range, else B
+      Downtrend: anchor = C if D > B - bc_range, else B
+
+    H_factor applied as (1 - hf) for entry-side range:
+      High H (strong trend) → small (1-hf) → entry level close to anchor (shallow pullback)
+      Low H  (weak trend)   → large (1-hf) → entry level far from anchor (deep pullback)
     """
     hf = _h_factor(h)
     if hf is None:
         return None, None   # no H data — cannot compute
 
-    sigma  = _sigma(prices)
-    anchor = d if d is not None else b
+    sigma    = _sigma(prices)
+    bc_range = abs(b - c)
+    d_val    = d if d is not None else b   # D falls back to B when not yet established
 
     lrr_mult = _iv_lrr_multiplier(rel_iv)
     hrr_mult = _iv_hrr_multiplier(rel_iv)
 
     if direction == "uptrend":
-        base_lrr = c + (b - c) * hf
-        lrr = round(base_lrr - sigma * (1.0 - lrr_mult), 4)
-        hrr = round(anchor + sigma * hrr_mult, 4)
+        anchor = c if d_val < b + bc_range else b
+        lrr = round(anchor + bc_range * (1.0 - hf) - sigma * lrr_mult, 4)
+        hrr = round(d_val  + bc_range * hf          + sigma * hrr_mult, 4)
     else:  # downtrend
-        base_hrr = c - (c - b) * hf
-        hrr = round(base_hrr + sigma * (hrr_mult - 1.0), 4)
-        lrr = round(anchor - sigma * hrr_mult, 4)
+        anchor = c if d_val > b - bc_range else b
+        hrr = round(anchor - bc_range * (1.0 - hf) + sigma * hrr_mult, 4)
+        lrr = round(d_val  - bc_range * hf          - sigma * lrr_mult, 4)
 
     # Clamp — IV can push them past each other (WARNING state check follows)
     if lrr > hrr:
@@ -363,10 +373,13 @@ def compute_output(ticker: str, db) -> dict:
     else:
         viewpoint = "Neutral"
 
-    # ── OBV vol_signal — maps OBV direction to conviction multiplier tier ────
-    if viewpoint in ("Bullish", "Bearish") and obv_dir == viewpoint:
+    # ── OBV vol_signal — compared against Trade Dir (not viewpoint) ──────────
+    # Volume is a short-term signal — confirms or opposes the trade timeframe move
+    # independently of trend alignment. Conviction math is unaffected: vol_signal
+    # only applies when viewpoint != Neutral, where trade_dir == viewpoint anyway.
+    if trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir:
         vol_signal = "Confirming"
-    elif obv_dir != "Neutral" and obv_dir != viewpoint:
+    elif obv_dir != "Neutral" and obv_dir != trade_dir:
         vol_signal = "Diverging"
     else:
         vol_signal = "Neutral"

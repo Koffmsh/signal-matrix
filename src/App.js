@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { fetchBatchMarketData } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
 
@@ -212,15 +212,20 @@ const hurstColor = (h)  => h == null ? "#8899aa" : h >= 0.6 ? "#00e5a0" : h >= 0
 const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
 const sparkColor = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
 const dirRangeColor = (dir, isWarn) => isWarn ? "#f0b429" : dirColor(dir);
-const warnTip = (dir, which) => {
+const fmtWarnPrice = (v) => v != null
+  ? `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  : null;
+const warnTip = (dir, which, cVal, bVal) => {
+  const c = fmtWarnPrice(cVal);
+  const b = fmtWarnPrice(bVal);
   if (dir === "Bullish")
     return which === "lrr"
-      ? "LRR is below C — approaching trade invalidation level"
-      : "HRR is below B — target doesn't reach prior swing high";
+      ? `LRR is below C${c ? ` (${c})` : ""} — approaching trade invalidation level`
+      : `HRR is below B${b ? ` (${b})` : ""} — target doesn't reach prior swing high`;
   if (dir === "Bearish")
     return which === "hrr"
-      ? "HRR is above C — approaching trade invalidation level"
-      : "LRR is above B — target doesn't reach prior swing low";
+      ? `HRR is above C${c ? ` (${c})` : ""} — approaching trade invalidation level`
+      : `LRR is above B${b ? ` (${b})` : ""} — target doesn't reach prior swing low`;
   return "Warning threshold breached";
 };
 const stateColor = (s)  =>
@@ -229,14 +234,85 @@ const stateColor = (s)  =>
   s.includes("WARN")    ? "#f0b429" :
   s.includes("BREAK")   ? "#ff4d6d" : "#8899aa";
 
+// ── Multi-select dropdown ─────────────────────────────────────────────────────
+function MultiSelectDropdown({ label, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const toggle = (val) => {
+    const next = new Set(selected);
+    next.has(val) ? next.delete(val) : next.add(val);
+    onChange(next);
+  };
+
+  const count = selected.size;
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen(x => !x)}
+        style={{
+          background: count > 0 ? "#0d2a45" : "transparent",
+          border: `1px solid ${count > 0 ? "#0077ff" : "#1a2e45"}`,
+          color: count > 0 ? "#0099ff" : "#8899aa",
+          padding: "4px 10px", fontSize: "10px", borderRadius: "2px",
+          cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.05em",
+          display: "flex", alignItems: "center", gap: "6px",
+        }}
+      >
+        {label}
+        {count > 0 && (
+          <span style={{ background: "#0077ff", color: "#fff", borderRadius: "8px", padding: "0 5px", fontSize: "9px", fontWeight: "700" }}>{count}</span>
+        )}
+        <span style={{ fontSize: "8px", opacity: 0.7 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 200,
+          background: "#0d1a2a", border: "1px solid #1a3050", borderRadius: "3px",
+          minWidth: "200px", maxHeight: "260px", overflowY: "auto",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+        }}>
+          {options.map(opt => (
+            <label
+              key={opt}
+              style={{
+                display: "flex", alignItems: "center", gap: "8px",
+                padding: "6px 12px", cursor: "pointer", userSelect: "none",
+                color: selected.has(opt) ? "#00e5a0" : "#8899aa",
+                fontSize: "10px", letterSpacing: "0.05em",
+                borderBottom: "1px solid #131f2e",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(opt)}
+                onChange={() => toggle(opt)}
+                style={{ accentColor: "#00e5a0", width: "12px", height: "12px" }}
+              />
+              {opt}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Data ─────────────────────────────────────────────────────────────────────
 const CLASSES    = ["All", "Domestic Equities", "Domestic Fixed Income", "Digital Assets", "Foreign Exchange", "International Equities", "Commodities"];
 const VIEWPOINTS = ["All", "Bullish", "Bearish", "Neutral"];
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard() {
-  const [classFilter, setClassFilter] = useState("All");
-  const [vpFilter,    setVpFilter]    = useState("All");
+  const [classFilter,  setClassFilter]  = useState(new Set());
+  const [sectorFilter, setSectorFilter] = useState(new Set());
+  const [vpFilter,     setVpFilter]     = useState("All");
   const [alignedOnly, setAlignedOnly] = useState(false);
   const [alertOnly,   setAlertOnly]   = useState(false);
   const [search,      setSearch]      = useState("");
@@ -341,7 +417,12 @@ function Dashboard() {
     tickerUniverse.filter(t => t.active).map(t => {
       const mockRow  = generateMockData(t);
       const priceRow = mergeRealData(mockRow, realDataMap);
-      return mergeSignalData(priceRow, signalMap);
+      const sigRow   = mergeSignalData(priceRow, signalMap);
+      const isBuy  = sigRow.viewpoint === "Bullish" && sigRow.tradeDir === "Bullish" && sigRow.trendDir === "Bullish" &&
+        sigRow.tradeLRR != null && sigRow.close != null && Math.abs(sigRow.close - sigRow.tradeLRR) / sigRow.tradeLRR <= 0.02;
+      const isSell = sigRow.viewpoint === "Bearish" && sigRow.tradeDir === "Bearish" && sigRow.trendDir === "Bearish" &&
+        sigRow.tradeHRR != null && sigRow.close != null && Math.abs(sigRow.close - sigRow.tradeHRR) / sigRow.tradeHRR <= 0.02;
+      return { ...sigRow, entrySignal: isBuy ? "BUY" : isSell ? "SELL" : null };
     }),
     [tickerUniverse, realDataMap, signalMap]
   );
@@ -354,6 +435,17 @@ function Dashboard() {
     return acc;
   }, {});
 
+  const availableClasses = useMemo(() =>
+    [...new Set(tickerUniverse.filter(t => t.tier === 1 && t.active).map(t => t.assetClass).filter(Boolean))]
+      .sort((a, b) => ASSET_CLASS_ORDER.indexOf(a) - ASSET_CLASS_ORDER.indexOf(b)),
+    [tickerUniverse]
+  );
+  const availableSectors = useMemo(() =>
+    [...new Set(tickerUniverse.filter(t => t.tier === 1 && t.active).map(t => t.sector).filter(Boolean))]
+      .sort((a, b) => SECTOR_ORDER.indexOf(a) - SECTOR_ORDER.indexOf(b)),
+    [tickerUniverse]
+  );
+
   const toggleExpand = (ticker, e) => {
     e.stopPropagation();
     setExpandedTickers(prev => {
@@ -365,7 +457,8 @@ function Dashboard() {
 
   const filtered = useMemo(() => {
     let d = ALL_DATA.filter(t => t.tier === 1);
-    if (classFilter !== "All") d = d.filter(x => x.assetClass === classFilter);
+    if (classFilter.size > 0)  d = d.filter(x => classFilter.has(x.assetClass));
+    if (sectorFilter.size > 0) d = d.filter(x => sectorFilter.has(x.sector));
     if (vpFilter !== "All")    d = d.filter(x => x.viewpoint === vpFilter);
     if (alignedOnly) d = d.filter(x => x.tradeDir === x.trendDir && x.tradeDir !== "Neutral");
     if (alertOnly)   d = d.filter(x => x.isAlert);
@@ -376,15 +469,19 @@ function Dashboard() {
     return [...d].sort((a, b) => {
       if (sortKey === "default") return defaultSort(a, b);
       const av = a[sortKey], bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       return (typeof av === "string" ? av.localeCompare(bv) : av - bv) * sortDir;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classFilter, vpFilter, alignedOnly, alertOnly, search, sortKey, sortDir, ALL_DATA]);
+  }, [classFilter, sectorFilter, vpFilter, alignedOnly, alertOnly, search, sortKey, sortDir, ALL_DATA]);
 
   const bullish = DATA.filter(x => x.viewpoint === "Bullish").length;
   const bearish = DATA.filter(x => x.viewpoint === "Bearish").length;
   const alerts  = DATA.filter(x => x.isAlert).length;
   const aligned = DATA.filter(x => x.tradeDir === x.trendDir && x.tradeDir !== "Neutral").length;
+  const entries = DATA.filter(x => x.entrySignal != null).length;
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => -d);
@@ -472,24 +569,29 @@ function Dashboard() {
             <span style={{ color: "#8899aa" }}>—</span>
           )}
         </td>
+        {/* ENTRY */}
+        <td style={{ padding: "9px 8px", textAlign: "center" }}>
+          {row.entrySignal === "BUY"  && <span style={{ color: "#00e5a0", fontWeight: "700", fontSize: "10px", letterSpacing: "0.05em" }}>▲ BUY</span>}
+          {row.entrySignal === "SELL" && <span style={{ color: "#ff4d6d", fontWeight: "700", fontSize: "10px", letterSpacing: "0.05em" }}>▼ SELL</span>}
+        </td>
         {/* Trade Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
         {/* Trade LRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
-          {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr")} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Trade HRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
-          {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr")} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
         {/* Trend LRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
-          {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr")} style={{ cursor: "help" }}> ⚠</span>}
+          {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Asset Class — moved to far right, tightened */}
         <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -515,8 +617,38 @@ function Dashboard() {
             <div style={{ fontSize: "10px", color: "#8899aa", letterSpacing: "0.2em" }}>MULTI-TIMEFRAME PROBABILISTIC DASHBOARD</div>
           </div>
         </div>
+        {/* VIX Gauge */}
+        {(() => {
+          const vix = realDataMap.get("VIX")?.close;
+          if (vix == null) return null;
+          const color = vix < 20 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
+          const label = vix < 20 ? "INVESTABLE" : vix < 30 ? "CHOPPY" : "DANGER";
+          return (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
+              <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>VIX REGIME</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+                <span style={{ fontSize: "20px", fontWeight: "700", color, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{vix.toFixed(2)}</span>
+                <span style={{ fontSize: "9px", color, letterSpacing: "0.1em" }}>{label}</span>
+              </div>
+              <div style={{ position: "relative", width: "160px", height: "6px" }}>
+                <div style={{ position: "absolute", inset: 0, display: "flex", borderRadius: "3px", overflow: "hidden" }}>
+                  <div style={{ width: "30.6%", height: "100%", background: "#00e5a0", opacity: 0.55 }} />
+                  <div style={{ width: "27.8%", height: "100%", background: "#f0b429", opacity: 0.55 }} />
+                  <div style={{ width: "41.6%", height: "100%", background: "#ff4d6d", opacity: 0.55 }} />
+                </div>
+                <div style={{ position: "absolute", left: `${Math.min(Math.max((vix - 9) / 36, 0), 1) * 100}%`, top: "-4px", bottom: "-4px", width: "3px", background: color, transform: "translateX(-1px)", borderRadius: "1px", boxShadow: `0 0 6px ${color}, 0 0 2px #fff` }} />
+              </div>
+              <div style={{ position: "relative", width: "160px", height: "10px" }}>
+                <span style={{ position: "absolute", left: 0, fontSize: "11px", color: "#8899aa" }}>9</span>
+                <span style={{ position: "absolute", left: "30.6%", fontSize: "11px", color: "#8899aa", transform: "translateX(-50%)" }}>20</span>
+                <span style={{ position: "absolute", left: "58.3%", fontSize: "11px", color: "#8899aa", transform: "translateX(-50%)" }}>30</span>
+                <span style={{ position: "absolute", right: 0, fontSize: "11px", color: "#8899aa" }}>45+</span>
+              </div>
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: "24px" }}>
-          {[["BULLISH", bullish, "#00e5a0"], ["BEARISH", bearish, "#ff4d6d"], ["ALIGNED", aligned, "#0099ff"], ["ALERTS", alerts, "#f0b429"]].map(([label, val, color]) => (
+          {[["BULLISH", bullish, "#00e5a0"], ["BEARISH", bearish, "#ff4d6d"], ["ALIGNED", aligned, "#0099ff"], ["ALERTS", alerts, "#f0b429"], ["ENTRY", entries, "#e8f4ff"]].map(([label, val, color]) => (
             <div key={label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: "20px", fontWeight: "700", color }}>{val}</div>
               <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>{label}</div>
@@ -561,13 +693,6 @@ function Dashboard() {
             })()}
             <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end", marginTop: "2px" }}>
               <div style={{ color: "#00e5a0" }}>● LIVE</div>
-              {(() => {
-                const vix = realDataMap.get("VIX")?.close;
-                if (vix == null) return null;
-                const color = vix < 20 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
-                const label = vix < 20 ? "investable" : vix < 30 ? "choppy" : "danger";
-                return <div title={`VIX ${vix.toFixed(2)} — ${label}`} style={{ color, cursor: "default" }}>● VIX {vix.toFixed(2)}</div>;
-              })()}
               {schedulerStatus && (() => {
                 const done  = schedulerStatus.today_complete;
                 const fail  = schedulerStatus.last_run_status === "failure";
@@ -624,11 +749,8 @@ function Dashboard() {
           onChange={e => setSearch(e.target.value)}
           style={{ background: "#0d1a2a", border: "1px solid #1a2e45", borderRadius: "3px", color: "#c8d8e8", padding: "6px 12px", fontSize: "11px", fontFamily: "inherit", width: "180px", outline: "none" }}
         />
-        <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-          {CLASSES.map(c => (
-            <button key={c} onClick={() => setClassFilter(c)} style={{ background: classFilter === c ? "#0d2a45" : "transparent", border: `1px solid ${classFilter === c ? "#0077ff" : "#1a2e45"}`, color: classFilter === c ? "#0099ff" : "#8899aa", padding: "4px 10px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.05em" }}>{c}</button>
-          ))}
-        </div>
+        <MultiSelectDropdown label="ASSET CLASS" options={availableClasses} selected={classFilter} onChange={setClassFilter} />
+        <MultiSelectDropdown label="SECTOR" options={availableSectors} selected={sectorFilter} onChange={setSectorFilter} />
         <div style={{ display: "flex", gap: "4px" }}>
           {VIEWPOINTS.map(v => (
             <button key={v} onClick={() => setVpFilter(v)} style={{ background: vpFilter === v ? "#1a1a0a" : "transparent", border: `1px solid ${vpFilter === v ? vpColor(v) : "#1a2e45"}`, color: vpFilter === v ? vpColor(v) : "#8899aa", padding: "4px 10px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit" }}>{v}</button>
@@ -668,6 +790,8 @@ function Dashboard() {
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
                 title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral" />
+              <SortHdr label="ENTRY" k="entrySignal" align="center"
+                title="▲ BUY — within 2% of Trade LRR, all timeframes Bullish · ▼ SELL — within 2% of Trade HRR, all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
               <SortHdr label="TRADE LRR"   k="tradeLRR" />
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
@@ -716,18 +840,17 @@ function Dashboard() {
             ["Aligned since", fmtSince(row.viewpointSince),                                               vpColor(row.viewpoint),                 false],
           ] : []),
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
-          ["Vol Signal",   row.volSignal,                                                                  volColor(row.volSignal),                false],
-          ["OBV Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
-          ["OBV Signal",   row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
+          ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
+          ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
-          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false, row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr") : null],
-          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false, row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr") : null],
+          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false, row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB) : null],
+          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false, row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB) : null],
           ["Trade C",      fmtPrice(row.tradeC),                                                          "#8899aa",                                                  false],
           ["Trade B",      fmtPrice(row.tradeB),                                                          "#8899aa",                                                  false],
           ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
           ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
-          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendLrrWarn),              false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr") : null],
-          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendHrrWarn),              false, row.trendHrrWarn ? warnTip(row.trendDir, "hrr") : null],
+          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendLrrWarn),              false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB) : null],
+          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendHrrWarn),              false, row.trendHrrWarn ? warnTip(row.trendDir, "hrr", row.trendC, row.trendB) : null],
           ["Trend C",      fmtPrice(row.trendC),                                                          "#8899aa",                                                  false],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
           ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
