@@ -102,14 +102,17 @@ def _store_tokens(token_data: dict, db: Session) -> None:
     Accepts both direct OAuth responses (expires_in seconds) and schwab-py
     token dicts (expires_at as Unix float timestamp).
     """
-    access_token  = _encrypt(token_data["access_token"])
-    refresh_token = _encrypt(token_data["refresh_token"])
+    # Handle new schwab-py token format: {"creation_timestamp": ..., "token": {...}}
+    inner = token_data.get("token", token_data)
+
+    access_token  = _encrypt(inner["access_token"])
+    refresh_token = _encrypt(inner["refresh_token"])
 
     # Compute expires_at ISO string
-    if "expires_at" in token_data and isinstance(token_data["expires_at"], (int, float)):
-        expires_dt = datetime.fromtimestamp(float(token_data["expires_at"]), tz=_ET)
-    elif "expires_in" in token_data:
-        expires_dt = datetime.now(_ET) + timedelta(seconds=int(token_data["expires_in"]))
+    if "expires_at" in inner and isinstance(inner["expires_at"], (int, float)):
+        expires_dt = datetime.fromtimestamp(float(inner["expires_at"]), tz=_ET)
+    elif "expires_in" in inner:
+        expires_dt = datetime.now(_ET) + timedelta(seconds=int(inner["expires_in"]))
     else:
         expires_dt = datetime.now(_ET) + timedelta(seconds=1800)  # 30-min default
 
@@ -241,11 +244,16 @@ def get_schwab_client(db: Session) -> schwab.client.Client:
         if not r:
             raise RuntimeError("No Schwab tokens")
         expires_ts = datetime.fromisoformat(r.expires_at).timestamp()
+        # schwab-py now expects {"creation_timestamp": ..., "token": {...}}
+        creation_ts = datetime.fromisoformat(r.updated_at).timestamp() if r.updated_at else expires_ts - 1800
         return {
-            "access_token":  _decrypt(r.access_token),
-            "refresh_token": _decrypt(r.refresh_token),
-            "token_type":    "Bearer",
-            "expires_at":    expires_ts,
+            "creation_timestamp": creation_ts,
+            "token": {
+                "access_token":  _decrypt(r.access_token),
+                "refresh_token": _decrypt(r.refresh_token),
+                "token_type":    "Bearer",
+                "expires_at":    expires_ts,
+            },
         }
 
     def _write(token_dict: dict):
