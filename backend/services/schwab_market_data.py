@@ -131,8 +131,8 @@ def schwab_fetch_all(db: Session) -> dict:
     # Try to build a Schwab client
     try:
         client = schwab_client_svc.get_schwab_client(db)
-    except RuntimeError:
-        logger.info("Schwab: no tokens stored — falling back to Yahoo Finance")
+    except (RuntimeError, ValueError) as e:
+        logger.warning(f"Schwab: client unavailable ({e}) — falling back to Yahoo Finance")
         return _yahoo_fallback(db, tickers)
 
     # Attempt full Schwab fetch
