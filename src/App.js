@@ -720,12 +720,12 @@ function Dashboard() {
                 const icon  = isYahooFallback ? "◐" : "●";
 
                 const tip   = isYahooFallback
-                            ? "Schwab connected but data from Yahoo fallback — check logs"
+                            ? "Schwab token stale — click to re-authenticate"
                             : state === "connected" ? `Schwab connected · token age ${schwabStatus.age_days ?? 0}d`
                             : state === "aging"     ? `Schwab token aging (${schwabStatus.age_days}d) — re-auth soon`
                             : state === "expired"   ? "Schwab token expired — click to re-authenticate"
                             : "Schwab not connected — click to authenticate";
-                const clickable = !schwabStatus.connected;
+                const clickable = !schwabStatus.connected || isYahooFallback;
                 return (
                   <div
                     title={tip}
