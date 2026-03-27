@@ -152,7 +152,12 @@ def schwab_fetch_all(db: Session) -> dict:
             .first()
         )
         if sample:
-            logger.info("Schwab: cache already fresh for today — skipping re-fetch")
+            logger.info("Schwab: cache already fresh for today — skipping Schwab re-fetch")
+            # Still refresh Yahoo-only tickers — they have no Schwab idempotency guard
+            # and their updated_at must be stamped so the header timestamp stays current
+            unsupported = [t for t in tickers if t in SCHWAB_UNSUPPORTED]
+            if unsupported:
+                _yahoo_fetch_subset(db, unsupported, data_source="yahoo")
             return {"fetched": len(tickers), "errors": 0, "data_source": "schwab"}
 
     # Try to build a Schwab client
