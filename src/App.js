@@ -673,9 +673,18 @@ function Dashboard() {
               ? (() => { const [d] = firstUpdated.split(" "); const [m, day, y] = d.split("/"); return `20${y}-${m.padStart(2,"0")}-${day.padStart(2,"0")}`; })()
               : null;
             const dataStale = realDataMap.size > 0 && dataDateET !== todayET;
-            // signals stale if calculated before today's data
-            const sigsStale = signalsCalculatedAt && dataDateET
-              ? signalsCalculatedAt.slice(0, 10) < dataDateET
+            // signals stale if calculated before today's data — compare full timestamps
+            // signalsCalculatedAt is UTC ISO ("2026-03-27 01:16:32"), firstUpdated is ET "MM/DD/YY HH:MM"
+            const calcDateObj = signalsCalculatedAt
+              ? new Date(signalsCalculatedAt.replace(" ", "T") + "Z") : null;
+            const calcDateET = calcDateObj
+              ? calcDateObj.toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : null;
+            const calcTimeET = calcDateObj
+              ? calcDateObj.toLocaleTimeString("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }) : null;
+            const dataTimeStr = firstUpdated ? firstUpdated.split(" ")[1] : null; // "HH:MM"
+            const sigsStale = calcDateET && dataDateET
+              ? calcDateET < dataDateET                                          // signals from a prior day
+                || (calcDateET === dataDateET && calcTimeET && dataTimeStr && calcTimeET < dataTimeStr) // same day, signals older than data
               : false;
 
             const calcColor  = (isCalculating || isInitialLoading) ? "#445566" : calcStatus === "error" ? "#ff4d6d" : sigsStale ? "#f0b429" : "#0099ff";
