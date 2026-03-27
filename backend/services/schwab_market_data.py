@@ -41,10 +41,12 @@ SCHWAB_SYMBOL_MAP = {
     "VIX":  "$VIX.X",
 }
 
-# Tickers Schwab doesn't carry as standard equity/index — always via Yahoo
-# Tickers fetched via Yahoo Finance only — continuous futures need stitched history
-# that Schwab doesn't serve via /CL-style continuous symbols
-SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC"}
+# Tickers always routed through Yahoo Finance — Schwab cannot quote these:
+#   Indices (SPX, NDX, $DJI, VIX): Schwab batch quotes API returns no data for these
+#   FX (USD, JPY): non-equity instruments not available in Schwab equity quotes
+#   Futures (/CL, /ZN, /GC): continuous front-month symbols Schwab doesn't serve
+# Without this routing, Schwab errors leave updated_at stale → REFRESH DATA stays amber
+SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX"}
 
 
 def get_schwab_symbol(ticker: str) -> str:
