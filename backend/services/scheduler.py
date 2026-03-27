@@ -101,10 +101,10 @@ async def run_catchup_on_startup() -> None:
         logger.info("Scheduler: startup catchup — not a trading day")
         return
 
-    cutoff_et = now_et.replace(hour=16, minute=15, second=0, microsecond=0)
+    cutoff_et = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
 
     if now_et < cutoff_et:
-        logger.info("Scheduler: startup catchup — before 4:15 PM ET, scheduler will fire normally")
+        logger.info("Scheduler: startup catchup — before 4:00 PM ET, scheduler will fire normally")
         return
 
     # Past cutoff — check if already ran successfully today
@@ -123,7 +123,7 @@ async def run_catchup_on_startup() -> None:
 
     logger.info("Scheduler: startup catchup — running missed EOD job")
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, lambda: run_eod_job("catchup"))
+    await loop.run_in_executor(None, schwab_data_job)
 
 
 def _refresh_schwab_tokens_job() -> None:
@@ -137,8 +137,9 @@ def _refresh_schwab_tokens_job() -> None:
 
 def schwab_data_job() -> None:
     """
-    4:00 PM ET — Schwab EOD data fetch.
-    Fires 15 minutes before signal calculation so price_cache is warm.
+    4:00 PM ET — full EOD job: prices → IV → signals in one pass.
+    Chaining signals immediately after fetch eliminates the 15-min gap
+    and ensures REFRESH DATA + CALCULATE SIGNALS both go green together.
     Falls back to Yahoo Finance automatically if Schwab is unavailable.
     Only runs on NYSE trading days.
     """
@@ -147,26 +148,57 @@ def schwab_data_job() -> None:
         logger.info("Schwab data job: not a trading day — skipping")
         return
 
-    logger.info("Schwab data job: starting EOD data fetch")
-    db = SessionLocal()
+    logger.info("Schwab data job: starting EOD job (prices → IV → signals)")
+    db         = SessionLocal()
+    refresh_ok = False
+    signals_ok = False
+    error_msg  = None
+    status     = "failure"
+    t0         = time.monotonic()
+
     try:
-        result = schwab_fetch_all(db)
+        # 1. Prices
+        result     = schwab_fetch_all(db)
+        refresh_ok = result.get("errors", 0) == 0
         logger.info(
-            f"Schwab data job: price fetch complete — "
-            f"fetched={result.get('fetched', 0)}, "
-            f"errors={result.get('errors', 0)}, "
+            f"Schwab data job: prices complete — "
+            f"fetched={result.get('fetched', 0)}, errors={result.get('errors', 0)}, "
             f"source={result.get('data_source', 'unknown')}"
         )
+
+        # 2. IV
         iv_result = schwab_fetch_iv(db)
         logger.info(
-            f"Schwab data job: IV fetch complete — "
-            f"fetched={iv_result.get('fetched', 0)}, "
-            f"errors={iv_result.get('errors', 0)}"
+            f"Schwab data job: IV complete — "
+            f"fetched={iv_result.get('fetched', 0)}, errors={iv_result.get('errors', 0)}"
         )
+
+        # 3. Signals — immediately after prices + IV are written
+        sig        = calculate_signals(db, trigger="scheduled")
+        signals_ok = sig["output"]["errors"] == 0
+        logger.info(f"Schwab data job: signals complete — {sig['output']['calculated']} tickers")
+
+        status = "success"
+
     except Exception as e:
-        logger.error(f"Schwab data job: failed — {e}")
+        error_msg = str(e)
+        logger.error(f"Schwab data job: EOD job failed — {e}")
+
     finally:
+        duration = round(time.monotonic() - t0, 2)
+        db.add(SchedulerLog(
+            run_date   = et_date.strftime("%Y-%m-%d"),
+            trigger    = "scheduled",
+            status     = status,
+            refresh_ok = refresh_ok,
+            signals_ok = signals_ok,
+            error_msg  = error_msg,
+            duration_s = duration,
+            created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        ))
+        db.commit()
         db.close()
+        logger.info(f"Schwab data job: complete — status={status}, duration={duration}s")
 
 
 def start() -> None:
@@ -177,12 +209,6 @@ def start() -> None:
         replace_existing=True,
     )
     scheduler.add_job(
-        run_eod_job,
-        CronTrigger(hour=16, minute=15, timezone="America/New_York"),
-        id="eod_job",
-        replace_existing=True,
-    )
-    scheduler.add_job(
         _refresh_schwab_tokens_job,
         "interval",
         minutes=25,
@@ -190,7 +216,7 @@ def start() -> None:
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Scheduler: started — Schwab data 4:00 PM ET, EOD job 4:15 PM ET, Schwab refresh every 25 min")
+    logger.info("Scheduler: started — EOD job 4:00 PM ET (prices→IV→signals), Schwab token refresh every 25 min")
 
 
 def shutdown() -> None:

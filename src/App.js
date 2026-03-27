@@ -672,7 +672,14 @@ function Dashboard() {
             const dataDateET = firstUpdated
               ? (() => { const [d] = firstUpdated.split(" "); const [m, day, y] = d.split("/"); return `20${y}-${m.padStart(2,"0")}-${day.padStart(2,"0")}`; })()
               : null;
-            const dataStale = realDataMap.size > 0 && dataDateET !== todayET;
+            // Only amber after 4:15 PM ET on a weekday — before then, yesterday's close IS the freshest data
+            const etNow      = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+            const etHour     = etNow.getHours();
+            const etMinute   = etNow.getMinutes();
+            const etDay      = etNow.getDay(); // 0=Sun, 6=Sat
+            const isWeekday  = etDay >= 1 && etDay <= 5;
+            const pastCutoff = etHour > 16 || (etHour === 16 && etMinute >= 15);
+            const dataStale  = realDataMap.size > 0 && dataDateET !== todayET && isWeekday && pastCutoff;
             // signals stale if calculated before today's data — compare full timestamps
             // signalsCalculatedAt is UTC ISO ("2026-03-27 01:16:32"), firstUpdated is ET "MM/DD/YY HH:MM"
             const calcDateObj = signalsCalculatedAt
