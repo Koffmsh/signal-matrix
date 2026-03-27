@@ -36,10 +36,10 @@ _pooled = os.environ.get("SUPABASE_POOLED_CONNECTION_STRING")
 
 if _db_url:
     SQLALCHEMY_DATABASE_URL = _db_url
-    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 elif _pooled:
     SQLALCHEMY_DATABASE_URL = _make_sync_url(_pooled)
-    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 else:
     SQLALCHEMY_DATABASE_URL = "sqlite:///./signal_matrix.db"
     engine = create_engine(

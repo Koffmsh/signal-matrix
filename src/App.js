@@ -325,6 +325,7 @@ function Dashboard() {
   const [realDataMap,     setRealDataMap]     = useState(new Map());
   const [batchDataSource, setBatchDataSource] = useState(null);
   const [signalMap,       setSignalMap]       = useState(new Map());
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing,    setIsRefreshing]    = useState(false);
   const [dataError,       setDataError]       = useState(false);
   const [isCalculating,      setIsCalculating]      = useState(false);
@@ -349,7 +350,8 @@ function Dashboard() {
         setBatchDataSource(dataSource);
         if (map.size === 0) setDataError(true);
       })
-      .catch(() => setDataError(true));
+      .catch(() => setDataError(true))
+      .finally(() => setIsInitialLoading(false));
   }, []);
 
   // Load stored signals on page load (no recalculation)
@@ -676,22 +678,22 @@ function Dashboard() {
               ? signalsCalculatedAt.slice(0, 10) < dataDateET
               : false;
 
-            const calcColor  = isCalculating ? "#445566" : calcStatus === "error" ? "#ff4d6d" : sigsStale ? "#f0b429" : "#0099ff";
-            const calcBg     = isCalculating ? "transparent" : sigsStale ? "#1a1200" : "#00101a";
-            const refreshColor = isRefreshing ? "#445566" : dataStale ? "#f0b429" : "#00e5a0";
-            const refreshBg    = isRefreshing ? "transparent" : dataStale ? "#1a1000" : "#001a0f";
+            const calcColor  = (isCalculating || isInitialLoading) ? "#445566" : calcStatus === "error" ? "#ff4d6d" : sigsStale ? "#f0b429" : "#0099ff";
+            const calcBg     = (isCalculating || isInitialLoading) ? "transparent" : sigsStale ? "#1a1200" : "#00101a";
+            const refreshColor = (isRefreshing || isInitialLoading) ? "#445566" : dataStale ? "#f0b429" : "#00e5a0";
+            const refreshBg    = (isRefreshing || isInitialLoading) ? "transparent" : dataStale ? "#1a1000" : "#001a0f";
 
             return (
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
                   onClick={handleCalculateSignals}
-                  disabled={isCalculating}
+                  disabled={isCalculating || isInitialLoading}
                   style={{
                     background: calcBg,
-                    border: `1px solid ${isCalculating ? "#1a2535" : calcColor}`,
+                    border: `1px solid ${(isCalculating || isInitialLoading) ? "#1a2535" : calcColor}`,
                     color: calcColor,
                     padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
-                    cursor: isCalculating ? "default" : "pointer",
+                    cursor: (isCalculating || isInitialLoading) ? "default" : "pointer",
                     fontFamily: "inherit", letterSpacing: "0.1em",
                   }}
                 >
@@ -699,17 +701,17 @@ function Dashboard() {
                 </button>
                 <button
                   onClick={handleRefresh}
-                  disabled={isRefreshing}
+                  disabled={isRefreshing || isInitialLoading}
                   style={{
                     background: refreshBg,
-                    border: `1px solid ${isRefreshing ? "#1a2535" : refreshColor}`,
+                    border: `1px solid ${(isRefreshing || isInitialLoading) ? "#1a2535" : refreshColor}`,
                     color: refreshColor,
                     padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
-                    cursor: isRefreshing ? "default" : "pointer",
+                    cursor: (isRefreshing || isInitialLoading) ? "default" : "pointer",
                     fontFamily: "inherit", letterSpacing: "0.1em",
                   }}
                 >
-                  {isRefreshing ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
+                  {(isRefreshing || isInitialLoading) ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
                 </button>
               </div>
             );
@@ -720,7 +722,6 @@ function Dashboard() {
               return ts ? <div style={{ color: "#8899aa" }}>EOD · {ts}</div> : null;
             })()}
             <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end", marginTop: "2px" }}>
-              <div style={{ color: "#00e5a0" }}>● LIVE</div>
               {schedulerStatus && (() => {
                 const done  = schedulerStatus.today_complete;
                 const fail  = schedulerStatus.last_run_status === "failure";
@@ -786,12 +787,12 @@ function Dashboard() {
       </div>
 
       {/* Data status banner */}
-      {isRefreshing && (
-        <div style={{ padding: "10px 24px", fontSize: "10px", color: "#8899aa", letterSpacing: "0.1em", borderBottom: "1px solid #131f2e" }}>
+      {(isRefreshing || isInitialLoading) && (
+        <div style={{ padding: "18px 24px", fontSize: "13px", color: "#f0b429", letterSpacing: "0.12em", borderBottom: "1px solid #131f2e", textAlign: "center" }}>
           ⟳ LOADING MARKET DATA...
         </div>
       )}
-      {!isRefreshing && dataError && (
+      {!isRefreshing && !isInitialLoading && dataError && (
         <div style={{ padding: "10px 24px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.1em", borderBottom: "1px solid #131f2e" }}>
           ⚠ LIVE DATA UNAVAILABLE — DISPLAYING MOCK DATA
         </div>
