@@ -3,7 +3,8 @@
 ## Important Note for Neo
 The `.docx` spec files in `Docs/` cannot be read by Claude Code.
 Readable `.txt` copies exist:
-- `Docs/SignalMatrix_Spec_v1.5.txt` — full platform spec (methodology, signal engine, architecture)
+- `Docs/SignalMatrix_Spec_v1.6.txt` — **current** full platform spec (Phases 1–5 complete, all methodology, signal engine, architecture, LRR/HRR redesign, ENTRY signal, OBV, VIX gauge, futures)
+- `Docs/SignalMatrix_Spec_v1.5.txt` — prior version (Phase 4 era — superseded by v1.6)
 - `Docs/SignalMatrix_Phase5_Spec_v1.0.txt` — Phase 5 spec (Supabase, Fly.io, Schwab OAuth, IV)
 Neo should read the relevant spec before making methodology or architecture changes.
 CLAUDE.md remains the authoritative source for rules and current state.
@@ -55,7 +56,7 @@ indicators.
 - **Current hosting:** Local Docker (dev) + Fly.io (production) — Phase 5
 - **Schwab App:** Signal Matrix — Production, Ready For Use
   - Callback URL: https://api.signal.suttonmc.com/api/auth/schwab/callback ✅ (updated — was signal.suttonmc.com, corrected to api subdomain)
-  - Schwab portal status: "Modification Pending" — Schwab must approve before OAuth loop resolves (typically hours to 1-2 business days)
+  - Schwab portal status: ✅ Approved — callback URL modification confirmed 2026-03-25
   - APIs: Accounts and Trading Production + Market Data Production
   - Order Limit: 0 (order execution not in scope)
 - **ngrok:** Available for 1-off demos — `ngrok http 3000`
@@ -129,7 +130,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 - FORMING state was incorrectly forcing `trade_dir = Neutral` via `max(lrr, c)` floor check
 - **Fixed:** Direction determined solely by `price > c` (uptrend) / `price < c` (downtrend)
 - FORMING only affects display (LRR/HRR color grey) — never direction
-- **States that force Neutral:** `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `NO_STRUCTURE` only
+- **States that force Neutral:** `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` only
 - FORMING, EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID all allow Bullish/Bearish
 - LRR above current price during a FORMING pullback is expected — do not treat as a break
 
@@ -953,14 +954,17 @@ Trade HRR = $6,710  ✅   (Hedgeye benchmark ~$6,707)
 | FORMING | Pullback from D, no new C yet | Bounce from D, no new C yet | LRR/HRR update, grey |
 | EXTENDED | Price above D, new C not formed | Price below D, new C not formed | LRR/HRR shown, grey |
 | WARNING | LRR drifted below C (IV-driven only) | HRR drifted above C (IV-driven only) | LRR or HRR cell → amber |
-| BREAK_OF_TRADE | Price closes below C (trade tf) | Price closes above C (trade tf) | Trade Dir → Neutral, LRR/HRR grey |
-| BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir → Neutral, Trend LRR grey |
+| BREAK_OF_TRADE | Price closes below C (trade tf) | Price closes above C (trade tf) | Trade Dir → Neutral, LRR/HRR grey — forgiveness: 1 day |
+| BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir → Neutral, Trend LRR grey — forgiveness: 1 day |
+| BREAK_CONFIRMED | 2+ consecutive closes on wrong side of C | same | Permanently Neutral until price closes above B — recovery above C alone is not enough |
 | NO_STRUCTURE | Insufficient pivot history | Insufficient pivot history | LRR/HRR grey |
 
 **Critical rules:**
 - **C is the line in the sand** — Break of Trade/Trend fires on price closing through C
-- **One close below C = BREAK_OF_TRADE immediately** — no two-close rule, no grace period
-- **Price recovers above C** → Trade Dir = Bullish restored (engine recalculates fresh each run)
+- **One close below C = BREAK_OF_TRADE immediately** — forgiveness allowed on day 1 (recovery above C restores direction)
+- **2+ consecutive closes below C = BREAK_CONFIRMED** — permanently Neutral; recovery requires price to close above B
+- **Price recovers above C after 1-day break** → Trade Dir = Bullish restored (engine recalculates fresh each run)
+- **Price recovers above C after BREAK_CONFIRMED** → still Neutral until price closes above B
 - **Intraday violations irrelevant** — engine uses EOD closes only
 - **Break of Trade = reduce to minimum position** — Trend break = go to zero
 - **WARNING state is IV-driven only** — never price-driven
@@ -1257,7 +1261,7 @@ git checkout -- .   # roll back if needed
 27. **LRR/HRR always show** — grey when Neutral, green when Bullish, red when Bearish
 28. **Viewpoint has three states only** — Bullish, Bearish, Neutral (no Diverging)
 29. **Direction check uses C only** — `price > c` for Bullish, `price < c` for Bearish; LRR is not part of the direction check
-30. **LRR/HRR always compute for BREAK states** — `_infer_pivot_direction` infers underlying direction even for BREAK_OF_TRADE/BREAK_OF_TREND so LRR/HRR render grey
+30. **LRR/HRR always compute for BREAK states** — `_infer_pivot_direction` infers underlying direction even for BREAK_OF_TRADE/BREAK_OF_TREND/BREAK_CONFIRMED so LRR/HRR render grey
 31. **LRR/HRR cell color = timeframe direction** — use `dirRangeColor(dir, isWarn)`, NOT viewpoint color
 32. **Per-cell ⚠ warn flags are price-based** — separate from IV-driven `warning` structural state
 33. **Warning scope is timeframe-specific** — Trade: full (C+B); Trend: C-based only; LT: none
@@ -1266,7 +1270,7 @@ git checkout -- .   # roll back if needed
 36. **tickers.js is seed data only** — never import it for the live ticker universe; use `/api/tickers`
 37. **Asset class overrides checked first** — add new entries to `ASSET_CLASS_OVERRIDES` in `tickers.py` when yfinance returns wrong asset class
 38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
-39. **One close below C = BREAK_OF_TRADE immediately** — no two-close rule, no grace period; recovery above C restores direction on next calculation
+39. **One close below C = BREAK_OF_TRADE immediately** — forgiveness: recovery above C on day 1 restores direction; 2+ consecutive closes below C = BREAK_CONFIRMED — recovery requires close above B, not just above C
 40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
 41. **OBV pivot bar_window = 9 bars** — confirmed pivots require bar_window on both sides, same rule as price pivot engine
 42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
