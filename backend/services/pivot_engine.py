@@ -217,6 +217,62 @@ def update_c_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict
     return {**abc, "c": c_price, "c_idx": c_idx}
 
 
+# ── Confirmed break detection ─────────────────────────────────────────────────
+
+def _check_break_confirmed(prices: list, c_idx: int, c_price: float,
+                           b_price: float, direction: str,
+                           threshold: int = 2) -> bool:
+    """
+    Returns True if a BREAK_CONFIRMED condition exists:
+      - A streak of >= threshold consecutive closes on the wrong side of C
+        has occurred since C was established (prices after c_idx)
+      - Price has NOT since recovered above B (uptrend) / below B (downtrend)
+
+    Catches both active breaks (current price still on wrong side) and
+    post-break price recoveries above C that have not yet cleared B.
+    """
+    prices_since_c = prices[c_idx + 1:]
+    if len(prices_since_c) < threshold:
+        return False
+
+    if direction == "uptrend":
+        on_wrong_side = lambda p: p < c_price
+        recovered_b   = lambda p: p > b_price
+    else:
+        on_wrong_side = lambda p: p > c_price
+        recovered_b   = lambda p: p < b_price
+
+    n = len(prices_since_c)
+
+    # Find the last close on the wrong side of C since C was established
+    last_wrong_idx = None
+    for j in range(n - 1, -1, -1):
+        if on_wrong_side(prices_since_c[j]):
+            last_wrong_idx = j
+            break
+
+    if last_wrong_idx is None:
+        return False  # C was never broken since it was established
+
+    # Count consecutive wrong-side closes ending at last_wrong_idx
+    streak = 0
+    for j in range(last_wrong_idx, -1, -1):
+        if on_wrong_side(prices_since_c[j]):
+            streak += 1
+        else:
+            break
+
+    if streak < threshold:
+        return False  # single-day break — forgiveness still allowed
+
+    # Check if price recovered above B since the streak ended
+    for j in range(last_wrong_idx + 1, n):
+        if recovered_b(prices_since_c[j]):
+            return False  # recovery above B clears the confirmed break
+
+    return True  # confirmed break with no B recovery → BREAK_CONFIRMED
+
+
 # ── D + structural state ──────────────────────────────────────────────────────
 
 def compute_d_and_state(abc: dict, prices: list, timeframe: str):
@@ -239,7 +295,14 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     if direction == "uptrend":
         # C is the line in the sand — break fires when price closes below current C
         if current_price < c_price:
+            if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "uptrend"):
+                return None, None, "BREAK_CONFIRMED"
             return None, None, break_state
+
+        # Price above C — check if an unresolved confirmed break still applies
+        # (recovered above C but never cleared B)
+        if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "uptrend"):
+            return None, None, "BREAK_CONFIRMED"
 
         # D is established the moment price closes above B.
         # Scan from b_idx+1 (not c_idx+1) so a breach that occurred before a
@@ -268,7 +331,13 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     else:  # downtrend
         # C is the line in the sand — break fires when price closes above current C
         if current_price > c_price:
+            if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "downtrend"):
+                return None, None, "BREAK_CONFIRMED"
             return None, None, break_state
+
+        # Price below C — check if an unresolved confirmed break still applies
+        if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "downtrend"):
+            return None, None, "BREAK_CONFIRMED"
 
         # Scan from b_idx+1 so a breach before a dynamic C update is not missed
         b_idx        = abc["b_idx"]

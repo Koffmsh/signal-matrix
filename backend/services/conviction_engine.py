@@ -203,7 +203,7 @@ def _compute_direction(price: float, lrr: float | None, hrr: float | None,
 
     Direction is determined by pivots only — H (and therefore LRR/HRR) has no role.
     """
-    if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "NO_STRUCTURE"):
+    if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "NO_STRUCTURE", "BREAK_CONFIRMED"):
         return "Neutral"
     if pivot_direction is None or c is None:
         return "Neutral"
