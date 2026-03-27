@@ -34,8 +34,8 @@ from services.schwab_market_data import get_schwab_symbol
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 
-# These index tickers are excluded — their options chains have non-standard structure
-IV_INELIGIBLE = {"VIX", "$DJI", "SPX", "NDX"}
+# These tickers are excluded — indices have non-standard chain structure; futures use different chain APIs
+IV_INELIGIBLE = {"VIX", "$DJI", "SPX", "NDX", "/CL", "/ZN", "/GC"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

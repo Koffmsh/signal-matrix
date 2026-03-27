@@ -357,7 +357,11 @@ def get_stored_signals(db: Session = Depends(get_db)):
         return True
 
     results = [v for v in by_ticker.values() if _complete(v)]
-    return {"results": results, "count": len(results)}
+
+    # Most recent calculated_at across all rows — used by frontend for signals freshness check
+    latest_calc = max((r.calculated_at for r in rows if r.calculated_at), default=None)
+
+    return {"results": results, "count": len(results), "calculated_at": str(latest_calc) if latest_calc else None}
 
 
 @router.get("/history")

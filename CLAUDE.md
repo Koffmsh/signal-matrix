@@ -255,6 +255,33 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Rule:** When adding new ETFs via admin panel, always verify asset class after lookup and correct if needed
 - **Known good overrides already in place:** TLT, LQD, HYG, CLOX (Fixed Income); EWG, EWQ, EWP, KWT, KWEB, EWJ, EWW, TUR, UAE (International); GLD, SGOL, FXB, FXE, FXY (FX); USO, SLV, PALL, PPLT, CANE, WOOD, CORN, WEAT (Commodities); IBIT (Digital Assets)
 
+### Futures Tickers — 3-File Checklist
+Futures use continuous front-month symbols stored with a leading slash (e.g. `/CL`). Schwab does not serve continuous futures contracts via its standard quotes API, so all futures route through Yahoo Finance (which uses `XX=F` format for continuous series).
+
+**When adding any new futures ticker:**
+1. **`YAHOO_SYMBOL_MAP`** in `yahoo_finance.py` — add `"/XX": "XX=F"` mapping
+2. **`SCHWAB_UNSUPPORTED`** in `schwab_market_data.py` — add `"/XX"` so it always routes to Yahoo
+3. **`IV_INELIGIBLE`** in `schwab_options.py` — add `"/XX"` to skip options chain fetch
+
+**Currently configured futures:**
+- `/CL` → `CL=F` (WTI Crude Oil)
+- `/ZN` → `ZN=F` (10-Year Treasury Note)
+- `/GC` → `GC=F` (Gold)
+
+**Admin panel note:** Ticker symbol stored with slash (e.g. `/CL`). The PUT/DELETE/lookup endpoints use `{symbol:path}` to allow slashes in URL paths.
+
+**History fetch:** Schwab fetches 5-year history on bootstrap (< 252 bars cached), 3 months on subsequent daily updates. The merge logic in `_upsert` preserves existing long history when new data is shorter — prevents 3-month overwrite of 4-year history.
+
+**Idempotency check:** Uses first Schwab-supported ticker (excludes `SCHWAB_UNSUPPORTED`) to avoid perpetual cache miss when a Yahoo-only ticker sorts first.
+
+### Button Freshness Indicators — REFRESH DATA / CALCULATE SIGNALS
+Buttons change color to communicate data/signal state — no separate status dots needed:
+- **REFRESH DATA**: green = data is from today ET; **amber** = cache is from a prior day (hit to refresh)
+- **CALCULATE SIGNALS**: blue = signals current; **amber** = signals predate today's data fetch (hit to recalculate)
+- Both go grey with processing text while running
+- `calculated_at` exposed in `/api/signals/stored` response for freshness comparison
+- Freshness logic lives in the button render block in `App.js` — compares `updated` date from `realDataMap` against today ET, and `calculated_at` against data date
+
 ---
 
 ## Project Folder Structure

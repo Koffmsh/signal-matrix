@@ -327,8 +327,9 @@ function Dashboard() {
   const [signalMap,       setSignalMap]       = useState(new Map());
   const [isRefreshing,    setIsRefreshing]    = useState(false);
   const [dataError,       setDataError]       = useState(false);
-  const [isCalculating,   setIsCalculating]   = useState(false);
-  const [calcStatus,      setCalcStatus]      = useState(null);
+  const [isCalculating,      setIsCalculating]      = useState(false);
+  const [calcStatus,         setCalcStatus]         = useState(null);
+  const [signalsCalculatedAt, setSignalsCalculatedAt] = useState(null);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
   const [schwabStatus,    setSchwabStatus]    = useState(null);
 
@@ -359,6 +360,7 @@ function Dashboard() {
         const m = new Map();
         (data.results || []).forEach(r => m.set(r.ticker, r));
         setSignalMap(m);
+        if (data.calculated_at) setSignalsCalculatedAt(data.calculated_at);
       })
       .catch(() => {});
   }, []);
@@ -389,6 +391,7 @@ function Dashboard() {
         const m = new Map();
         (outputData.results || []).forEach(r => m.set(r.ticker, r));
         setSignalMap(m);
+        setSignalsCalculatedAt(outputData.calculated_at || new Date().toISOString());
         setIsCalculating(false);
         setCalcStatus("ok");
       })
@@ -659,36 +662,58 @@ function Dashboard() {
           ))}
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button
-              onClick={handleCalculateSignals}
-              disabled={isCalculating}
-              style={{
-                background: isCalculating ? "transparent" : "#00101a",
-                border: `1px solid ${isCalculating ? "#1a2535" : calcStatus === "error" ? "#ff4d6d" : "#0099ff"}`,
-                color: isCalculating ? "#445566" : calcStatus === "error" ? "#ff4d6d" : "#0099ff",
-                padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
-                cursor: isCalculating ? "default" : "pointer",
-                fontFamily: "inherit", letterSpacing: "0.1em",
-              }}
-            >
-              {isCalculating ? "⟳ CALCULATING..." : "⟳ CALCULATE SIGNALS"}
-            </button>
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              style={{
-                background: isRefreshing ? "transparent" : "#001a0f",
-                border: `1px solid ${isRefreshing ? "#1a2535" : "#00e5a0"}`,
-                color: isRefreshing ? "#445566" : "#00e5a0",
-                padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
-                cursor: isRefreshing ? "default" : "pointer",
-                fontFamily: "inherit", letterSpacing: "0.1em",
-              }}
-            >
-              {isRefreshing ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
-            </button>
-          </div>
+          {(() => {
+            // Freshness checks — compare dates in ET
+            const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // YYYY-MM-DD
+            const firstUpdated = realDataMap.size > 0 ? realDataMap.values().next().value?.updated : null;
+            // updated format: "MM/DD/YY HH:MM" — extract date
+            const dataDateET = firstUpdated
+              ? (() => { const [d] = firstUpdated.split(" "); const [m, day, y] = d.split("/"); return `20${y}-${m.padStart(2,"0")}-${day.padStart(2,"0")}`; })()
+              : null;
+            const dataStale = realDataMap.size > 0 && dataDateET !== todayET;
+            // signals stale if calculated before today's data
+            const sigsStale = signalsCalculatedAt && dataDateET
+              ? signalsCalculatedAt.slice(0, 10) < dataDateET
+              : false;
+
+            const calcColor  = isCalculating ? "#445566" : calcStatus === "error" ? "#ff4d6d" : sigsStale ? "#f0b429" : "#0099ff";
+            const calcBg     = isCalculating ? "transparent" : sigsStale ? "#1a1200" : "#00101a";
+            const refreshColor = isRefreshing ? "#445566" : dataStale ? "#f0b429" : "#00e5a0";
+            const refreshBg    = isRefreshing ? "transparent" : dataStale ? "#1a1000" : "#001a0f";
+
+            return (
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={handleCalculateSignals}
+                  disabled={isCalculating}
+                  style={{
+                    background: calcBg,
+                    border: `1px solid ${isCalculating ? "#1a2535" : calcColor}`,
+                    color: calcColor,
+                    padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
+                    cursor: isCalculating ? "default" : "pointer",
+                    fontFamily: "inherit", letterSpacing: "0.1em",
+                  }}
+                >
+                  {isCalculating ? "⟳ CALCULATING..." : "⟳ CALCULATE SIGNALS"}
+                </button>
+                <button
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  style={{
+                    background: refreshBg,
+                    border: `1px solid ${isRefreshing ? "#1a2535" : refreshColor}`,
+                    color: refreshColor,
+                    padding: "5px 14px", fontSize: "10px", borderRadius: "2px",
+                    cursor: isRefreshing ? "default" : "pointer",
+                    fontFamily: "inherit", letterSpacing: "0.1em",
+                  }}
+                >
+                  {isRefreshing ? "⟳ LOADING..." : "⟳ REFRESH DATA"}
+                </button>
+              </div>
+            );
+          })()}
           <div style={{ textAlign: "right", fontSize: "10px", color: "#667788" }}>
             {realDataMap.size > 0 && (() => {
               const ts = realDataMap.values().next().value?.updated;

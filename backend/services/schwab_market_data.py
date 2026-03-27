@@ -42,7 +42,9 @@ SCHWAB_SYMBOL_MAP = {
 }
 
 # Tickers Schwab doesn't carry as standard equity/index — always via Yahoo
-SCHWAB_UNSUPPORTED = {"USD", "JPY"}
+# Tickers fetched via Yahoo Finance only — continuous futures need stitched history
+# that Schwab doesn't serve via /CL-style continuous symbols
+SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC"}
 
 
 def get_schwab_symbol(ticker: str) -> str:
@@ -60,12 +62,30 @@ def _get_active_tickers(db: Session) -> list:
 
 
 def _upsert(db: Session, data: dict, data_source: str) -> None:
-    """Write fetched ticker data into price_cache (no commit — caller commits)."""
+    """Write fetched ticker data into price_cache (no commit — caller commits).
+
+    History merge: if existing history is longer than the new Schwab data
+    (which only fetches 3 months), preserve the existing history and only
+    update the recent portion. This prevents overwriting 4-year Yahoo history
+    with 3 months of Schwab data.
+    """
     today  = datetime.now(_ET).strftime("%Y-%m-%d")
     ticker = data["ticker"]
 
     existing = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
     if existing:
+        old_prices = json.loads(existing.history_json)        if existing.history_json        else []
+        old_dates  = json.loads(existing.history_dates_json)  if existing.history_dates_json  else []
+        old_vols   = json.loads(existing.volume_history_json) if existing.volume_history_json else []
+        new_p, new_d, new_v = data["history_prices"], data["history_dates"], data["volume_history"]
+
+        if old_prices and new_d and len(new_p) < len(old_prices):
+            # Schwab data is shorter — prepend old history up to where new data starts
+            cut = sum(1 for d in old_dates if d < new_d[0])
+            new_p = old_prices[:cut] + new_p
+            new_d = old_dates[:cut]  + new_d
+            new_v = old_vols[:cut]   + new_v
+
         existing.close               = data["close"]
         existing.volume              = data["volume"]
         existing.ma20                = data["ma20"]
@@ -73,9 +93,9 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         existing.ma100               = data["ma100"]
         existing.rel_iv              = data["rel_iv"]
         existing.spark_json          = json.dumps(data["spark_prices"])
-        existing.history_json        = json.dumps(data["history_prices"])
-        existing.history_dates_json  = json.dumps(data["history_dates"])
-        existing.volume_history_json = json.dumps(data["volume_history"])
+        existing.history_json        = json.dumps(new_p)
+        existing.history_dates_json  = json.dumps(new_d)
+        existing.volume_history_json = json.dumps(new_v)
         existing.cache_date          = today
         existing.updated_at          = datetime.utcnow()
         existing.data_source         = data_source
@@ -114,19 +134,24 @@ def schwab_fetch_all(db: Session) -> dict:
     if not tickers:
         return {"fetched": 0, "errors": 0, "data_source": "yahoo"}
 
-    # Idempotency check — skip if already fetched from Schwab today
-    sample = (
-        db.query(PriceCache)
-        .filter(
-            PriceCache.ticker      == tickers[0],
-            PriceCache.cache_date  == today,
-            PriceCache.data_source == "schwab",
+    # Idempotency check — skip if already fetched from Schwab today.
+    # Use a Schwab-supported ticker (exclude SCHWAB_UNSUPPORTED) to avoid
+    # perpetual cache miss when the first ticker is a Yahoo-only symbol.
+    schwab_tickers = [t for t in tickers if t not in SCHWAB_UNSUPPORTED]
+    check_ticker   = schwab_tickers[0] if schwab_tickers else None
+    if check_ticker:
+        sample = (
+            db.query(PriceCache)
+            .filter(
+                PriceCache.ticker      == check_ticker,
+                PriceCache.cache_date  == today,
+                PriceCache.data_source == "schwab",
+            )
+            .first()
         )
-        .first()
-    )
-    if sample:
-        logger.info("Schwab: cache already fresh for today — skipping re-fetch")
-        return {"fetched": len(tickers), "errors": 0, "data_source": "schwab"}
+        if sample:
+            logger.info("Schwab: cache already fresh for today — skipping re-fetch")
+            return {"fetched": len(tickers), "errors": 0, "data_source": "schwab"}
 
     # Try to build a Schwab client
     try:
@@ -170,7 +195,7 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
         quote_data = quotes.get(schwab_sym, {})
 
         if not quote_data:
-            logger.warning(f"Schwab: no quote data for {app_ticker} ({schwab_sym})")
+            logger.warning(f"Schwab: no quote data for {app_ticker} ({schwab_sym}) — available keys: {list(quotes.keys())[:10]}")
             errors += 1
             continue
 
@@ -186,13 +211,23 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
 
         close = round(float(close), 2)
 
-        # Price history — 3 months of daily candles (≥ 60 trading days)
+        # Price history — 5 years on first fetch (bootstrap); 3 months on subsequent fetches
+        existing_row = db.query(PriceCache).filter(PriceCache.ticker == app_ticker).first()
+        existing_len = len(json.loads(existing_row.history_json)) if existing_row and existing_row.history_json else 0
+        needs_bootstrap = existing_len < 252
+
+        if needs_bootstrap:
+            period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
+            logger.info(f"Schwab: bootstrap fetch (5y) for {app_ticker} ({existing_len} bars cached)")
+        else:
+            period_type, period = PH.PeriodType.MONTH, PH.Period.THREE_MONTHS
+
         logger.debug(f"Schwab: fetching history for {app_ticker} ({schwab_sym})")
         try:
             hist_resp = client.get_price_history(
                 schwab_sym,
-                period_type    = PH.PeriodType.MONTH,
-                period         = PH.Period.THREE_MONTHS,
+                period_type    = period_type,
+                period         = period,
                 frequency_type = PH.FrequencyType.DAILY,
                 frequency      = PH.Frequency.DAILY,
                 need_extended_hours_data = False,

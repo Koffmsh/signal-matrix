@@ -210,10 +210,22 @@ def _map_asset_class(quote_type: str, sector: str, category: str, symbol: str):
     if qt == "CURRENCY":
         return "Foreign Exchange"
 
-    return None  # futures, unknown — user fills manually
+    if qt in ("FUTURE", "FUTURES"):
+        # Well-known futures mappings
+        if symbol.upper().lstrip("/") in ("CL", "BZ"):
+            return "Commodities"
+        if symbol.upper() in ("GC", "SI", "PL", "PA"):
+            return "Commodities"
+        if symbol.upper() in ("ES", "NQ", "YM", "RTY"):
+            return "Domestic Equities"
+        if symbol.upper() in ("ZB", "ZN", "ZF"):
+            return "Domestic Fixed Income"
+        return None  # unknown futures — user fills manually
+
+    return None  # unknown — user fills manually
 
 
-@router.get("/lookup/{symbol}")
+@router.get("/lookup/{symbol:path}")
 def lookup_ticker(symbol: str, db: Session = Depends(get_db)):
     """
     Task 4.7 — On-demand yfinance metadata lookup for a ticker symbol.
@@ -276,7 +288,7 @@ def lookup_ticker(symbol: str, db: Session = Depends(get_db)):
         }
 
 
-@router.put("/{symbol}")
+@router.put("/{symbol:path}")
 def update_ticker(symbol: str, body: dict, db: Session = Depends(get_db)):
     symbol = symbol.upper()
     row = db.query(Ticker).filter(Ticker.ticker == symbol).first()
@@ -299,7 +311,7 @@ def update_ticker(symbol: str, body: dict, db: Session = Depends(get_db)):
     return _row_to_dict(row)
 
 
-@router.delete("/{symbol}")
+@router.delete("/{symbol:path}")
 def deactivate_ticker(symbol: str, db: Session = Depends(get_db)):
     symbol = symbol.upper()
     row = db.query(Ticker).filter(Ticker.ticker == symbol).first()

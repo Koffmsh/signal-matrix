@@ -22,6 +22,9 @@ YAHOO_SYMBOL_MAP = {
     "VIX":  "^VIX",
     "USD":  "DX-Y.NYB",
     "JPY":  "JPY=X",
+    "/CL":  "CL=F",    # WTI Crude Oil front-month futures
+    "/ZN":  "ZN=F",    # 10-Year Treasury Note futures
+    "/GC":  "GC=F",    # Gold futures
 }
 
 def get_yahoo_symbol(ticker: str) -> str:
