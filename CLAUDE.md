@@ -74,7 +74,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 ### tz-aware Date Comparison (`yahoo_finance.py`)
 - yfinance 1.2.0 returns timezone-aware timestamps
 - Old comparison `closes.index < pd.Timestamp(date.today())` crashes with tz-aware index
-- **Fixed:** `closes.index.date < date.today()` — always use this pattern
+- **Fixed:** `closes.index.date <= date.today()` — use `.date` attribute for comparison; use `<=` (not `<`) to include today's confirmed EOD close (see EOD Bar Inclusion Fix below)
 
 ### Stale Cache Fallback on 429 (`market_data.py`)
 - Old behavior: batch endpoint returned empty on 429 — dashboard went blank
@@ -140,6 +140,29 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Fixed:** For each (C, B) pair, iterate all A candidates newest-first and stop at the first satisfying `C > A` (uptrend) or `C < A` (downtrend)
 - **Example:** SPX trend — engine was finding A=10/10/25 (6552.51) which is above C=11/20/25 (6538.76), causing the uptrend check to fail; correct A is 04/08/25 (4982.77); old engine fell back to a stale ABC (C=10/10/25, 111 trading days) and fired NO_STRUCTURE
 - **Rule:** Never assume the nearest A before B is the correct A — always scan all candidates
+
+### EOD Bar Inclusion Fix (`yahoo_finance.py`)
+- Old behavior: `closes.index.date < date.today()` excluded today's close from `history_prices`
+- **Problem:** When the scheduler fetches data at 4 PM ET, today's close IS the confirmed EOD price. Excluding it meant the 5th post-pivot bar didn't count until the next trading day — a confirmed pivot on Mar 20 wouldn't be used in that day's signal calculation even though the data was fetched after close.
+- **Fixed:** `closes.index.date <= date.today()` — include today's EOD bar
+- **Rule:** Do not revert to `<` — today's bar at EOD fetch time is always a confirmed close, not an intraday bar
+
+### Pivot Engine: Intact Structure Preference + BREAK_CONFIRMED Spanning (`pivot_engine.py`)
+- **Problem 1 — Spanning a prior break:** When both uptrend and downtrend ABCs are valid and the most-recent-C tiebreak is used, the winner could span a BREAK_CONFIRMED of a prior same-direction structure. The engine was reaching back to an A that predated a structural break, producing a phantom ABC (e.g. IWM: uptrend A=Nov 20, C=Mar 20 — but the uptrend had a BREAK_CONFIRMED Mar 5-6 at C=$260.03).
+- **Problem 2 — BREAK_CONFIRMED beating intact structure:** GLD, AAPL, NVDA, TLT all had a broken structure in one direction winning over an intact structure in the other direction, causing them to show BREAK_CONFIRMED when a valid directional structure existed.
+- **Fixed:** `_has_prior_break_confirmed()` — scans intermediate pivots between A and C of the candidate ABC for any historical BREAK_CONFIRMED; if found, the ABC is rejected and the other direction is used.
+- **Fixed:** `_price_on_correct_side()` — before applying the most-recent-C tiebreak, prefer the structure where current price is still on the valid side of C (structure intact). A broken structure only wins if both structures are broken or both are intact.
+- **Selection priority in `find_abc_structure()`:**
+  1. Only one direction found → use it
+  2. Both found, only one intact (price on correct side of C) → use intact
+  3. Both intact or both broken → most recent C wins, unless that winner spans a prior BREAK_CONFIRMED
+- **Rule:** Do not simplify `find_abc_structure()` back to "most recent C wins" — the priority logic is load-bearing
+
+### Trend Bar Window Reduced: 20 → 10 (`pivot_engine.py`)
+- Old `TIMEFRAMES["trend"] = 20` required 40 bars of surrounding context to confirm a pivot, making it nearly impossible for the trend engine to detect a new reversal within 40 trading days (~2 months)
+- **Problem:** MSFT's Jan-Mar 2026 collapse was invisible to the trend engine at bw=20 — trend showed NO_STRUCTURE / Neutral despite a clear downtrend
+- **Fixed:** `TIMEFRAMES["trend"] = 10` — still provides meaningful trend-scale pivots while detecting reversals within ~20 trading days
+- **Rule:** Do not increase trend bar_window above 10 without verifying that recent reversals (< 6 weeks) still register
 
 ### OBV Pivot Engine Replaces Price-Momentum Proxy (`conviction_engine.py`)
 - Old `_volume_signal` used 5-day / 20-day price momentum — not real volume
@@ -855,7 +878,7 @@ D = running low              — established when price closes below B
 
 **Pivot detection bar windows:**
 - Trade: **5 bars** (before AND after — both sides required)
-- Trend: 20 bars (before AND after — both sides required)
+- Trend: **10 bars** (before AND after — both sides required)
 - Long Term: 90 bars (before AND after — both sides required)
 
 **CRITICAL — Pivot confirmation requires bar_window bars on BOTH sides:**
@@ -871,12 +894,14 @@ prices[i] == min(prices[i - bar_window : i + bar_window + 1])
 # D is always a running value — never a confirmed pivot
 ```
 
-**CRITICAL — Today's bar must be excluded:**
+**CRITICAL — Today's EOD bar IS included in price history:**
 ```python
-# Strip incomplete bars before running pivot detection
-today = pd.Timestamp(date.today())
-prices = prices[prices.index < today]
+# yahoo_finance.py stores today's close when fetched after market close
+history_closes = closes[closes.index.date <= date.today()]
 ```
+The scheduler runs at 4:00 PM ET after market close, so today's close is a confirmed EOD price —
+not an incomplete intraday bar. Including it lets today count as a post-pivot confirmation bar
+(e.g. the 5th bar after a pivot fires on the day of data fetch, not the next trading day).
 
 ### C Update Logic — CRITICAL
 
@@ -1279,7 +1304,7 @@ git checkout -- .   # roll back if needed
 20. **C is the invalidation level** — Break of Trade/Trend fires on price closing through C
 21. **Signal engine never calls yfinance directly** — always reads from price_cache table
 22. **Pivot confirmation requires bar_window bars on BOTH sides** — before AND after
-23. **Today's incomplete bar must be excluded** before pivot detection runs
+23. **Today's EOD bar IS included** in price history (`<= date.today()`) — the scheduler fetches after market close so today's close is a confirmed EOD price; excluding it delays pivot confirmation by one trading day
 24. **C updates dynamically** — never stale, always most recent confirmed higher low / lower high
 25. **Conviction is blank when Viewpoint = Neutral**
 26. **Direction determined by pivots only** — H has no role in direction or viewpoint
