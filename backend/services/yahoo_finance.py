@@ -69,9 +69,10 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         if spark_prices:
             spark_prices[-1] = close  # Ensure last point = exact close
 
-        # Full price history — exclude today's incomplete bar (only confirmed EOD closes)
-        # Use .date comparison to handle tz-aware index from yfinance 1.2.0
-        history_closes = closes[closes.index.date < date.today()]
+        # Full price history — include today's bar when fetched after market close (EOD).
+        # Scheduler runs at 4:00 PM ET so today's close IS the confirmed EOD price.
+        # Use <= so the 5th post-pivot bar counts on the day data is fetched.
+        history_closes = closes[closes.index.date <= date.today()]
         history_prices = [round(float(p), 4) for p in history_closes.tolist()]
         history_dates  = [str(d.date()) for d in history_closes.index]
 

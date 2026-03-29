@@ -166,19 +166,82 @@ def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
     return None
 
 
-def find_abc_structure(pivot_highs: list, pivot_lows: list):
+def _has_prior_break_confirmed(abc: dict, pivot_highs: list, pivot_lows: list,
+                               prices: list) -> bool:
+    """
+    Check whether a BREAK_CONFIRMED of a prior same-direction structure occurred
+    anywhere between A and C in the candidate ABC.
+
+    For an uptrend ABC (A=low, B=high, C=low):
+      - Scan every intermediate pivot LOW between A and C as a historical C level.
+      - For each, find the most recent pivot HIGH before it as the historical B.
+      - If _check_break_confirmed fires for any of those (historical C, B) pairs,
+        the ABC spans a structural break — its A is too old to be valid.
+
+    For a downtrend ABC the mirror applies (intermediate pivot HIGHs as prior Cs).
+
+    Returns True if a prior BREAK_CONFIRMED is found, False otherwise.
+    """
+    direction = abc["direction"]
+    a_idx     = abc["a_idx"]
+    c_idx     = abc["c_idx"]
+
+    if direction == "uptrend":
+        intermediate = [(i, p) for i, p in pivot_lows if a_idx < i < c_idx]
+        for lc_idx, lc_price in intermediate:
+            prior_highs = [(i, p) for i, p in pivot_highs if i < lc_idx]
+            if not prior_highs:
+                continue
+            lb_idx, lb_price = prior_highs[-1]
+            if _check_break_confirmed(prices, lc_idx, lc_price, lb_price, "uptrend"):
+                return True
+    else:  # downtrend
+        intermediate = [(i, p) for i, p in pivot_highs if a_idx < i < c_idx]
+        for hc_idx, hc_price in intermediate:
+            prior_lows = [(i, p) for i, p in pivot_lows if i < hc_idx]
+            if not prior_lows:
+                continue
+            hb_idx, hb_price = prior_lows[-1]
+            if _check_break_confirmed(prices, hc_idx, hc_price, hb_price, "downtrend"):
+                return True
+
+    return False
+
+
+def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     """
     Find the most recent valid ABC structure (uptrend or downtrend).
-    When both are valid, the one with the more recent C wins.
+
+    When both are valid, the one with the more recent C wins — UNLESS that
+    winning structure spans a BREAK_CONFIRMED of a prior same-direction structure
+    (i.e. its A predates a structural break).  In that case the other direction
+    is used instead.  If both span a prior break, or only one direction exists
+    and it spans a break, fall through to whatever is available (compute_d_and_state
+    will still catch the active BREAK_CONFIRMED state).
+
     Returns dict or None.
     """
     uptrend   = _find_uptrend_abc(pivot_highs, pivot_lows)
     downtrend = _find_downtrend_abc(pivot_highs, pivot_lows)
 
-    if uptrend and downtrend:
-        return uptrend if uptrend["c_idx"] >= downtrend["c_idx"] else downtrend
+    if not uptrend and not downtrend:
+        return None
 
-    return uptrend or downtrend
+    if uptrend and not downtrend:
+        return uptrend
+
+    if downtrend and not uptrend:
+        return downtrend
+
+    # Both found — pick by most recent C first
+    winner = uptrend if uptrend["c_idx"] >= downtrend["c_idx"] else downtrend
+    other  = downtrend if winner is uptrend else uptrend
+
+    # If the winner's history contains a prior BREAK_CONFIRMED, prefer the other
+    if _has_prior_break_confirmed(winner, pivot_highs, pivot_lows, prices):
+        return other
+
+    return winner
 
 
 def update_c_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict:
@@ -379,7 +442,7 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
         logger.warning(f"Not enough pivots for {timeframe}: {len(pivot_highs)} highs, {len(pivot_lows)} lows")
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
-    abc = find_abc_structure(pivot_highs, pivot_lows)
+    abc = find_abc_structure(pivot_highs, pivot_lows, prices)
 
     if abc is None:
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
