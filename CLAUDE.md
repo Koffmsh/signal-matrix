@@ -275,13 +275,36 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 
 **Idempotency check:** Uses first Schwab-supported ticker (excludes `SCHWAB_UNSUPPORTED`) to avoid perpetual cache miss when a Yahoo-only ticker sorts first.
 
+### SCHWAB_UNSUPPORTED Expanded — Indices Now Route to Yahoo (`schwab_market_data.py`)
+- Schwab batch quotes API silently drops index symbols (SPX, NDX, $DJI, VIX) when mixed with equity symbols — no error, just missing keys in the response
+- Without this fix, these tickers never get `updated_at` stamped, causing REFRESH DATA to stay amber even after a successful refresh (SPX is `display_order=1` and its timestamp drives the header)
+- **Fix:** Added `"SPX"`, `"NDX"`, `"$DJI"`, `"VIX"` to `SCHWAB_UNSUPPORTED` set — they always route to Yahoo Finance
+- Full set: `{"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX"}`
+- **Idempotency fix:** When Schwab cache is fresh and early return fires, the code now still runs `_yahoo_fetch_subset` for the unsupported tickers — without this, SPX/VIX/etc. would never get their `updated_at` stamped on subsequent manual refreshes
+
+### Initial Page Load Indicator — `isInitialLoading` (`App.js`)
+- On fresh page load, 4 parallel fetches fire; tickers resolve first, causing `ALL_DATA` to recompute with `generateMockData()` — shows fake sparklines, prices, and signal values
+- Batch fetch (hitting Fly.io → Supabase) takes 20–30 seconds; during this window REFRESH DATA and CALCULATE SIGNALS showed misleadingly green/blue with no loading indication
+- **Fix:** Added `isInitialLoading` state (starts `true`, set `false` in `.finally()` of the batch fetch)
+- Both buttons grey and disabled during initial load; REFRESH DATA shows "⟳ LOADING..." text
+- Loading banner "⟳ LOADING MARKET DATA..." appears above the table rows (shared with `isRefreshing` banner)
+- "⚠ LIVE DATA UNAVAILABLE — DISPLAYING MOCK DATA" banner shows when batch returns empty after load completes
+
+### Live Dot Removed from Header (`App.js`)
+- The `● LIVE` dot in the dashboard header was removed — it added no signal value and confused users about data freshness
+- SCHED indicator, EOD timestamp, and button colors already communicate all relevant freshness state
+
 ### Button Freshness Indicators — REFRESH DATA / CALCULATE SIGNALS
 Buttons change color to communicate data/signal state — no separate status dots needed:
-- **REFRESH DATA**: green = data is from today ET; **amber** = cache is from a prior day (hit to refresh)
-- **CALCULATE SIGNALS**: blue = signals current; **amber** = signals predate today's data fetch (hit to recalculate)
-- Both go grey with processing text while running
+- **REFRESH DATA**: green = data is current; **amber** = past 4:15 PM ET on a weekday AND cache is from a prior day
+  - Before 4:15 PM ET: always green — yesterday's EOD close IS the freshest data available (market hasn't closed)
+  - Weekends: always green — Friday's close is correct, no trading
+  - After 4:15 PM ET on a weekday with stale cache: amber (scheduler should have run)
+- **CALCULATE SIGNALS**: blue = signals current; **amber** = signals timestamp is older than data timestamp (full timestamp comparison, not date-only)
+  - Same-day staleness is now caught — if data refreshed at 10 PM but signals last ran at 8 PM, button goes amber
+- Both go grey with "⟳ LOADING..." text while running; REFRESH DATA also shows "⟳ LOADING..." during initial page load
 - `calculated_at` exposed in `/api/signals/stored` response for freshness comparison
-- Freshness logic lives in the button render block in `App.js` — compares `updated` date from `realDataMap` against today ET, and `calculated_at` against data date
+- Freshness logic lives in the button render block in `App.js`
 
 ---
 
@@ -413,20 +436,23 @@ signal-matrix/
 
 ### Scheduler Overview
 - APScheduler `AsyncIOScheduler` inside FastAPI lifespan
-- Fires at **4:15 PM ET** on NYSE trading days only (via `pandas_market_calendars`)
-- On startup: catch-up check — if past 4:15 PM ET, trading day, and no successful run today → runs immediately
+- Single job fires at **4:00 PM ET** on NYSE trading days only (via `pandas_market_calendars`)
+- On startup: catch-up check — if past 4:00 PM ET, trading day, and no successful run today → runs immediately
 - All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
 
-### EOD Flow (4:15 PM ET, NYSE trading days)
+### EOD Flow (4:00 PM ET, NYSE trading days) — single chained job
 ```
-APScheduler
-    → refresh_data()        writes → price_cache
+APScheduler (schwab_data_job)
+    → schwab_fetch_all()    writes → price_cache (Schwab primary, Yahoo fallback)
+    → schwab_fetch_iv()     writes → price_cache.rel_iv + iv_history
     → calculate_signals()   writes → signal_hurst
                                    → signal_pivots
                                    → signal_output
                                    → signal_history (snapshot)
     → scheduler_log         writes → success/failure entry
 ```
+Previously two separate jobs (data at 4:00 PM, signals at 4:15 PM). Merged into one — signals run
+immediately after data fetch, both buttons go green together by ~4:02 PM.
 
 ### Page Load Flow
 ```
@@ -444,8 +470,8 @@ CALCULATE SIGNALS   → force recalculation mid-day or after code change
 
 ### Edge Case Coverage
 ```
-Docker down at 4:15 PM → startup catchup fires on restart if past 4:15 ET and today's job missing
-PC off at 4:15 PM      → same catchup pattern covers this
+Docker down at 4:00 PM → startup catchup fires on restart if past 4:00 ET and today's job missing
+PC off at 4:00 PM      → same catchup pattern covers this
 Run twice same day     → signal_history idempotency check prevents duplicate snapshots
 429 from Yahoo         → stale cache served, scheduler_log records failure
 ```
@@ -658,16 +684,15 @@ ASSET_CLASS_OVERRIDES = {
 - Fallback: all Schwab calls fall back to Yahoo Finance on token expiry or API error
 - Data source tagged in `price_cache.data_source` — visible in dashboard header
 
-### EOD Scheduler: Updated Flow (Phase 5)
+### EOD Scheduler: Updated Flow (Phase 5+)
 ```
-4:00 PM ET — Schwab data fetch (NEW)
-    schwab_fetch_quotes()    1 request, all 51 tickers
-    schwab_fetch_history()   51 requests, 0.5s delay between calls
-    schwab_fetch_iv()        47 requests (options-eligible only)
-                             writes price_cache + iv_history
-
-4:15 PM ET — calculate_signals() (unchanged)
+4:00 PM ET — single chained job (prices → IV → signals)
+    schwab_fetch_all()       Schwab primary / Yahoo fallback — writes price_cache
+    schwab_fetch_iv()        47 requests (options-eligible only) — writes iv_history
+    calculate_signals()      full pipeline — writes signal_output + signal_history
+    scheduler_log            success/failure entry
 ```
+Both REFRESH DATA and CALCULATE SIGNALS go green together by ~4:02 PM.
 
 ### IV-Eligible Tickers
 All Tier 1 tickers EXCEPT: VIX, $DJI, SPX, NDX — index options have different chain structure.

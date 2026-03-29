@@ -8,7 +8,8 @@
       "Bash(python -c \"import sys,json; routes=[r[''''path''''] for r in json.load\\(sys.stdin\\)[''''paths'''']]; print\\(''''\\\\n''''.join\\(routes\\)\\)\")",
       "Bash(docker exec signal-matrix-backend-1 python -c \":*)",
       "Bash(python3:*)",
-      "Bash(unzip -p /c/Users/shann/Projects/signal-matrix/Docs/SignalMatrix_Spec_v1.3.docx word/document.xml)"
+      "Bash(unzip -p /c/Users/shann/Projects/signal-matrix/Docs/SignalMatrix_Spec_v1.3.docx word/document.xml)",
+      "Bash(docker exec:*)"
     ]
   }
 }

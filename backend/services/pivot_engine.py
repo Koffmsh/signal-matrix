@@ -44,7 +44,7 @@ def _trading_days_since(date_str: str) -> int:
 # Bar windows per timeframe (trading days)
 TIMEFRAMES = {
     "trade": 5,
-    "trend": 20,
+    "trend": 10,
     "lt":    90,
 }
 
@@ -208,16 +208,30 @@ def _has_prior_break_confirmed(abc: dict, pivot_highs: list, pivot_lows: list,
     return False
 
 
+def _price_on_correct_side(abc: dict, current_price: float) -> bool:
+    """
+    Returns True if current_price is on the valid side of C for this structure:
+      uptrend:   price > C  (structure intact)
+      downtrend: price < C  (structure intact)
+    A structure where price has already crossed through C should not be
+    preferred over one that is still intact.
+    """
+    if abc["direction"] == "uptrend":
+        return current_price > abc["c"]
+    else:
+        return current_price < abc["c"]
+
+
 def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     """
     Find the most recent valid ABC structure (uptrend or downtrend).
 
-    When both are valid, the one with the more recent C wins — UNLESS that
-    winning structure spans a BREAK_CONFIRMED of a prior same-direction structure
-    (i.e. its A predates a structural break).  In that case the other direction
-    is used instead.  If both span a prior break, or only one direction exists
-    and it spans a break, fall through to whatever is available (compute_d_and_state
-    will still catch the active BREAK_CONFIRMED state).
+    Selection priority (highest to lowest):
+    1. Prefer the structure where current price is still on the correct side
+       of C (structure intact) over one where price has already blown through C.
+    2. When both or neither are intact: prefer the one with the more recent C —
+       UNLESS that winner spans a BREAK_CONFIRMED of a prior same-direction
+       structure (its A predates a structural break), in which case use the other.
 
     Returns dict or None.
     """
@@ -233,7 +247,17 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     if downtrend and not uptrend:
         return downtrend
 
-    # Both found — pick by most recent C first
+    # Both found — check which structures still have price on the correct side
+    current_price   = prices[-1]
+    up_intact   = _price_on_correct_side(uptrend,   current_price)
+    down_intact = _price_on_correct_side(downtrend, current_price)
+
+    if up_intact and not down_intact:
+        return uptrend
+    if down_intact and not up_intact:
+        return downtrend
+
+    # Both intact or both broken — use most recent C as tiebreak
     winner = uptrend if uptrend["c_idx"] >= downtrend["c_idx"] else downtrend
     other  = downtrend if winner is uptrend else uptrend
 
