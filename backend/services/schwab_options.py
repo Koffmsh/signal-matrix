@@ -69,71 +69,23 @@ def _upsert_iv_history(db: Session, ticker: str, iv_date: str, implied_vol: floa
         ))
 
 
-def _extract_atm_iv(data: dict) -> float | None:
+def _atm_iv_for_exp(
+    call_map: dict, put_map: dict, exp_key: str, underlying_price: float
+) -> float | None:
     """
-    Extract ATM implied volatility from Schwab option chain response.
-
-    Reads from individual option contracts in callExpDateMap, NOT the top-level
-    'volatility' field (which is historical/realized vol, not implied vol).
-
-    Strategy:
-      - Find nearest expiration >= 7 DTE to skip expiring weeklies
-      - Fall back to any available expiration if none qualify
-      - Find ATM strike (closest to underlyingPrice)
-      - Average call + put implied vol for that strike
-
+    Extract ATM implied vol for one expiration — averages call + put at ATM strike.
     Returns IV as a decimal (e.g. 0.318 for 31.8%).
-    Individual Schwab option 'volatility' is decimal; guard handles percentage format.
+    Guard: if Schwab returns percentage format (> 2.0), divides by 100.
     """
-    underlying_price = data.get("underlyingPrice")
-    if not underlying_price:
-        return None
-
-    call_map = data.get("callExpDateMap", {})
-    put_map  = data.get("putExpDateMap", {})
-
-    if not call_map:
-        return None
-
-    # Find nearest expiration >= 7 DTE
-    # Exp key format: "2026-04-18:12" where 12 is days to expiration
-    best_exp = None
-    best_dte = float("inf")
-
-    for exp_key in call_map:
-        try:
-            dte = int(exp_key.split(":")[1])
-            if dte >= 7 and dte < best_dte:
-                best_dte = dte
-                best_exp = exp_key
-        except (IndexError, ValueError):
-            continue
-
-    # Fall back to nearest available expiration if nothing >= 7 DTE
-    if best_exp is None:
-        for exp_key in call_map:
-            try:
-                dte = int(exp_key.split(":")[1])
-                if dte < best_dte:
-                    best_dte = dte
-                    best_exp = exp_key
-            except (IndexError, ValueError):
-                continue
-
-    if best_exp is None:
-        return None
-
-    # Find ATM strike (closest to current underlying price)
-    strikes = call_map.get(best_exp, {})
+    strikes = call_map.get(exp_key, {})
     if not strikes:
         return None
 
     atm_strike = min(strikes.keys(), key=lambda s: abs(float(s) - underlying_price))
 
-    # Collect IV from call and put at ATM strike
     ivs = []
     for side_map in [call_map, put_map]:
-        opts = side_map.get(best_exp, {}).get(atm_strike, [])
+        opts = side_map.get(exp_key, {}).get(atm_strike, [])
         for opt in opts:
             vol = opt.get("volatility")
             if vol is not None:
@@ -145,13 +97,81 @@ def _extract_atm_iv(data: dict) -> float | None:
         return None
 
     iv = sum(ivs) / len(ivs)
-
-    # Schwab individual option 'volatility' is typically a decimal (0.318 for 31.8%).
-    # Guard against percentage format (31.8): anything > 2.0 must be a percentage.
     if iv > 2.0:
         iv = iv / 100.0
+    return iv
 
-    return round(iv, 6)
+
+def _extract_atm_iv(data: dict) -> float | None:
+    """
+    Extract 30-day constant-maturity implied volatility matching TOS methodology.
+
+    Reads ATM IV from individual option contracts in callExpDateMap/putExpDateMap —
+    NOT the top-level 'volatility' field (which is historical/realized vol).
+
+    Strategy:
+      - Parse all expirations >= 7 DTE (skip expiring weeklies)
+      - Find the two expirations bracketing 30 DTE (near < 30, far >= 30)
+      - Linearly interpolate ATM IV between them → constant 30-day IV
+      - Fallback: if only one side of 30 DTE exists, use nearest available
+
+    Returns IV as a decimal (e.g. 0.318 for 31.8%).
+    """
+    underlying_price = data.get("underlyingPrice")
+    if not underlying_price:
+        return None
+
+    call_map = data.get("callExpDateMap", {})
+    put_map  = data.get("putExpDateMap", {})
+
+    if not call_map:
+        return None
+
+    # Parse all expirations >= 7 DTE — exp key format: "2026-04-18:12" (12 = DTE)
+    expirations = []
+    for exp_key in call_map:
+        try:
+            dte = int(exp_key.split(":")[1])
+            if dte >= 7:
+                expirations.append((dte, exp_key))
+        except (IndexError, ValueError):
+            continue
+
+    if not expirations:
+        return None
+
+    expirations.sort()  # ascending DTE
+
+    TARGET = 30
+
+    near = [(dte, key) for dte, key in expirations if dte < TARGET]
+    far  = [(dte, key) for dte, key in expirations if dte >= TARGET]
+
+    if near and far:
+        # Both sides of 30 DTE available — interpolate
+        near_dte, near_key = near[-1]   # largest DTE still under 30
+        far_dte,  far_key  = far[0]     # smallest DTE at or above 30
+
+        near_iv = _atm_iv_for_exp(call_map, put_map, near_key, underlying_price)
+        far_iv  = _atm_iv_for_exp(call_map, put_map, far_key,  underlying_price)
+
+        if near_iv is not None and far_iv is not None:
+            span = far_dte - near_dte
+            iv = near_iv * (far_dte - TARGET) / span + far_iv * (TARGET - near_dte) / span
+        else:
+            iv = near_iv or far_iv  # one side failed — use whichever we have
+
+    elif far:
+        # All expirations >= 30 DTE — use nearest
+        _, exp_key = far[0]
+        iv = _atm_iv_for_exp(call_map, put_map, exp_key, underlying_price)
+
+    else:
+        # All expirations < 30 DTE — use nearest >= 7 DTE
+        _, exp_key = near[-1]
+        iv = _atm_iv_for_exp(call_map, put_map, exp_key, underlying_price)
+
+    return round(iv, 6) if iv is not None else None
 
 
 def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int:

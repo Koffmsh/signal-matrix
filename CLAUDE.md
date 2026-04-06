@@ -213,7 +213,8 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 ### Schwab IV — ATM Option Contracts, IV Rank Formula (`schwab_options.py`)
 - **DO NOT** read the top-level `volatility` field from `get_option_chain()` response — it is historical/realized vol, not implied vol
-- **Correct source:** `_extract_atm_iv(data)` — parses `callExpDateMap` / `putExpDateMap`, finds nearest expiration ≥7 DTE, finds ATM strike, averages call + put `volatility` from the individual option objects
+- **Correct source:** `_extract_atm_iv(data)` — parses `callExpDateMap` / `putExpDateMap`, interpolates to 30-day constant-maturity IV matching TOS methodology
+- **30-day interpolation:** finds the two expirations bracketing 30 DTE (near < 30, far ≥ 30), computes ATM IV at each (average call + put), linearly interpolates → `IV_near × (far_dte - 30) / span + IV_far × (30 - near_dte) / span`; falls back to nearest available if only one side of 30 DTE exists
 - Individual option `volatility` is a decimal (e.g. `0.318` for 31.8%) — no ÷100 needed; guard: if value > 2.0 it's percentage format, divide by 100
 - **IV Rank formula** (matches TOS "IV Percentile"): `(current_iv - min_252) / (max_252 - min_252) * 100` — range-based, NOT `percentileofscore` frequency-based
 - Cold start: returns `50` when fewer than 5 observations in `iv_history`
