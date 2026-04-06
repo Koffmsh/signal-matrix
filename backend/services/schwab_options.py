@@ -174,14 +174,19 @@ def _extract_atm_iv(data: dict) -> float | None:
     return round(iv, 6) if iv is not None else None
 
 
-def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int:
+# Minimum iv_history observations required before IV Rank is meaningful.
+# Below this threshold the min/max range is too narrow — proxy is used instead.
+_IV_RANK_MIN_HISTORY = 30
+
+
+def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int | None:
     """
     Compute IV Rank (0-100) matching TOS methodology.
     Formula: (current_iv - min_252) / (max_252 - min_252) * 100
 
-    This is range-based (IV Rank), matching what TOS labels 'IV Percentile'.
+    Returns None when fewer than _IV_RANK_MIN_HISTORY observations exist —
+    caller should fall back to Yahoo realized vol proxy in that case.
     Today's row must already be flushed to iv_history before calling this.
-    Returns 50 when fewer than 5 observations are available (cold start).
     """
     history = (
         db.query(IVHistory)
@@ -191,13 +196,13 @@ def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int:
         .all()
     )
     iv_values = [row.implied_vol for row in history]
-    if len(iv_values) < 5:
-        return 50  # insufficient history — default to midpoint
+    if len(iv_values) < _IV_RANK_MIN_HISTORY:
+        return None  # insufficient history — caller uses proxy
 
     iv_min = min(iv_values)
     iv_max = max(iv_values)
     if iv_max <= iv_min:
-        return 50
+        return None
 
     rank = (today_iv - iv_min) / (iv_max - iv_min) * 100
     return max(0, min(100, int(round(rank))))
@@ -286,11 +291,26 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             _upsert_iv_history(db, ticker, today, implied_vol)
             db.flush()  # make row visible within same session for percentile query
 
-            # Compute percentile against rolling 252-day history
+            # Compute IV Rank — returns None if history < _IV_RANK_MIN_HISTORY days
             iv_pct = _compute_iv_percentile(db, ticker, implied_vol)
 
-            # Update price_cache
-            _update_price_cache_iv(db, ticker, iv_pct, iv_source="schwab")
+            if iv_pct is not None:
+                # Sufficient history — use real IV Rank
+                _update_price_cache_iv(db, ticker, iv_pct, iv_source="schwab")
+            else:
+                # Warmup period — fall back to Yahoo realized vol proxy so rel_iv
+                # shows a meaningful number while iv_history accumulates
+                import json
+                import pandas as pd
+                from services.yahoo_finance import compute_realized_vol_percentile
+                pc_row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+                if pc_row and pc_row.history_json:
+                    closes = pd.Series(json.loads(pc_row.history_json))
+                    proxy_pct = compute_realized_vol_percentile(closes)
+                else:
+                    proxy_pct = 50
+                _update_price_cache_iv(db, ticker, proxy_pct, iv_source="proxy")
+                logger.debug(f"IV: {ticker} warmup — using proxy rel_iv={proxy_pct}")
 
             fetched += 1
             logger.debug(f"IV: {ticker} vol={implied_vol:.4f} pct={iv_pct}")
