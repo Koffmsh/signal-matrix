@@ -120,9 +120,11 @@ def refresh_data(db: Session) -> dict:
     """
     Core refresh logic — callable by scheduler or REFRESH DATA button.
     Tries Schwab first (via schwab_fetch_all); falls back to Yahoo Finance.
+    Also refreshes IV (force=True so intraday manual refreshes get fresh IV).
     After fetch, reads all tickers from cache and returns serialized data.
     """
     from services.schwab_market_data import schwab_fetch_all
+    from services.schwab_options import schwab_fetch_iv
 
     today = datetime.now(_ET).strftime("%Y-%m-%d")
 
@@ -130,6 +132,13 @@ def refresh_data(db: Session) -> dict:
     fetch_result = schwab_fetch_all(db)
     data_source  = fetch_result.get("data_source", "yahoo")
     rate_limited = fetch_result.get("rate_limited", False)
+
+    # Refresh IV — force=True so manual REFRESH DATA always gets current IV,
+    # not just the first fetch of the day
+    try:
+        schwab_fetch_iv(db, force=True)
+    except Exception as e:
+        logger.warning(f"IV fetch skipped during refresh: {e}")
 
     # Read all active tickers from cache (now populated by fetch above)
     results = []

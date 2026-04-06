@@ -202,11 +202,14 @@ def _mark_proxy(db: Session, ticker: str) -> None:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def schwab_fetch_iv(db: Session) -> dict:
+def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
     """
     Fetch ATM IV from Schwab options chains for all IV-eligible Tier 1 tickers.
     Rate: ~47 calls at 0.5s delay ≈ 24 seconds.
     Total daily requests with price fetch: ~99 (well under 120/min limit).
+
+    force=True bypasses the idempotency check — used by manual REFRESH DATA so
+    intraday refreshes always get fresh IV, not just the first run of the day.
     """
     today    = datetime.now(_ET).strftime("%Y-%m-%d")
     eligible = _get_iv_eligible_tickers(db)
@@ -214,14 +217,15 @@ def schwab_fetch_iv(db: Session) -> dict:
     if not eligible:
         return {"fetched": 0, "errors": 0}
 
-    # Idempotency check — skip if already fetched today
-    sample = db.query(IVHistory).filter(
-        IVHistory.ticker  == eligible[0],
-        IVHistory.iv_date == today,
-    ).first()
-    if sample:
-        logger.info("IV: already fetched today — skipping")
-        return {"fetched": len(eligible), "errors": 0}
+    # Idempotency check — skip if already fetched today (scheduler path only)
+    if not force:
+        sample = db.query(IVHistory).filter(
+            IVHistory.ticker  == eligible[0],
+            IVHistory.iv_date == today,
+        ).first()
+        if sample:
+            logger.info("IV: already fetched today — skipping")
+            return {"fetched": len(eligible), "errors": 0}
 
     # Build Schwab client
     try:
