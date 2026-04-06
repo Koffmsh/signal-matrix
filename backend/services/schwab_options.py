@@ -4,10 +4,13 @@ schwab_options.py — Schwab options chain IV fetch.
 Entry point: schwab_fetch_iv(db)
   - Fetches ATM implied volatility for IV-eligible tickers via Schwab options chains
   - Writes daily IV to iv_history table
-  - Computes IV Percentile (0-100) from rolling 252-day iv_history
+  - Computes IV Rank (0-100) matching TOS methodology: (current-min)/(max-min)*100
   - Updates price_cache.rel_iv + price_cache.iv_source
   - Falls back to existing Yahoo proxy (iv_source = 'proxy') per ticker on any error
   - Idempotent within a trading day
+
+IV source: ATM option contracts in callExpDateMap/putExpDateMap — NOT the top-level
+  'volatility' field, which is historical/realized vol, not implied vol.
 
 IV-eligible: all active Tier 1 tickers EXCEPT VIX, $DJI, SPX, NDX
   (index options have non-standard chain structure)
@@ -22,7 +25,6 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import schwab.client
-from scipy.stats import percentileofscore
 from sqlalchemy.orm import Session
 
 from models.iv_history import IVHistory
@@ -67,10 +69,98 @@ def _upsert_iv_history(db: Session, ticker: str, iv_date: str, implied_vol: floa
         ))
 
 
+def _extract_atm_iv(data: dict) -> float | None:
+    """
+    Extract ATM implied volatility from Schwab option chain response.
+
+    Reads from individual option contracts in callExpDateMap, NOT the top-level
+    'volatility' field (which is historical/realized vol, not implied vol).
+
+    Strategy:
+      - Find nearest expiration >= 7 DTE to skip expiring weeklies
+      - Fall back to any available expiration if none qualify
+      - Find ATM strike (closest to underlyingPrice)
+      - Average call + put implied vol for that strike
+
+    Returns IV as a decimal (e.g. 0.318 for 31.8%).
+    Individual Schwab option 'volatility' is decimal; guard handles percentage format.
+    """
+    underlying_price = data.get("underlyingPrice")
+    if not underlying_price:
+        return None
+
+    call_map = data.get("callExpDateMap", {})
+    put_map  = data.get("putExpDateMap", {})
+
+    if not call_map:
+        return None
+
+    # Find nearest expiration >= 7 DTE
+    # Exp key format: "2026-04-18:12" where 12 is days to expiration
+    best_exp = None
+    best_dte = float("inf")
+
+    for exp_key in call_map:
+        try:
+            dte = int(exp_key.split(":")[1])
+            if dte >= 7 and dte < best_dte:
+                best_dte = dte
+                best_exp = exp_key
+        except (IndexError, ValueError):
+            continue
+
+    # Fall back to nearest available expiration if nothing >= 7 DTE
+    if best_exp is None:
+        for exp_key in call_map:
+            try:
+                dte = int(exp_key.split(":")[1])
+                if dte < best_dte:
+                    best_dte = dte
+                    best_exp = exp_key
+            except (IndexError, ValueError):
+                continue
+
+    if best_exp is None:
+        return None
+
+    # Find ATM strike (closest to current underlying price)
+    strikes = call_map.get(best_exp, {})
+    if not strikes:
+        return None
+
+    atm_strike = min(strikes.keys(), key=lambda s: abs(float(s) - underlying_price))
+
+    # Collect IV from call and put at ATM strike
+    ivs = []
+    for side_map in [call_map, put_map]:
+        opts = side_map.get(best_exp, {}).get(atm_strike, [])
+        for opt in opts:
+            vol = opt.get("volatility")
+            if vol is not None:
+                vol = float(vol)
+                if vol > 0:
+                    ivs.append(vol)
+
+    if not ivs:
+        return None
+
+    iv = sum(ivs) / len(ivs)
+
+    # Schwab individual option 'volatility' is typically a decimal (0.318 for 31.8%).
+    # Guard against percentage format (31.8): anything > 2.0 must be a percentage.
+    if iv > 2.0:
+        iv = iv / 100.0
+
+    return round(iv, 6)
+
+
 def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int:
     """
-    Compute IV Percentile (0-100) for today's IV relative to rolling 252-day history.
-    Today's row must already be written to iv_history before calling this.
+    Compute IV Rank (0-100) matching TOS methodology.
+    Formula: (current_iv - min_252) / (max_252 - min_252) * 100
+
+    This is range-based (IV Rank), matching what TOS labels 'IV Percentile'.
+    Today's row must already be flushed to iv_history before calling this.
     Returns 50 when fewer than 5 observations are available (cold start).
     """
     history = (
@@ -83,8 +173,14 @@ def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int:
     iv_values = [row.implied_vol for row in history]
     if len(iv_values) < 5:
         return 50  # insufficient history — default to midpoint
-    pct = percentileofscore(iv_values, today_iv, kind="rank")
-    return max(0, min(100, int(pct)))
+
+    iv_min = min(iv_values)
+    iv_max = max(iv_values)
+    if iv_max <= iv_min:
+        return 50
+
+    rank = (today_iv - iv_min) / (iv_max - iv_min) * 100
+    return max(0, min(100, int(round(rank))))
 
 
 def _update_price_cache_iv(
@@ -152,19 +248,15 @@ def schwab_fetch_iv(db: Session) -> dict:
                 include_underlying_quote = False,
             )
             resp.raise_for_status()
-            data    = resp.json()
-            raw_vol = data.get("volatility")
+            data        = resp.json()
+            implied_vol = _extract_atm_iv(data)
 
-            if raw_vol is None or float(raw_vol) <= 0:
-                logger.warning(f"IV: no valid volatility for {ticker} ({schwab_sym})")
+            if implied_vol is None or implied_vol <= 0:
+                logger.warning(f"IV: no valid ATM IV for {ticker} ({schwab_sym})")
                 _mark_proxy(db, ticker)
                 errors += 1
                 time.sleep(0.5)
                 continue
-
-            # Schwab returns volatility as a percentage (e.g. 18.7 = 18.7% IV)
-            # Store as decimal to match spec: 18.7 → 0.187
-            implied_vol = round(float(raw_vol) / 100.0, 6)
 
             # Write to iv_history first (today's value included in percentile calc)
             _upsert_iv_history(db, ticker, today, implied_vol)

@@ -211,15 +211,17 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Fix:** Null values explicitly sorted to bottom before string/numeric comparison in the sort function
 - `ENTRY` count shown in header summary row alongside BULLISH / BEARISH / ALIGNED / ALERTS
 
-### Schwab IV Unit Convention — Percentage In, Decimal Stored (`schwab_options.py`)
-- Schwab `get_option_chain()` returns `volatility` as a percentage (e.g. `18.7` = 18.7%)
-- **Must divide by 100** before writing to `iv_history.implied_vol` — stored as decimal (e.g. `0.187`)
-- IV Percentile computed via `percentileofscore(252-day history, today_iv, kind='rank')` after writing today's row
-- Cold start: returns `50` (neutral percentile) when fewer than 5 observations in `iv_history`
+### Schwab IV — ATM Option Contracts, IV Rank Formula (`schwab_options.py`)
+- **DO NOT** read the top-level `volatility` field from `get_option_chain()` response — it is historical/realized vol, not implied vol
+- **Correct source:** `_extract_atm_iv(data)` — parses `callExpDateMap` / `putExpDateMap`, finds nearest expiration ≥7 DTE, finds ATM strike, averages call + put `volatility` from the individual option objects
+- Individual option `volatility` is a decimal (e.g. `0.318` for 31.8%) — no ÷100 needed; guard: if value > 2.0 it's percentage format, divide by 100
+- **IV Rank formula** (matches TOS "IV Percentile"): `(current_iv - min_252) / (max_252 - min_252) * 100` — range-based, NOT `percentileofscore` frequency-based
+- Cold start: returns `50` when fewer than 5 observations in `iv_history`
 - Updates `price_cache.rel_iv` (replaces Yahoo proxy) + sets `price_cache.iv_source = 'schwab'`
 - **Per-ticker fallback:** on any per-ticker error, leaves Yahoo proxy `rel_iv` intact and tags `iv_source = 'proxy'`
 - **No-tokens fallback:** if Schwab token missing/expired, entire batch tagged `'proxy'` immediately — no options calls made
 - `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
+- **Production reset required after this fix:** run `DELETE FROM iv_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
 
 ### Conviction Score Rebalance — Rel IV Removed
 - Old weights: Trade H × 0.55 + Trend H × 0.25 + IV Score × 0.20
