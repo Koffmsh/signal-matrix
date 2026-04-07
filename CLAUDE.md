@@ -993,7 +993,7 @@ Uptrend (expanding IV = momentum confirmed, upside pricing):
 
 Downtrend (expanding IV = downside risk pricing, slide can accelerate):
   lrr_mult = 1.0 + iv × bias            # 1.0 → 1.40 max  (target expands aggressively)
-  hrr_mult = 1.0 - iv × (bias × 0.5)   # 1.0 → 0.80 min  (entry compresses — weak bounces)
+  hrr_mult = 1.0 + iv × (bias × 0.5)   # 1.0 → 1.20 max  (entry expands modestly)
 ```
 
 **Rule:** `_iv_multipliers(rel_iv, direction)` in `conviction_engine.py` — single function replaces `_iv_lrr_multiplier` and `_iv_hrr_multiplier`.

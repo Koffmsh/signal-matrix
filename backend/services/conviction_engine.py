@@ -55,11 +55,11 @@ def _iv_multipliers(rel_iv: int, direction: str) -> tuple:
     iv   = rel_iv / 100.0
 
     if direction == "uptrend":
-        lrr_mult = 1.0 + iv * (bias * 0.5)  # 1.0 → 1.20 max
-        hrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max
+        lrr_mult = 1.0 + iv * (bias * 0.5)  # 1.0 → 1.20 max (entry expands modestly)
+        hrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max (target expands aggressively)
     else:  # downtrend
-        lrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max
-        hrr_mult = 1.0 - iv * (bias * 0.5)  # 1.0 → 0.80 min
+        lrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max (target expands aggressively)
+        hrr_mult = 1.0 + iv * (bias * 0.5)  # 1.0 → 1.20 max (entry expands modestly)
 
     return lrr_mult, hrr_mult
 
