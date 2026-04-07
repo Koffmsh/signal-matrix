@@ -145,7 +145,7 @@ def _infer_pivot_direction(pivot_row) -> str | None:
         return "uptrend"
     if "DOWNTREND" in state:
         return "downtrend"
-    # FORMING / EXTENDED / WARNING / BREAK_OF_TRADE / BREAK_OF_TREND
+    # WARNING / BREAK_OF_TRADE / BREAK_OF_TREND / EXTENDED
     # — pivot levels exist, infer direction from them
     if pivot_row.pivot_a is not None and pivot_row.pivot_b is not None:
         return "uptrend" if pivot_row.pivot_b > pivot_row.pivot_a else "downtrend"
@@ -270,7 +270,7 @@ def compute_conviction(h_trade: float | None, h_trend: float | None,
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def compute_output(ticker: str, db) -> dict:
+def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
     """
     Compute full signal output for all three timeframes for one ticker.
 
@@ -344,6 +344,22 @@ def compute_output(ticker: str, db) -> dict:
 
         direction = _compute_direction(price, lrr, hrr, c, state, pivot_dir)
 
+        # EXTENDED: today's close exceeded yesterday's HRR (bullish) or LRR (bearish).
+        # prior_ranges holds the HRR/LRR written by yesterday's signal run —
+        # read before being overwritten by today's calculation in signals.py.
+        hrr_extended = False
+        lrr_extended = False
+        if state not in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "BREAK_CONFIRMED", "NO_STRUCTURE"):
+            pr         = (prior_ranges or {}).get(tf, {})
+            prior_hrr  = pr.get("prior_hrr")
+            prior_lrr  = pr.get("prior_lrr")
+            if direction == "Bullish" and prior_hrr is not None and price > prior_hrr:
+                state = "EXTENDED"
+                hrr_extended = True
+            elif direction == "Bearish" and prior_lrr is not None and price < prior_lrr:
+                state = "EXTENDED"
+                lrr_extended = True
+
         # Per-cell warning flags — price-based pivot threshold checks
         # LT: no warnings. Trade: C-based + B-based. Trend: C-based only.
         lrr_warn = False
@@ -369,6 +385,8 @@ def compute_output(ticker: str, db) -> dict:
             "warning":          warning,
             "lrr_warn":         lrr_warn,
             "hrr_warn":         hrr_warn,
+            "lrr_extended":     lrr_extended,
+            "hrr_extended":     hrr_extended,
             "pivot_b":          b,
             "pivot_c":          c,
         }

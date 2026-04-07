@@ -125,7 +125,20 @@ def run_output(db: Session) -> dict:
 
     for ticker in get_active_tickers(db):
         try:
-            data = compute_output(ticker, db)
+            # Read yesterday's HRR/LRR before they get overwritten.
+            # conviction_engine uses these as the EXTENDED threshold:
+            # if today's close > prior_hrr (bullish) or < prior_lrr (bearish) → EXTENDED.
+            prior_ranges = {}
+            for tf in ("trade", "trend", "lt"):
+                row = db.query(SignalOutput).filter(
+                    SignalOutput.id == f"{ticker}_{tf}"
+                ).first()
+                prior_ranges[tf] = {
+                    "prior_hrr": row.hrr if row else None,
+                    "prior_lrr": row.lrr if row else None,
+                }
+
+            data = compute_output(ticker, db, prior_ranges=prior_ranges)
             now  = datetime.utcnow()
 
             # ── viewpoint_since — track when current aligned viewpoint began ──

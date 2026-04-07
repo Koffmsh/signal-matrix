@@ -165,12 +165,16 @@ function mergeSignalData(row, signalMap) {
     hurstTrade: sig.trade?.h_value           ?? row.hurstTrade,
     hurstTrend:   sig.trend?.h_value           ?? row.hurstTrend,
     hurstLt:      sig.lt?.h_value              ?? row.hurstLt,
-    tradeLrrWarn: sig.trade?.lrr_warn          ?? false,
-    tradeHrrWarn: sig.trade?.hrr_warn          ?? false,
-    trendLrrWarn: sig.trend?.lrr_warn          ?? false,
-    trendHrrWarn: sig.trend?.hrr_warn          ?? false,
-    ltLrrWarn:    sig.lt?.lrr_warn             ?? false,
-    ltHrrWarn:    sig.lt?.hrr_warn             ?? false,
+    tradeLrrWarn:     sig.trade?.lrr_warn          ?? false,
+    tradeHrrWarn:     sig.trade?.hrr_warn          ?? false,
+    trendLrrWarn:     sig.trend?.lrr_warn          ?? false,
+    trendHrrWarn:     sig.trend?.hrr_warn          ?? false,
+    ltLrrWarn:        sig.lt?.lrr_warn             ?? false,
+    ltHrrWarn:        sig.lt?.hrr_warn             ?? false,
+    tradeLrrExtended: sig.trade?.lrr_extended      ?? false,
+    tradeHrrExtended: sig.trade?.hrr_extended      ?? false,
+    trendLrrExtended: sig.trend?.lrr_extended      ?? false,
+    trendHrrExtended: sig.trend?.hrr_extended      ?? false,
     tradeC:       sig.trade?.pivot_c           ?? null,
     tradeB:       sig.trade?.pivot_b           ?? null,
     trendC:       sig.trend?.pivot_c           ?? null,
@@ -231,6 +235,7 @@ const warnTip = (dir, which, cVal, bVal) => {
 const stateColor = (s)  =>
   !s                    ? "#8899aa" :
   s.includes("VALID")   ? "#00e5a0" :
+  s === "EXTENDED"      ? "#00e5a0" :
   s.includes("WARN")    ? "#f0b429" :
   s.includes("BREAK")   ? "#ff4d6d" : "#8899aa";
 
@@ -588,11 +593,13 @@ function Dashboard() {
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
           {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeLrrExtended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↓</span>}
         </td>
         {/* Trade HRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
           {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeHrrExtended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↑</span>}
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
@@ -600,6 +607,7 @@ function Dashboard() {
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.trendLrrExtended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↓</span>}
         </td>
         {/* Asset Class — moved to far right, tightened */}
         <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -884,14 +892,14 @@ function Dashboard() {
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
-          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeLrrWarn),              false, row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB) : null],
-          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.tradeDir, row.tradeHrrWarn),              false, row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB) : null],
+          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}`,  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB) : null],
+          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}`,  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB) : null],
           ["Trade C",      fmtPrice(row.tradeC),                                                          "#8899aa",                                                  false],
           ["Trade B",      fmtPrice(row.tradeB),                                                          "#8899aa",                                                  false],
           ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
           ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
-          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendLrrWarn),              false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB) : null],
-          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}`,                   dirRangeColor(row.trendDir, row.trendHrrWarn),              false, row.trendHrrWarn ? warnTip(row.trendDir, "hrr", row.trendC, row.trendB) : null],
+          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}${row.trendLrrExtended ? " ↓" : ""}`,  dirRangeColor(row.trendDir, row.trendLrrWarn),  false, row.trendLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB) : null],
+          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}${row.trendHrrExtended ? " ↑" : ""}`,  dirRangeColor(row.trendDir, row.trendHrrWarn),  false, row.trendHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.trendHrrWarn ? warnTip(row.trendDir, "hrr", row.trendC, row.trendB) : null],
           ["Trend C",      fmtPrice(row.trendC),                                                          "#8899aa",                                                  false],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
           ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],

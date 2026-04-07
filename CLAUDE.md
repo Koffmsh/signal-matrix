@@ -126,13 +126,13 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
 - **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
 
-### FORMING State Does Not Override Direction (`conviction_engine.py`)
-- FORMING state was incorrectly forcing `trade_dir = Neutral` via `max(lrr, c)` floor check
-- **Fixed:** Direction determined solely by `price > c` (uptrend) / `price < c` (downtrend)
-- FORMING only affects display (LRR/HRR color grey) — never direction
+### FORMING State Removed — EXTENDED Redefined (`pivot_engine.py`, `conviction_engine.py`)
+- **FORMING eliminated:** "Pullback from D, no new C yet" is now simply `UPTREND_VALID` / `DOWNTREND_VALID` — the trend is confirmed, the pullback is normal operation, no special state needed
+- **EXTENDED redefined:** previously meant "price IS at D extreme" (fragile equality check). Now means: today's close exceeded yesterday's HRR (bullish) or yesterday's LRR (bearish) — price has overshot the calculated target range
+- **EXTENDED detection:** `signals.py` reads existing `signal_output.hrr` / `signal_output.lrr` before overwriting them; passes as `prior_ranges` to `compute_output`; conviction_engine compares today's close against those prior values
+- **EXTENDED display:** state cell stays green (healthy structure); ↑ flag appears on HRR cell (bullish overshoot) or ↓ flag on LRR cell (bearish overshoot) with tooltip "do not chase"
 - **States that force Neutral:** `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` only
-- FORMING, EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID all allow Bullish/Bearish
-- LRR above current price during a FORMING pullback is expected — do not treat as a break
+- **EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID** all allow Bullish/Bearish direction
 
 ### ABC Pivot Search — All A Candidates Tried (`pivot_engine.py`)
 - Old behavior: `_find_uptrend_abc` / `_find_downtrend_abc` used only the single nearest pivot low/high before B as A
@@ -155,7 +155,10 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Selection priority in `find_abc_structure()`:**
   1. Only one direction found → use it
   2. Both found, only one intact (price on correct side of C) → use intact
-  3. Both intact or both broken → most recent C wins, unless that winner spans a prior BREAK_CONFIRMED
+  3. Both intact or both broken → most recent C wins, UNLESS:
+     a. The newer structure has never established D (price never closed through B) → older structure governs. D is the confirmation event: a geometric ABC without D is not a confirmed reversal and cannot override an unbroken prior structure.
+     b. The winner spans a prior BREAK_CONFIRMED of a same-direction structure → use other.
+- **`_d_has_established(abc, prices)`** — returns True if price has ever closed through B (above B for uptrend, below B for downtrend). Guards the tiebreak: without D, the newer ABC is geometric only.
 - **Rule:** Do not simplify `find_abc_structure()` back to "most recent C wins" — the priority logic is load-bearing
 
 ### Trend Bar Window Reduced: 20 → 10 (`pivot_engine.py`)
@@ -1064,9 +1067,8 @@ sigma = std(log_returns[-21:]) * close
 
 | State | Uptrend Condition | Downtrend Condition | Display |
 |---|---|---|---|
-| UPTREND_VALID / DOWNTREND_VALID | C > A, price above MAX(LRR, C) | C < A, price below MIN(HRR, C) | Normal green/red |
-| FORMING | Pullback from D, no new C yet | Bounce from D, no new C yet | LRR/HRR update, grey |
-| EXTENDED | Price above D, new C not formed | Price below D, new C not formed | LRR/HRR shown, grey |
+| UPTREND_VALID / DOWNTREND_VALID | C > A, price within LRR–HRR range | C < A, price within LRR–HRR range | Normal green/red |
+| EXTENDED | Today's close > yesterday's HRR | Today's close < yesterday's LRR | Green/red state cell; ↑/↓ flag on exceeded cell with tooltip |
 | WARNING | LRR drifted below C (IV-driven only) | HRR drifted above C (IV-driven only) | LRR or HRR cell → amber |
 | BREAK_OF_TRADE | Price closes below C (trade tf) | Price closes above C (trade tf) | Trade Dir → Neutral, LRR/HRR grey — forgiveness: 1 day |
 | BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir → Neutral, Trend LRR grey — forgiveness: 1 day |
@@ -1090,7 +1092,7 @@ sigma = std(log_returns[-21:]) * close
 **Staleness thresholds (`pivot_engine.py` — `_STALE_C_DAYS`):**
 ```
 Trade:     C older than  60 trading days → NO_STRUCTURE (structure too old to trade)
-Trend:     C older than 100 trading days → NO_STRUCTURE (structure too old for directional bias)
+Trend:     C older than 120 trading days → NO_STRUCTURE (structure too old for directional bias)
 Long Term: No cutoff                     → LT structures are inherently old
 ```
 

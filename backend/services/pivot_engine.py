@@ -21,7 +21,7 @@ _NYSE = mcal.get_calendar("NYSE")
 # None = no cutoff (long-term structures are expected to be old).
 _STALE_C_DAYS = {
     "trade": 60,
-    "trend": 100,
+    "trend": 120,
     "lt":    None,
 }
 
@@ -222,6 +222,25 @@ def _price_on_correct_side(abc: dict, current_price: float) -> bool:
         return current_price < abc["c"]
 
 
+def _d_has_established(abc: dict, prices: list) -> bool:
+    """
+    Returns True if D has established — price has at some point closed through B.
+      uptrend:   any close above B
+      downtrend: any close below B
+
+    A newer ABC structure that has never established D should not override
+    an older intact structure in the opposite direction. D is the confirmation
+    event: it simultaneously breaks the prior structure's C and proves the new
+    trend via two higher highs (B and D) and a higher low (C).
+    """
+    b_idx   = abc["b_idx"]
+    b_price = abc["b"]
+    if abc["direction"] == "uptrend":
+        return any(p > b_price for p in prices[b_idx + 1:])
+    else:
+        return any(p < b_price for p in prices[b_idx + 1:])
+
+
 def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     """
     Find the most recent valid ABC structure (uptrend or downtrend).
@@ -230,8 +249,11 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     1. Prefer the structure where current price is still on the correct side
        of C (structure intact) over one where price has already blown through C.
     2. When both or neither are intact: prefer the one with the more recent C —
-       UNLESS that winner spans a BREAK_CONFIRMED of a prior same-direction
-       structure (its A predates a structural break), in which case use the other.
+       UNLESS the newer structure has never established D (price never closed
+       through B). Without D, a geometric ABC is not a confirmed trend reversal
+       and the older unbroken structure governs.
+    3. If the most-recent-C winner spans a BREAK_CONFIRMED of a prior
+       same-direction structure, prefer the other.
 
     Returns dict or None.
     """
@@ -248,9 +270,9 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
         return downtrend
 
     # Both found — check which structures still have price on the correct side
-    current_price   = prices[-1]
-    up_intact   = _price_on_correct_side(uptrend,   current_price)
-    down_intact = _price_on_correct_side(downtrend, current_price)
+    current_price = prices[-1]
+    up_intact     = _price_on_correct_side(uptrend,   current_price)
+    down_intact   = _price_on_correct_side(downtrend, current_price)
 
     if up_intact and not down_intact:
         return uptrend
@@ -260,6 +282,11 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     # Both intact or both broken — use most recent C as tiebreak
     winner = uptrend if uptrend["c_idx"] >= downtrend["c_idx"] else downtrend
     other  = downtrend if winner is uptrend else uptrend
+
+    # A newer ABC without D established cannot override the older structure.
+    # D is the confirmation event — without it the newer ABC is geometric only.
+    if not _d_has_established(winner, prices):
+        return other
 
     # If the winner's history contains a prior BREAK_CONFIRMED, prefer the other
     if _has_prior_break_confirmed(winner, pivot_highs, pivot_lows, prices):
@@ -411,8 +438,7 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
-        # EXTENDED if current bar is at the running high, FORMING if pulled back
-        state = "EXTENDED" if prices[-1] == d_price else "FORMING"
+        state = "UPTREND_VALID"
         return round(d_price, 4), d_idx, state
 
     else:  # downtrend
@@ -443,7 +469,7 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
-        state = "EXTENDED" if prices[-1] == d_price else "FORMING"
+        state = "DOWNTREND_VALID"
         return round(d_price, 4), d_idx, state
 
 
