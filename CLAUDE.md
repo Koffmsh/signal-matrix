@@ -952,61 +952,113 @@ NOT $427.13 (stale C)
 
 ### LRR / HRR Formula — Redesigned (conviction_engine.py)
 
-**Two bugs fixed from original formula:**
-1. H_factor was inverted — high H now correctly means shallow pullback (LRR near anchor), not deep
-2. Anchor switches from C to B when price has extended well beyond B, so old C is no longer the relevant anchor
-
-#### H_factor lookup (same values, applied as `1 − hf` for entry-side ranges)
-```
-H > 0.65   →  hf = 0.95  (strong trend  → shallow pullback → entry close to anchor)
-H 0.55–0.65 →  hf = 0.50  (moderate trend)
-H 0.50–0.55 →  hf = 0.05  (weak trend)
-H < 0.50   →  hf = 0.00  (mean-reverting → deep pullback → entry far from anchor)
-```
-
-#### Uptrend
+#### Anchor Selection Logic (LOCKED)
 ```python
-bc_range = abs(b - c)
-anchor   = c if d < b + bc_range else b   # switch to B when price extended well above B
-lrr = anchor + bc_range * (1 - hf) - sigma * lrr_mult   # entry on pullback
-hrr = d      + bc_range * hf        + sigma * hrr_mult   # target above D
+bc_range = abs(B - C)
+
+# Downtrend
+if D < B - bc_range:    # D is more than one full bc_range below B
+    anchor = B          # deep impulse — B is resistance, unlikely to reach C
+else:
+    anchor = C          # shallow new low — bounce likely reaches toward C
+
+# Uptrend (mirror)
+if D > B + bc_range:    # D is more than one full bc_range above B
+    anchor = B          # extended move — B is support, unlikely to reach C
+else:
+    anchor = C          # shallow new high — pullback likely reaches toward C
+```
+The bc_range is the natural unit of measurement for this structure. If D exceeds B by more than
+one full B-C distance, the move is large enough that C is no longer a realistic near-term target —
+B becomes the ceiling. Under one full distance, the structure is shallow enough that C remains in play.
+
+**QQQ example:** B=597.03, C=616.68, bc_range=19.65, B-bc_range=577.38, D=558.28
+D (558.28) < B-bc_range (577.38) → anchor = B ✅ (deep impulse, $39 below B on a $20 bc_range)
+
+---
+
+#### ⚠ SUPERSEDED — H_factor bucket lookup (replaced by continuous hf below)
+```
+# DO NOT USE — retained for reference only
+H > 0.65   →  hf = 0.95
+H 0.55–0.65 →  hf = 0.50
+H 0.50–0.55 →  hf = 0.05
+H < 0.50   →  hf = 0.00
 ```
 
-#### Downtrend (mirror)
+#### ⚠ SUPERSEDED — bc_range width formula (replaced by sigma-based formula below)
 ```python
-bc_range = abs(b - c)
-anchor   = c if d > b - bc_range else b   # switch to B when price extended well below B
-hrr = anchor - bc_range * (1 - hf) + sigma * hrr_mult   # entry on bounce
-lrr = d      - bc_range * hf        - sigma * lrr_mult   # target below D
+# DO NOT USE — retained for reference only
+lrr = anchor + bc_range * (1 - hf) - sigma * lrr_mult   # uptrend
+hrr = anchor - bc_range * (1 - hf) + sigma * hrr_mult   # downtrend
 ```
 
-**Rule: both sides use `sigma × lrr_mult` and `sigma × hrr_mult` directly — never `sigma × (1 − mult)`.**
-The brief contained an error on downtrend LRR (`1 - lrr_mult`); verified fix gives correct output.
-
-#### Rel IV Multipliers (sigma scaling) — trend-conditional continuous
-Replaces the old bucket table. `bias = 0.40`, `iv = rel_iv / 100`.
-
+#### ⚠ SUPERSEDED — Rel IV Multipliers bucket table and trend-conditional formula
 ```
-Uptrend (expanding IV = momentum confirmed, upside pricing):
-  lrr_mult = 1.0 + iv × (bias × 0.5)   # 1.0 → 1.20 max  (entry expands modestly)
-  hrr_mult = 1.0 + iv × bias            # 1.0 → 1.40 max  (target expands aggressively)
-
-Downtrend (expanding IV = downside risk pricing, slide can accelerate):
-  lrr_mult = 1.0 + iv × bias            # 1.0 → 1.40 max  (target expands aggressively)
-  hrr_mult = 1.0 + iv × (bias × 0.5)   # 1.0 → 1.20 max  (entry expands modestly)
+# DO NOT USE — both the original bucket table and the bias=0.40 trend-conditional
+# formula are superseded by the continuous f_hrr/f_lrr scaling below
 ```
 
-**Rule:** `_iv_multipliers(rel_iv, direction)` in `conviction_engine.py` — single function replaces `_iv_lrr_multiplier` and `_iv_hrr_multiplier`.
+---
+
+#### Continuous hf — Replaces Bucket Lookup
+```python
+hf = max(0.0, (H - 0.50) / 0.50)   # maps H 0.50–1.00 → hf 0.00–1.00
+# H < 0.50 → hf = 0.00 (mean-reverting, no trending signal)
+# H = 0.75 → hf = 0.50 (strong trend)
+# H = 1.00 → hf = 1.00 (theoretical ceiling)
+```
+
+#### Continuous IV Scaling — Replaces Bucket Table
+```python
+k = 0.667   # calibrated to QQQ at IV Rank 30, hf=0.00
+f_hrr = (rel_iv / 100) * k          # 0.00 → 0.667 at IV Rank 100
+f_lrr = (rel_iv / 100) * k * 2.0   # 0.00 → 1.333 at IV Rank 100
+# f_lrr is always 2× f_hrr — consistent with SPX/QQQ back-solve
+# At IV Rank 0: HRR = anchor exactly, LRR = D exactly — pure structure
+# As IV rises: both pull away from structural levels proportionally
+```
+
+#### FORMING State Formula — New (Replaces bc_range Logic)
+```python
+# Downtrend FORMING
+hrr = anchor - sigma * (1 - hf) * f_hrr   # anchor minus vol buffer
+lrr = D      - sigma * (1 + hf) * f_lrr   # D minus vol buffer
+
+# Uptrend FORMING (mirror)
+lrr = anchor + sigma * (1 - hf) * f_lrr   # anchor plus vol buffer
+hrr = D      + sigma * (1 + hf) * f_hrr   # D plus vol buffer
+```
+
+**H role:** high H (strong trend) → hf near 1.0 → `(1-hf)` near 0 → HRR closer to anchor;
+`(1+hf)` near 2.0 → LRR further from D. Fractal dimension drives the asymmetry.
+
+#### FORMING Warning Flags
+- **Downtrend:** `lrr_warn` fires when `LRR > D` — bounce has compressed downside probability
+- **Uptrend:** `hrr_warn` fires when `HRR < D` — pullback has compressed upside probability
+- Show computed value always — never clamp silently. Warning is information.
+
+#### Sigma Source
+```python
+# Current: 21-day realized vol in dollar terms
+sigma = std(log_returns[-21:]) * close
+
+# Future (once iv_history has 63+ Schwab observations):
+# sigma = (iv_history.implied_vol / sqrt(252)) * close
+# iv_history.implied_vol is raw annual implied vol decimal from Schwab options chain
+# NOT IV Rank — two different roles:
+#   implied_vol  → sigma (dollar width input)
+#   IV Rank      → f_hrr / f_lrr scaling (distribution input)
+```
+
+#### VALID and EXTENDED State Formulas
+- **DOWNTREND_VALID / UPTREND_VALID** — formula TBD next session.
+  Original bc_range × hf logic retained in code until replacement is locked.
+  Do not modify `conviction_engine.py` VALID state paths until spec is updated.
+- **EXTENDED** — formula TBD next session. Likely similar to FORMING but anchor logic differs.
+  Do not modify until spec is updated.
 
 **Sigma window:** 21 trading days — matches IV30 constant-maturity horizon. `_sigma()` in `conviction_engine.py`.
-
-#### Verified output — SPX trade timeframe (Bearish FORMING)
-```
-B=6798.40  C=6946.13  D=6506.48  H=0.298  rel_iv=69
-anchor = B (D < B − bc_range → extended below B)
-Trade LRR = $6,454  ✅   (Hedgeye benchmark ~$6,465)
-Trade HRR = $6,710  ✅   (Hedgeye benchmark ~$6,707)
-```
 
 ### Structural States
 
