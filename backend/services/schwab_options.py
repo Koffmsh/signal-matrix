@@ -52,19 +52,56 @@ def _get_iv_eligible_tickers(db: Session) -> list:
     return [r.ticker for r in rows if r.ticker not in IV_INELIGIBLE]
 
 
-def _upsert_iv_history(db: Session, ticker: str, iv_date: str, implied_vol: float) -> None:
+def _compute_realized_vols(db: Session, ticker: str) -> tuple:
+    """
+    Compute 21-day and 63-day annualized realized vol from price_cache.history_json.
+    Returns (rv21, rv63) as decimals (e.g. 0.196 = 19.6%), or (None, None) on error.
+    """
+    import json
+    import numpy as np
+    from models.price_cache import PriceCache as PC
+
+    pc = db.query(PC).filter(PC.ticker == ticker).first()
+    if not pc or not pc.history_json:
+        return None, None
+
+    closes = json.loads(pc.history_json)
+    if len(closes) < 65:  # need at least 63 + 1 for returns
+        return None, None
+
+    arr  = np.array(closes, dtype=float)
+    rets = np.log(arr[1:] / arr[:-1])
+
+    rv21 = float(np.std(rets[-21:]) * (252 ** 0.5)) if len(rets) >= 21 else None
+    rv63 = float(np.std(rets[-63:]) * (252 ** 0.5)) if len(rets) >= 63 else None
+
+    return rv21, rv63
+
+
+def _upsert_iv_history(
+    db: Session, ticker: str, iv_date: str,
+    implied_vol: float, rv21: float | None, rv63: float | None
+) -> None:
     """Write one IV observation to iv_history (no commit — batch at end)."""
+    vol_premium = round(implied_vol - rv21, 6) if rv21 is not None else None
+
     existing = db.query(IVHistory).filter(
         IVHistory.ticker  == ticker,
         IVHistory.iv_date == iv_date,
     ).first()
     if existing:
         existing.implied_vol = implied_vol
+        existing.rv21        = rv21
+        existing.rv63        = rv63
+        existing.vol_premium = vol_premium
     else:
         db.add(IVHistory(
             ticker      = ticker,
             iv_date     = iv_date,
             implied_vol = implied_vol,
+            rv21        = rv21,
+            rv63        = rv63,
+            vol_premium = vol_premium,
             created_at  = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
         ))
 
@@ -287,8 +324,11 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
                 time.sleep(0.5)
                 continue
 
+            # Compute realized vols for logging alongside implied vol
+            rv21, rv63 = _compute_realized_vols(db, ticker)
+
             # Write to iv_history first (today's value included in percentile calc)
-            _upsert_iv_history(db, ticker, today, implied_vol)
+            _upsert_iv_history(db, ticker, today, implied_vol, rv21, rv63)
             db.flush()  # make row visible within same session for percentile query
 
             # Compute IV Rank — returns None if history < _IV_RANK_MIN_HISTORY days

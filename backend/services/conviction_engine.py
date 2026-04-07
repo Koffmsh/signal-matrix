@@ -38,22 +38,34 @@ def _h_factor(h: float | None) -> float | None:
     return 0.05       # 0.50 – 0.55
 
 
-def _iv_lrr_multiplier(rel_iv: int) -> float:
-    if rel_iv > 80: return 0.94
-    if rel_iv > 60: return 0.97
-    if rel_iv > 30: return 1.00
-    return 0.99
+def _iv_multipliers(rel_iv: int, direction: str) -> tuple:
+    """
+    Trend-conditional continuous IV scaling — asymmetric by direction.
+    bias = 0.40 controls the maximum expansion.
+
+    Uptrend (expanding IV = momentum + upside pricing):
+      lrr_mult: 1.0 → 1.20  (entry expands modestly — pullbacks shallower)
+      hrr_mult: 1.0 → 1.40  (target expands aggressively — momentum confirmed)
+
+    Downtrend (expanding IV = downside risk pricing):
+      lrr_mult: 1.0 → 1.40  (target expands aggressively — slide can accelerate)
+      hrr_mult: 1.0 → 0.80  (entry compresses — bounces are weak, don't recover far)
+    """
+    bias = 0.40
+    iv   = rel_iv / 100.0
+
+    if direction == "uptrend":
+        lrr_mult = 1.0 + iv * (bias * 0.5)  # 1.0 → 1.20 max
+        hrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max
+    else:  # downtrend
+        lrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max
+        hrr_mult = 1.0 - iv * (bias * 0.5)  # 1.0 → 0.80 min
+
+    return lrr_mult, hrr_mult
 
 
-def _iv_hrr_multiplier(rel_iv: int) -> float:
-    if rel_iv > 80: return 1.15
-    if rel_iv > 60: return 1.10
-    if rel_iv > 30: return 1.05
-    return 1.02
-
-
-def _sigma(prices: list, window: int = 20) -> float:
-    """1σ of recent returns in price units (last `window` bars)."""
+def _sigma(prices: list, window: int = 21) -> float:
+    """1σ of recent returns in price units (last `window` bars). 21 days matches IV30 horizon."""
     if len(prices) < window + 1:
         return 0.0
     arr = np.array(prices[-(window + 1):], dtype=float)
@@ -170,8 +182,7 @@ def compute_lrr_hrr(b: float, c: float, d: float | None,
     bc_range = abs(b - c)
     d_val    = d if d is not None else b   # D falls back to B when not yet established
 
-    lrr_mult = _iv_lrr_multiplier(rel_iv)
-    hrr_mult = _iv_hrr_multiplier(rel_iv)
+    lrr_mult, hrr_mult = _iv_multipliers(rel_iv, direction)
 
     if direction == "uptrend":
         anchor = c if d_val < b + bc_range else b

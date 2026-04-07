@@ -983,13 +983,22 @@ lrr = d      - bc_range * hf        - sigma * lrr_mult   # target below D
 **Rule: both sides use `sigma × lrr_mult` and `sigma × hrr_mult` directly — never `sigma × (1 − mult)`.**
 The brief contained an error on downtrend LRR (`1 - lrr_mult`); verified fix gives correct output.
 
-#### Rel IV Multipliers (sigma scaling)
-| Rel IV% | lrr_mult | hrr_mult |
-|---|---|---|
-| 0–30%  | 0.99 | 1.02 |
-| 31–60% | 1.00 | 1.05 |
-| 61–80% | 0.97 | 1.10 |
-| > 80%  | 0.94 | 1.15 |
+#### Rel IV Multipliers (sigma scaling) — trend-conditional continuous
+Replaces the old bucket table. `bias = 0.40`, `iv = rel_iv / 100`.
+
+```
+Uptrend (expanding IV = momentum confirmed, upside pricing):
+  lrr_mult = 1.0 + iv × (bias × 0.5)   # 1.0 → 1.20 max  (entry expands modestly)
+  hrr_mult = 1.0 + iv × bias            # 1.0 → 1.40 max  (target expands aggressively)
+
+Downtrend (expanding IV = downside risk pricing, slide can accelerate):
+  lrr_mult = 1.0 + iv × bias            # 1.0 → 1.40 max  (target expands aggressively)
+  hrr_mult = 1.0 - iv × (bias × 0.5)   # 1.0 → 0.80 min  (entry compresses — weak bounces)
+```
+
+**Rule:** `_iv_multipliers(rel_iv, direction)` in `conviction_engine.py` — single function replaces `_iv_lrr_multiplier` and `_iv_hrr_multiplier`.
+
+**Sigma window:** 21 trading days — matches IV30 constant-maturity horizon. `_sigma()` in `conviction_engine.py`.
 
 #### Verified output — SPX trade timeframe (Bearish FORMING)
 ```
