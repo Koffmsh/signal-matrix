@@ -38,7 +38,7 @@ def dfa(prices: list, window: int) -> float | None:
     Algorithm:
     1. Convert prices to log returns
     2. Compute cumulative sum of mean-centred returns (integration)
-    3. Generate ~20 log-spaced scales from 10 to window//4
+    3. Generate ~20 log-spaced scales from 10 to N//2
     4. For each scale n: divide series into non-overlapping segments,
        detrend each segment (linear fit), compute RMS of residuals F(n)
     5. H = slope of log(F(n)) vs log(n) via linear regression
@@ -62,8 +62,11 @@ def dfa(prices: list, window: int) -> float | None:
     N = len(cumsum)
 
     # Step 3: log-spaced scales
+    # Use N//2 as max_scale (not N//4) so the trade window (N=62) gets
+    # scales 10–31 (~15 points) instead of 10–15 (6 points).  The
+    # n_segments < 2 guard below already prevents any scale that is too large.
     min_scale = 10
-    max_scale = N // 4
+    max_scale = N // 2
     if max_scale < min_scale:
         return None
 
