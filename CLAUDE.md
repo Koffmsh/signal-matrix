@@ -1492,7 +1492,7 @@ Do not skip. Do not assume the environment is already in sync.
    docker ps | grep signal-matrix
 
 2. Sync local SQLite schema with production
-   docker exec signal-matrix-backend alembic upgrade head
+   docker exec signal-matrix-backend-1 alembic upgrade head
    (uses local SQLite — keeps dev schema in sync with Alembic migrations)
 
 3. Confirm Fly.io auth is valid (only needed before deploys)
@@ -1512,14 +1512,14 @@ local SQLite and the Alembic migration history means local test results are unre
 Every schema change must follow this sequence exactly. Do not skip steps, do not reorder.
 
 ### Step 1 — Write and review the migration file
-- Generate: `docker exec signal-matrix-backend alembic revision --autogenerate -m "description"`
+- Generate: `docker exec signal-matrix-backend-1 alembic revision --autogenerate -m "description"`
 - Review the generated file in `backend/alembic/versions/` before running it
 - Confirm upgrade() and downgrade() are correct
 - Confirm no unexpected table drops or column renames
 
 ### Step 2 — Test migration against local SQLite first
 ```bash
-docker exec signal-matrix-backend alembic upgrade head
+docker exec signal-matrix-backend-1 alembic upgrade head
 ```
 - If this fails, fix the migration file before touching production
 - Local SQLite uses the standard connection string in `alembic/env.py`
