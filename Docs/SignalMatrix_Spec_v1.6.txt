@@ -1,0 +1,200 @@
+Signal Matrix Platform
+Master Specification Document
+Version 1.6  |  March 2026  |  Confidential
+
+
+
+Change Log v1.5 → v1.6
+LRR/HRR formula redesigned: anchor switches C→B when price extended well beyond B; H_factor inversion fixed (high H now means shallow pullback); sigma×mult applied directly on both sides
+ENTRY signal column added to dashboard: BUY badge when Bullish aligned + price within 2% of Trade LRR; SELL badge when Bearish aligned + price within 2% of Trade HRR; ENTRY count in header
+VIX gauge added to dashboard header: horizontal bar 9–45+, three color zones, needle with glow effect
+Warning tooltips: C pivot price injected inline — e.g. "LRR is below C ($448.20) — approaching trade invalidation level"
+Filter UX overhauled: Asset Class button row replaced with MultiSelectDropdown; Sector dropdown added; Viewpoint/ALIGNED/ALERTS filters unchanged
+Futures tickers added: /CL (WTI Crude), /ZN (10-Year Note), /GC (Gold) — routed via Yahoo Finance; 3-file checklist documented for adding new futures
+Button freshness indicators: REFRESH DATA and CALCULATE SIGNALS turn amber when stale
+Vol Signal now compared against Trade Dir (not Viewpoint) — methodologically correct; popup fields renamed Vol Direction / Vol Signal vs Trade
+VIX regime green threshold corrected: VIX < 20 (was incorrectly < 19)
+Admin panel fixes: nginx SPA routing (try_files), deploy-web.sh script, REACT_APP_ADMIN_PASSWORD baked as build arg
+Phase 4 and Phase 5 marked complete
+Schwab callback URL corrected from signal.suttonmc.com to api.signal.suttonmc.com
+ABC pivot search: all A candidates tried — engine no longer assumes nearest A before B is correct
+
+
+1. Project Overview
+Signal Matrix is a multi-timeframe, probabilistic trading signal platform designed to identify high-conviction trade opportunities across a diversified universe of ~51 assets. The platform is built around the principle that simplicity and structural clarity outperform complex over-engineered systems. The methodology is rooted in fractal market theory, wave structure analysis, and probabilistic statistics rather than traditional lagging indicators.
+Core Philosophy
+Fewer, higher quality signals beat more, lower quality signals
+Trend alignment across timeframes is the primary filter
+Risk ranges are mathematically derived, not discretionary
+The system tells you where the market is, not where you want it to be
+
+2. Methodology
+2.1 Timeframe Definitions
+
+2.2 ABC Wave Structure
+Four-point pivot structure (A, B, C, D) that applies identically to uptrends and downtrends.
+Uptrend Structure
+
+Downtrend Structure
+
+Pivot Bar Windows
+
+C Update Logic — CRITICAL
+C is NOT set once and frozen. C updates dynamically as the trend develops.
+# UPTREND — C walks UP (higher lows)
+new_pivot_low = find_most_recent_confirmed_pivot_low(prices, bar_window)
+if new_pivot_low > current_C:
+    current_C = new_pivot_low
+
+# DOWNTREND — C walks DOWN (lower highs)
+new_pivot_high = find_most_recent_confirmed_pivot_high(prices, bar_window)
+if new_pivot_high < current_C:
+    current_C = new_pivot_high
+
+# Break check always uses CURRENT C — never stale C
+if direction == UPTREND and current_price < current_C: BREAK_OF_TRADE
+if direction == DOWNTREND and current_price > current_C: BREAK_OF_TRADE
+Pivot Staleness Thresholds
+
+ABC Pivot Search — All A Candidates Tried
+For each (C, B) pair, all A candidates are iterated newest-first. The engine stops at the first A satisfying C > A (uptrend) or C < A (downtrend). The nearest A before B is not assumed to be correct.
+ABC Transition to Bearish — Dual-Role Pivot
+
+2.3 Signal Components
+1. Fractal Dimension (D)
+D → 1.0 = trending, D → 1.5 = choppy, D → 2.0 = mean-reverting. Derived from Hurst: D = 2 − H.
+2. Hurst Exponent (H) — DFA Method
+H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk. Calculated at Trade (63d), Trend (252d), and Long Term (756d) timeframes independently.
+3. Relative Implied Volatility (Rel IV%)
+IV expressed as percentile of its own 252-day history. PRIMARY role: scales LRR/HRR width. NOT in the conviction score formula. Source: Schwab options chain (falls back to Yahoo proxy on token expiry).
+4. OBV Volume Signal
+Applied as multiplier to conviction score. OBV direction determined by pivot structure (bar_window = 9) applied to OBV series. Compared against Trade Dir (not Viewpoint).
+5. VIX Macro Regime
+Dashboard header indicator — not a per-ticker signal. VIX < 20 = Green (Investable), 20–29 = Amber (Choppy), ≥ 30 = Red (Danger).
+2.4 Conviction Score
+Base Score Formula (v1.5+)
+
+OBV Volume Multiplier
+
+Final Conviction = Base Score × OBV Volume Multiplier. CRITICAL: Conviction is BLANK when Viewpoint = Neutral.
+2.5 Viewpoint States — Three States Only
+
+No Diverging state. Three states only: Bullish, Bearish, Neutral.
+2.6 Direction Determination — Pivots Only
+H has no role in direction. H drives conviction and LRR position only. C is the only gate.
+# Uptrend direction
+if structural_state == "BREAK_OF_TRADE": trade_dir = "Neutral"
+elif current_price > c: trade_dir = "Bullish"
+else: trade_dir = "Neutral"
+
+# Viewpoint
+if trade_dir == "Bullish" and trend_dir == "Bullish": viewpoint = "Bullish"
+elif trade_dir == "Bearish" and trend_dir == "Bearish": viewpoint = "Bearish"
+else: viewpoint = "Neutral"
+2.7 LRR / HRR Formula — v1.6 (Redesigned)
+Two bugs fixed from v1.5 formula: (1) H_factor was inverted — high H now correctly means shallow pullback. (2) Anchor switches from C to B when price has extended well beyond B.
+H_factor Lookup
+
+Uptrend Formulas
+bc_range = abs(b - c)
+anchor   = c if d < b + bc_range else b   # switch to B when extended
+lrr = anchor + bc_range * (1 - hf) - sigma * lrr_mult
+hrr = d      + bc_range * hf        + sigma * hrr_mult
+Downtrend Formulas (Mirror)
+bc_range = abs(b - c)
+anchor   = c if d > b - bc_range else b   # switch to B when extended
+hrr = anchor - bc_range * (1 - hf) + sigma * hrr_mult
+lrr = d      - bc_range * hf        - sigma * lrr_mult
+Rel IV Multipliers (sigma scaling)
+
+Verified: SPX trade timeframe (Bearish FORMING): LRR = $6,454 ✓ (Hedgeye ~$6,465), HRR = $6,710 ✓ (Hedgeye ~$6,707)
+2.8 Structural States
+
+2.9 ENTRY Signal Logic (v1.6 — NEW)
+New column in the dashboard table between Conviction % and Trade Dir. Reads from existing signal data — no new backend endpoint.
+BUY Conditions (all four must be true)
+Viewpoint = Bullish
+Trade Dir = Bullish
+Trend Dir = Bullish
+Math.abs(close - tradeLRR) / tradeLRR <= 0.02 (price within 2% of Trade LRR)
+SELL Conditions (all four must be true)
+Viewpoint = Bearish
+Trade Dir = Bearish
+Trend Dir = Bearish
+Math.abs(close - tradeHRR) / tradeHRR <= 0.02 (price within 2% of Trade HRR)
+Neutral viewpoint never triggers ENTRY signal regardless of price proximity. ENTRY count displayed in header summary row alongside BULLISH / BEARISH / ALIGNED / ALERTS.
+2.10 OBV Pivot Engine
+Replaces the price-momentum proxy entirely. OBV direction determined by applying the same pivot structure logic as the price engine (bar_window = 9) to the OBV series. Vol Signal is compared against Trade Dir (not Viewpoint) — volume is a short-term signal confirming the trade timeframe move.
+
+2.11 Alert Flag Trigger Conditions
+All three must be simultaneously true:
+Trade H > 0.55 AND Trend H > 0.55
+Viewpoint = Bullish OR Bearish (never fires on Neutral)
+Final Conviction >= 70% (after OBV volume multiplier)
+
+3. Asset Universe
+3.1 Tier 1 — Core Watchlist (~51 tickers)
+
+3.2 Futures Tickers (v1.6 — NEW)
+Futures use continuous front-month symbols stored with a leading slash. Schwab does not serve continuous futures contracts, so all futures route through Yahoo Finance.
+
+3-File Checklist for New Futures
+YAHOO_SYMBOL_MAP in yahoo_finance.py — add "/XX": "XX=F" mapping
+SCHWAB_UNSUPPORTED in schwab_market_data.py — add "/XX" to route to Yahoo
+IV_INELIGIBLE in schwab_options.py — add "/XX" to skip options chain fetch
+3.3 Tier 2 — Dynamic Expansion
+Pre-defined per Tier 1 parent. Displays only when Tier 1 parent is expanded via chevron. Managed via Admin panel at signal.suttonmc.com/admin.
+
+
+4. Dashboard
+4.1 Current State (v1.6)
+React application running at signal.suttonmc.com (Fly.io) and localhost:3000 (local Docker)
+All signal columns live — Conviction, LRR, HRR, Trade Dir, Trend Dir, ENTRY
+VIX gauge in header — horizontal bar with needle, zones: green < 20, amber 20–29, red ≥ 30
+ENTRY column — BUY / SELL badges with 2% proximity logic; count in header summary
+Filter UX — Asset Class + Sector dropdown multi-selects; Viewpoint/ALIGNED/ALERTS remain as buttons
+Button freshness — REFRESH DATA and CALCULATE SIGNALS turn amber when stale
+EOD Scheduler — fires at 4:00 PM ET (Schwab data) + 4:15 PM ET (signals)
+Admin panel at signal.suttonmc.com/admin — password protected, full ticker CRUD
+4.2 Dashboard Columns
+
+4.3 VIX Gauge (v1.6 — NEW)
+Horizontal gauge bar positioned between dashboard title and summary counts
+Range: 9 to 45+ (needle clamped at right edge when VIX > 45; numeric display shows actual value)
+Zone widths: Green (9–20) 30.6%, Amber (20–30) 27.8%, Red (30–45) 41.6%
+Needle: 3px wide, colored to match current zone, glow + white inner shadow
+Scale labels: 9, 20, 30, 45+ at zone boundaries
+Reads from existing VIX row in realDataMap — no new data fetch
+4.4 Filter UX (v1.6 — Overhauled)
+Asset Class: MultiSelectDropdown component — compact, multi-select, count badge, click-outside-to-close
+Sector: new MultiSelectDropdown alongside Asset Class
+Both dropdowns populate dynamically from active ticker universe — no hardcoded values
+Viewpoint, ALIGNED ONLY, ALERTS filters unchanged — remain as buttons
+Filters apply instantly on selection — no submit button
+
+5. Phase Build Summary
+Phases 1–5 — All Complete
+
+Phase 6 — Task Status
+
+
+6. Technical Architecture
+6.1 Current Stack
+
+6.2 Infrastructure
+
+6.3 Deployment Rules
+Web deploys: ./deploy-web.sh — never bare fly deploy (REACT_APP_ADMIN_PASSWORD must be passed as build arg)
+API deploys: fly deploy --config fly.api.toml --app signal-matrix-api
+Local verify at localhost:3000 before any Fly.io deploy
+Git commit + push after verified deploy
+Never use npm start on Fly.io — always npm run build → nginx
+Alembic migrations use SUPABASE_POOLED_CONNECTION_STRING from Docker (IPv4 reachable)
+
+7. Statistical Framework
+
+
+8. Open Questions / TBD
+
+
+Signal Matrix Platform  |  Master Specification  |  v1.6  |  March 2026  |  Confidential

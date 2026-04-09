@@ -27,6 +27,15 @@ yarn-error.log*
 
 # backend
 backend/signal_matrix.db
+
+# temp files
+signals_tmp.json
+*.json.tmp
+"C:UsersshannAppDataLocalTempstored_signals.json"
+
+# binary docs (unreadable by Neo — use .txt copies)
+*.docx
+*.xlsx
 backend/__pycache__/
 backend/models/__pycache__/
 backend/routers/__pycache__/

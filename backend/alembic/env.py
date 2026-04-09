@@ -34,18 +34,28 @@ target_metadata = Base.metadata
 def _get_migration_url() -> str:
     """
     Returns a synchronous psycopg2 URL for Alembic migrations.
-    Prefers SUPABASE_CONNECTION_STRING (direct, port 5432).
-    Falls back to SUPABASE_POOLED_CONNECTION_STRING (port 6543, IPv4-routable from Docker)
-    when the direct connection is not available.
-    Converts asyncpg-style URL to psycopg2-style and URL-encodes the password.
+    Priority:
+      1. DATABASE_URL — pre-encoded Fly.io secret (password already percent-encoded);
+         used verbatim after driver/SSL swap — no re-encoding.
+      2. SUPABASE_CONNECTION_STRING — direct port 5432 (IPv6 only from Docker)
+      3. SUPABASE_POOLED_CONNECTION_STRING — port 6543, IPv4-routable from Docker;
+         password may contain raw special chars — stripped of template brackets and re-encoded.
     """
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        # Pre-encoded: just swap driver and SSL param style, no password re-encoding.
+        url = database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+        url = url.replace("?ssl=require", "?sslmode=require").replace("&ssl=require", "&sslmode=require")
+        return url
+
     raw = (
         os.environ.get("SUPABASE_CONNECTION_STRING")
         or os.environ.get("SUPABASE_POOLED_CONNECTION_STRING")
     )
     if not raw:
         raise RuntimeError(
-            "Neither SUPABASE_CONNECTION_STRING nor SUPABASE_POOLED_CONNECTION_STRING is set."
+            "No database URL found. Set DATABASE_URL, SUPABASE_CONNECTION_STRING, "
+            "or SUPABASE_POOLED_CONNECTION_STRING."
         )
     # Swap driver: asyncpg → psycopg2 (Alembic requires synchronous connection)
     raw = raw.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
