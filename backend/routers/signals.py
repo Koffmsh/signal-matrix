@@ -99,6 +99,7 @@ def run_pivots(db: Session) -> dict:
                     pivot_c_date     = tf_data.get("pivot_c_date"),
                     pivot_d_date     = tf_data.get("pivot_d_date"),
                     structural_state = tf_data.get("structural_state"),
+                    d_extended       = bool(tf_data.get("d_extended") or False),
                     calculated_at    = now,
                 )
 
@@ -183,6 +184,7 @@ def run_output(db: Session) -> dict:
                     pivot_c          = tf_data.get("pivot_c"),
                     lrr_extended     = tf_data.get("lrr_extended", False),
                     hrr_extended     = tf_data.get("hrr_extended", False),
+                    d_extended       = bool(tf_data.get("d_extended") or False),
                     obv_direction    = data.get("obv_direction"),
                     obv_confirming   = data.get("obv_confirming"),
                     calculated_at    = now,
@@ -360,6 +362,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
             "hrr_warn":         bool(row.hrr_warn)      if row.hrr_warn      is not None else False,
             "lrr_extended":     bool(row.lrr_extended)  if row.lrr_extended  is not None else False,
             "hrr_extended":     bool(row.hrr_extended)  if row.hrr_extended  is not None else False,
+            "d_extended":       bool(row.d_extended)    if row.d_extended    is not None else False,
             "pivot_b":          row.pivot_b,
             "pivot_c":          row.pivot_c,
         }

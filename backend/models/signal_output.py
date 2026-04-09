@@ -29,6 +29,7 @@ class SignalOutput(Base):
     obv_confirming   = Column(Boolean, nullable=True)   # True when OBV direction aligns with viewpoint
     lrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close < prior LRR (bearish)
     hrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close > prior HRR (bullish)
+    d_extended       = Column(Boolean, nullable=True)   # True when D > B + abs(B-C); B becomes break level
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

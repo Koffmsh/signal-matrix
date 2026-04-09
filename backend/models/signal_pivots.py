@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Integer, DateTime, UniqueConstraint
+from sqlalchemy import Column, String, Float, Integer, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -21,7 +21,8 @@ class SignalPivots(Base):
     pivot_c_date     = Column(String, nullable=True)
     pivot_d_date     = Column(String, nullable=True)
 
-    structural_state = Column(String, nullable=True)
+    structural_state = Column(String,  nullable=True)
+    d_extended       = Column(Boolean, nullable=True)   # True when D > B + abs(B-C); B becomes break level
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

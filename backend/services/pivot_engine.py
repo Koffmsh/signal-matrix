@@ -395,9 +395,16 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
       - D price (running high/low established when price closes through B)
       - D index in the prices array
       - Structural state string
+      - d_extended boolean (True when D has pushed > one BC range beyond B)
 
     Break state naming: BREAK_OF_TRADE for 'trade' timeframe,
                         BREAK_OF_TREND for 'trend' and 'lt'.
+
+    EXTENDED is never returned as a structural_state — it is communicated
+    exclusively via the d_extended boolean. Structural state remains
+    UPTREND_VALID / DOWNTREND_VALID when extended and unbroken.
+    When the extension threshold is crossed AND price breaks B, the normal
+    break state machine fires using B (not C) as the threshold.
     """
     direction     = abc["direction"]
     c_idx         = abc["c_idx"]
@@ -410,13 +417,13 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         # C is the line in the sand — break fires when price closes below current C
         if current_price < c_price:
             if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "uptrend"):
-                return None, None, "BREAK_CONFIRMED"
-            return None, None, break_state
+                return None, None, "BREAK_CONFIRMED", False
+            return None, None, break_state, False
 
         # Price above C — check if an unresolved confirmed break still applies
         # (recovered above C but never cleared B)
         if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "uptrend"):
-            return None, None, "BREAK_CONFIRMED"
+            return None, None, "BREAK_CONFIRMED", False
 
         # D is established the moment price closes above B.
         # Scan from b_idx+1 (not c_idx+1) so a breach that occurred before a
@@ -429,8 +436,8 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
                 break
 
         if first_breach is None:
-            # B never breached — ABC valid, awaiting extension
-            return None, None, "UPTREND_VALID"
+            # B never breached — ABC valid, awaiting D
+            return None, None, "UPTREND_VALID", False
 
         # D = running high from first breach to end (inclusive)
         d_slice     = prices[first_breach:]
@@ -438,23 +445,33 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
-        # Structural EXTENDED: D has pushed more than one full BC range beyond B.
-        # Break level shifts from C to B — conviction_engine._compute_direction handles it.
-        state = "UPTREND_VALID"
-        if d_price > b_price + abs(b_price - c_price):
-            state = "EXTENDED"
-        return round(d_price, 4), d_idx, state
+        # d_extended: D has pushed more than one full BC range beyond B.
+        # Break level shifts from C to B when d_extended is True.
+        # State remains UPTREND_VALID — EXTENDED is no longer a state value.
+        d_extended = d_price > b_price + abs(b_price - c_price)
+
+        if d_extended:
+            if current_price < b_price:
+                # price below B — break level (B) breached; check if confirmed
+                if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
+                    return d_price, d_idx, "BREAK_CONFIRMED", True
+                return d_price, d_idx, break_state, True
+            # price at or above B — check for unresolved confirmed break below B
+            if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
+                return d_price, d_idx, "BREAK_CONFIRMED", True
+
+        return round(d_price, 4), d_idx, "UPTREND_VALID", d_extended
 
     else:  # downtrend
         # C is the line in the sand — break fires when price closes above current C
         if current_price > c_price:
             if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "downtrend"):
-                return None, None, "BREAK_CONFIRMED"
-            return None, None, break_state
+                return None, None, "BREAK_CONFIRMED", False
+            return None, None, break_state, False
 
         # Price below C — check if an unresolved confirmed break still applies
         if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "downtrend"):
-            return None, None, "BREAK_CONFIRMED"
+            return None, None, "BREAK_CONFIRMED", False
 
         # Scan from b_idx+1 so a breach before a dynamic C update is not missed
         b_idx        = abc["b_idx"]
@@ -465,7 +482,7 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
                 break
 
         if first_breach is None:
-            return None, None, "DOWNTREND_VALID"
+            return None, None, "DOWNTREND_VALID", False
 
         # D = running low from first breach to end (inclusive)
         d_slice     = prices[first_breach:]
@@ -473,10 +490,22 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
-        state = "DOWNTREND_VALID"
-        if d_price < b_price - abs(b_price - c_price):
-            state = "EXTENDED"
-        return round(d_price, 4), d_idx, state
+        # d_extended: D has pushed more than one full BC range beyond B.
+        # Break level shifts from C to B when d_extended is True.
+        # State remains DOWNTREND_VALID — EXTENDED is no longer a state value.
+        d_extended = d_price < b_price - abs(b_price - c_price)
+
+        if d_extended:
+            if current_price > b_price:
+                # price above B — break level (B) breached; check if confirmed
+                if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
+                    return d_price, d_idx, "BREAK_CONFIRMED", True
+                return d_price, d_idx, break_state, True
+            # price at or below B — check for unresolved confirmed break above B
+            if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
+                return d_price, d_idx, "BREAK_CONFIRMED", True
+
+        return round(d_price, 4), d_idx, "DOWNTREND_VALID", d_extended
 
 
 # ── Per-timeframe computation ─────────────────────────────────────────────────
@@ -506,7 +535,7 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
     # Update C to the most recent confirmed structural level
     abc = update_c_dynamically(abc, pivot_highs, pivot_lows)
 
-    d_price, d_idx, state = compute_d_and_state(abc, prices, timeframe)
+    d_price, d_idx, state, d_extended = compute_d_and_state(abc, prices, timeframe)
 
     # Stale C check — if pivot_c exceeds the timeframe cutoff, treat as NO_STRUCTURE
     max_c_age = _STALE_C_DAYS.get(timeframe)
@@ -529,6 +558,7 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
         "pivot_c_date":     dates[abc["c_idx"]] if dates else None,
         "pivot_d_date":     dates[d_idx]         if (d_idx is not None and dates) else None,
         "structural_state": state,
+        "d_extended":       d_extended,
         "direction":        abc["direction"],
     }
 

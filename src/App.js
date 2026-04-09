@@ -112,6 +112,7 @@ function generateMockData(ticker) {
     tradeC: null, tradeB: null,
     trendC: null, trendB: null,
     ltC: null, ltB: null,
+    tradeExtended: false, trendExtended: false,
   };
 }
 
@@ -175,10 +176,12 @@ function mergeSignalData(row, signalMap) {
     tradeHrrExtended: sig.trade?.hrr_extended      ?? false,
     trendLrrExtended: sig.trend?.lrr_extended      ?? false,
     trendHrrExtended: sig.trend?.hrr_extended      ?? false,
-    tradeC:       sig.trade?.pivot_c           ?? null,
-    tradeB:       sig.trade?.pivot_b           ?? null,
-    trendC:       sig.trend?.pivot_c           ?? null,
-    trendB:       sig.trend?.pivot_b           ?? null,
+    tradeC:        sig.trade?.pivot_c           ?? null,
+    tradeB:        sig.trade?.pivot_b           ?? null,
+    trendC:        sig.trend?.pivot_c           ?? null,
+    trendB:        sig.trend?.pivot_b           ?? null,
+    tradeExtended: sig.trade?.d_extended        ?? false,
+    trendExtended: sig.trend?.d_extended        ?? false,
     ltC:           sig.lt?.pivot_c              ?? null,
     ltB:           sig.lt?.pivot_b              ?? null,
     viewpointSince: sig.viewpoint_since         ?? null,
@@ -219,25 +222,29 @@ const dirRangeColor = (dir, isWarn) => isWarn ? "#f0b429" : dirColor(dir);
 const fmtWarnPrice = (v) => v != null
   ? `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   : null;
-const warnTip = (dir, which, cVal, bVal) => {
+const warnTip = (dir, which, cVal, bVal, isExtended = false) => {
   const c = fmtWarnPrice(cVal);
   const b = fmtWarnPrice(bVal);
   if (dir === "Bullish")
     return which === "lrr"
-      ? `LRR is below C${c ? ` (${c})` : ""} — approaching trade invalidation level`
+      ? isExtended
+        ? `LRR is below B${b ? ` (${b})` : ""} — approaching break level (EXTENDED: B replaces C)`
+        : `LRR is below C${c ? ` (${c})` : ""} — approaching trade invalidation level`
       : `HRR is below B${b ? ` (${b})` : ""} — target doesn't reach prior swing high`;
   if (dir === "Bearish")
     return which === "hrr"
-      ? `HRR is above C${c ? ` (${c})` : ""} — approaching trade invalidation level`
+      ? isExtended
+        ? `HRR is above B${b ? ` (${b})` : ""} — approaching break level (EXTENDED: B replaces C)`
+        : `HRR is above C${c ? ` (${c})` : ""} — approaching trade invalidation level`
       : `LRR is above B${b ? ` (${b})` : ""} — target doesn't reach prior swing low`;
   return "Warning threshold breached";
 };
 const stateColor = (s)  =>
-  !s                    ? "#8899aa" :
-  s.includes("VALID")   ? "#00e5a0" :
-  s === "EXTENDED"      ? "#00e5a0" :
-  s.includes("WARN")    ? "#f0b429" :
-  s.includes("BREAK")   ? "#ff4d6d" : "#8899aa";
+  !s                          ? "#8899aa" :
+  s.includes("VALID")         ? "#00e5a0" :
+  s === "BREAK_OF_TRADE"      ? "#f0b429" :
+  s === "BREAK_OF_TREND"      ? "#f0b429" :
+  s.includes("BREAK")         ? "#ff4d6d" : "#8899aa";
 
 // ── Multi-select dropdown ─────────────────────────────────────────────────────
 function MultiSelectDropdown({ label, options, selected, onChange }) {
@@ -597,13 +604,13 @@ function Dashboard() {
         {/* Trade LRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
-          {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
           {row.tradeLrrExtended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↓</span>}
         </td>
         {/* Trade HRR */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
-          {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
           {row.tradeHrrExtended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↑</span>}
         </td>
         {/* Trend Dir */}
@@ -611,7 +618,7 @@ function Dashboard() {
         {/* Trend Level — MA100 floor (Bullish) or ceiling (Bearish); blank when Neutral */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
-          {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB, row.trendExtended)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
         {/* Asset Class — moved to far right, tightened */}
         <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -886,6 +893,8 @@ function Dashboard() {
 
         // fields: [label, value, color, isState, warnTip?]
         // warnTip = string → wraps value in <span title> for ⚠ tooltip
+        const tradeBreakIsB = row.tradeExtended || false;
+        const trendBreakIsB = row.trendExtended || false;
         const fields = [
           ["Close",        fmtPrice(row.close),                                                          "#c8d8e8",                              false],
           ["Viewpoint",    row.viewpoint,                                                                  vpColor(row.viewpoint),                 false],
@@ -896,16 +905,17 @@ function Dashboard() {
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
-          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}`,  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB) : null],
-          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}`,  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB) : null],
-          ["Trade C",      fmtPrice(row.tradeC),                                                          "#8899aa",                                                  false],
-          ["Trade B",      fmtPrice(row.tradeB),                                                          "#8899aa",                                                  false],
+          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}`,  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
+          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}`,  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
+          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
+          ["Trade B" + (tradeBreakIsB ? " *" : ""),  fmtPrice(row.tradeB), tradeBreakIsB  ? "#f0b429" : "#8899aa", false, tradeBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
           ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
           ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
           ...(row.trendDir !== "Neutral" && row.trendLRR != null ? [
-            ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB) : null],
+            ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB, trendBreakIsB) : null],
           ] : []),
-          ["Trend C",      fmtPrice(row.trendC),                                                          "#8899aa",                                                  false],
+          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? "Active break level — invalidates trend on close through" : null],
+          ["Trend B" + (trendBreakIsB ? " *" : ""),  fmtPrice(row.trendB), trendBreakIsB  ? "#f0b429" : "#8899aa", false, trendBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
           ["Tail Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
           ...(row.ltDir !== "Neutral" && row.ltLRR != null ? [

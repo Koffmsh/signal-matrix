@@ -192,26 +192,26 @@ def compute_tail_level(ma200: float | None, prices: list,
 # ── Direction determination ───────────────────────────────────────────────────
 
 def _compute_direction(price: float, c: float | None, state: str,
-                       pivot_direction: str | None, b: float | None = None) -> str:
+                       pivot_direction: str | None) -> str:
     """
     Derive Bullish / Bearish / Neutral for one timeframe.
 
-    C is the invalidation level. When structurally EXTENDED (D > B + bc_range),
-    the break level shifts to B — direction checks price vs B instead of C.
+    C is the invalidation level for normal structures. When d_extended is True,
+    the pivot engine has already handled the B-based break state machine and will
+    have returned BREAK_OF_TRADE/BREAK_CONFIRMED if B was breached — so this
+    function only sees the resulting clean state values.
 
     Direction is determined by pivots only — H (and therefore LRR/HRR) has no role.
     """
-    if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "NO_STRUCTURE", "BREAK_CONFIRMED"):
+    if state in ("BREAK_CONFIRMED", "NO_STRUCTURE"):
         return "Neutral"
     if pivot_direction is None:
         return "Neutral"
 
-    # EXTENDED: B is the new break level
-    if state == "EXTENDED" and b is not None:
-        if pivot_direction == "uptrend":
-            return "Bullish" if price > b else "Neutral"
-        if pivot_direction == "downtrend":
-            return "Bearish" if price < b else "Neutral"
+    # BREAK_OF_TRADE / BREAK_OF_TREND: first close through break level — direction holds
+    # until BREAK_CONFIRMED (2nd consecutive close). State cell shows the break warning.
+    if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND"):
+        return "Bullish" if pivot_direction == "uptrend" else "Bearish"
 
     if c is None:
         return "Neutral"
@@ -225,17 +225,24 @@ def _compute_direction(price: float, c: float | None, state: str,
 # ── WARNING state check ───────────────────────────────────────────────────────
 
 def is_warning(lrr: float | None, hrr: float | None,
-               c: float | None, pivot_direction: str | None) -> bool:
+               c: float | None, pivot_direction: str | None,
+               d_extended: bool = False,
+               b: float | None = None) -> bool:
     """
-    Structural WARNING: LRR drifted below C (uptrend) or HRR above C (downtrend).
+    Structural WARNING: LRR drifted below break level (uptrend) or HRR above break level (downtrend).
+    Break level = C normally; B when d_extended is True (D > B + bc_range).
     Applied to Trade timeframe only — Trend/LT use single levels.
+    WARNING is a boolean flag only — it is NOT written to structural_state.
     """
-    if c is None or lrr is None or hrr is None:
+    if pivot_direction is None:
+        return False
+    break_level = b if (d_extended and b is not None) else c
+    if break_level is None:
         return False
     if pivot_direction == "uptrend":
-        return lrr < c
+        return lrr is not None and lrr < break_level
     if pivot_direction == "downtrend":
-        return hrr > c
+        return hrr is not None and hrr > break_level
     return False
 
 
@@ -243,13 +250,16 @@ def is_warning(lrr: float | None, hrr: float | None,
 
 def _compute_warn_flags(tf: str, pivot_dir: str | None,
                         lrr: float | None, hrr: float | None,
-                        b: float | None, c: float | None) -> tuple:
+                        b: float | None, c: float | None,
+                        d_extended: bool = False) -> tuple:
     """
     Price-based pivot threshold flags (⚠ indicators on LRR/HRR cells).
 
-    Trade:  LRR ⚠ when uptrend: lrr < c  · downtrend: lrr > b
-            HRR ⚠ when uptrend: hrr < b  · downtrend: hrr > c
-    Trend:  LRR ⚠ when uptrend: lrr < c  · downtrend: lrr > c
+    Break level = C normally; B when d_extended is True (D > B + bc_range).
+
+    Trade:  LRR ⚠ when uptrend: lrr < break_level  · downtrend: lrr > b
+            HRR ⚠ when uptrend: hrr < b             · downtrend: hrr > break_level
+    Trend:  LRR ⚠ when uptrend: lrr < break_level  · downtrend: lrr > break_level
             HRR = None → hrr_warn always False
     LT:     Never
 
@@ -261,20 +271,23 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
     lrr_warn = False
     hrr_warn = False
 
+    # Break level shifts from C to B when d_extended is True
+    break_level = b if (d_extended and b is not None) else c
+
     if tf == "trade":
         if pivot_dir == "uptrend":
-            lrr_warn = lrr is not None and c is not None and lrr < c
+            lrr_warn = lrr is not None and break_level is not None and lrr < break_level
             hrr_warn = hrr is not None and b is not None and hrr < b
         elif pivot_dir == "downtrend":
-            hrr_warn = hrr is not None and c is not None and hrr > c
+            hrr_warn = hrr is not None and break_level is not None and hrr > break_level
             lrr_warn = lrr is not None and b is not None and lrr > b
 
     elif tf == "trend":
         # lrr holds the Trend Level (single level); hrr is always None
         if pivot_dir == "uptrend":
-            lrr_warn = lrr is not None and c is not None and lrr < c
+            lrr_warn = lrr is not None and break_level is not None and lrr < break_level
         elif pivot_dir == "downtrend":
-            lrr_warn = lrr is not None and c is not None and lrr > c
+            lrr_warn = lrr is not None and break_level is not None and lrr > break_level
 
     return lrr_warn, hrr_warn
 
@@ -394,23 +407,23 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
             }
             continue
 
-        state     = pivot_row.structural_state or "NO_STRUCTURE"
-        pivot_dir = _infer_pivot_direction(pivot_row)
-        b = pivot_row.pivot_b
-        c = pivot_row.pivot_c
-        d = pivot_row.pivot_d
+        state      = pivot_row.structural_state or "NO_STRUCTURE"
+        pivot_dir  = _infer_pivot_direction(pivot_row)
+        b          = pivot_row.pivot_b
+        c          = pivot_row.pivot_c
+        d_extended = bool(getattr(pivot_row, "d_extended", False) or False)
 
-        # Direction — C-based (B when structurally EXTENDED)
-        direction = _compute_direction(price, c, state, pivot_dir, b=b)
+        # Direction — pivot engine has already applied B-based break logic when d_extended
+        direction = _compute_direction(price, c, state, pivot_dir)
 
         # ── LRR / HRR by timeframe ───────────────────────────────────────────
         if tf == "trade":
             lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trend, ma20_regime, pivot_dir)
 
-            # WARNING: LRR drifted below C (uptrend) or HRR above C (downtrend)
-            warning = is_warning(lrr, hrr, c, pivot_dir)
-            if warning:
-                state = "WARNING"
+            # WARNING: LRR drifted below break level (uptrend) or HRR above break level (downtrend)
+            # Break level = C normally; B when d_extended is True.
+            # WARNING is a boolean flag only — structural_state is never overridden to "WARNING".
+            warning = is_warning(lrr, hrr, c, pivot_dir, d_extended=d_extended, b=b)
 
             # Daily overshoot flag (B5) — tactical, does NOT change structural_state
             hrr_extended = False
@@ -437,7 +450,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
             hrr_extended = False
             lrr_extended = False
 
-        lrr_warn, hrr_warn = _compute_warn_flags(tf, pivot_dir, lrr, hrr, b, c)
+        lrr_warn, hrr_warn = _compute_warn_flags(tf, pivot_dir, lrr, hrr, b, c, d_extended=d_extended)
 
         timeframe_results[tf] = {
             "lrr":              lrr,
@@ -452,6 +465,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
             "hrr_extended":     hrr_extended,
             "pivot_b":          b,
             "pivot_c":          c,
+            "d_extended":       d_extended,
         }
 
     # ── Viewpoint (trade + trend alignment) ─────────────────────────────────
