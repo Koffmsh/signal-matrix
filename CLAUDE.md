@@ -168,6 +168,12 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **`_d_has_established(abc, prices)`** — returns True if price has ever closed through B (above B for uptrend, below B for downtrend). Guards the tiebreak: without D, the newer ABC is geometric only.
 - **Rule:** Do not simplify `find_abc_structure()` back to "most recent C wins" — the priority logic is load-bearing
 
+### LT Bar Window Reduced: 90 → 50 (`pivot_engine.py`)
+- Old `TIMEFRAMES["lt"] = 90` required 180 bars of surrounding context — major reversals were invisible for ~9 months after they occurred
+- **Problem:** GLD's $495 peak (Jan 2026) was undetectable at bw=90 as late as April 2026 (~50 bars old); showed NO_STRUCTURE despite a clear multi-year uptrend
+- **Fixed:** `TIMEFRAMES["lt"] = 50` — pivots need ~2.5 months of context each side; 5x the trend window (bw=10), still clearly "structural"
+- **Rule:** Do not increase LT bar_window above 50 without verifying that 3–4 month old major reversals still register
+
 ### Trend Bar Window Reduced: 20 → 10 (`pivot_engine.py`)
 - Old `TIMEFRAMES["trend"] = 20` required 40 bars of surrounding context to confirm a pivot, making it nearly impossible for the trend engine to detect a new reversal within 40 trading days (~2 months)
 - **Problem:** MSFT's Jan-Mar 2026 collapse was invisible to the trend engine at bw=20 — trend showed NO_STRUCTURE / Neutral despite a clear downtrend
@@ -941,7 +947,7 @@ D = running low              — established when price closes below B
 **Pivot detection bar windows:**
 - Trade: **5 bars** (before AND after — both sides required)
 - Trend: **10 bars** (before AND after — both sides required)
-- Long Term: 90 bars (before AND after — both sides required)
+- Long Term: **50 bars** (before AND after — both sides required)
 
 **CRITICAL — Pivot confirmation requires bar_window bars on BOTH sides:**
 ```python
