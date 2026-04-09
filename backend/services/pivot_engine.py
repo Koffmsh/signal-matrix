@@ -45,7 +45,7 @@ def _trading_days_since(date_str: str) -> int:
 TIMEFRAMES = {
     "trade": 5,
     "trend": 10,
-    "lt":    90,
+    "lt":    50,
 }
 
 
