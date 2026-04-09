@@ -31,7 +31,7 @@ backend/signal_matrix.db
 # temp files
 signals_tmp.json
 *.json.tmp
-"C:UsersshannAppDataLocalTempstored_signals.json"
+*stored_signals.json
 
 # binary docs (unreadable by Neo — use .txt copies)
 *.docx
