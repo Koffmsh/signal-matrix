@@ -3,7 +3,8 @@
 ## Important Note for Neo
 The `.docx` spec files in `Docs/` cannot be read by Claude Code.
 Readable `.txt` copies exist:
-- `Docs/SignalMatrix_Spec_v1.6.txt` — **current** full platform spec (Phases 1–5 complete, all methodology, signal engine, architecture, LRR/HRR redesign, ENTRY signal, OBV, VIX gauge, futures)
+- `Docs/SignalMatrix_Spec_v1.7.txt` — **current** full platform spec (v1.7 — BB LRR/HRR framework, Trend/Tail Levels, proximity conviction, ENTRY prox threshold, EXTENDED redesign)
+- `Docs/SignalMatrix_Spec_v1.6.txt` — **superseded** by v1.7 (Phases 1–5 complete, OBV, VIX gauge, futures — retained for reference)
 - `Docs/SignalMatrix_Spec_v1.5.txt` — prior version (Phase 4 era — superseded by v1.6)
 - `Docs/SignalMatrix_Phase5_Spec_v1.0.txt` — Phase 5 spec (Supabase, Fly.io, Schwab OAuth, IV)
 Neo should read the relevant spec before making methodology or architecture changes.
@@ -126,11 +127,17 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
 - **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
 
-### FORMING State Removed — EXTENDED Redefined (`pivot_engine.py`, `conviction_engine.py`)
+### FORMING State Removed — EXTENDED Redefined (`pivot_engine.py`, `conviction_engine.py`) — v1.7
 - **FORMING eliminated:** "Pullback from D, no new C yet" is now simply `UPTREND_VALID` / `DOWNTREND_VALID` — the trend is confirmed, the pullback is normal operation, no special state needed
-- **EXTENDED redefined:** previously meant "price IS at D extreme" (fragile equality check). Now means: today's close exceeded yesterday's HRR (bullish) or yesterday's LRR (bearish) — price has overshot the calculated target range
-- **EXTENDED detection:** `signals.py` reads existing `signal_output.hrr` / `signal_output.lrr` before overwriting them; passes as `prior_ranges` to `compute_output`; conviction_engine compares today's close against those prior values
-- **EXTENDED display:** state cell stays green (healthy structure); ↑ flag appears on HRR cell (bullish overshoot) or ↓ flag on LRR cell (bearish overshoot) with tooltip "do not chase"
+- **EXTENDED — structural definition (v1.7):** D has pushed more than one full BC range beyond B → structural state shifts to EXTENDED; break_level shifts from C to B (persistent until new C forms)
+  ```python
+  bc_range = abs(B - C)
+  if D > B + bc_range: state = EXTENDED; break_level = B   # uptrend
+  if D < B - bc_range: state = EXTENDED; break_level = B   # downtrend
+  ```
+  Reversion: when new C forms (D becomes new B, new C established) → state returns to UPTREND_VALID / DOWNTREND_VALID; break_level returns to new C
+- **Daily overshoot flag (separate, tactical):** `signals.py` reads existing `signal_output.hrr` / `signal_output.lrr` before overwriting them; passes as `prior_ranges` to `compute_output`; conviction_engine compares today's close against those prior values → sets `lrr_extended` / `hrr_extended` Boolean fields. This is NOT the structural EXTENDED state — these two concepts are independent
+- **Daily overshoot display:** ↑ flag appears on HRR cell (bullish overshoot) or ↓ flag on LRR cell (bearish overshoot) with "do not chase" tooltip; state cell still shows UPTREND_VALID / DOWNTREND_VALID
 - **States that force Neutral:** `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` only
 - **EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID** all allow Bullish/Bearish direction
 
@@ -205,10 +212,14 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Viewpoint, ALIGNED ONLY, and ALERTS filters unchanged (remain as buttons)
 - Filters apply instantly on selection — no submit button
 
-### ENTRY Signal Column — Null-Safe Sort Comparator (`App.js`)
+### ENTRY Signal Column — Proximity-Based (v1.7) (`App.js`)
 - `entrySignal` is computed in the `ALL_DATA` useMemo pipeline: `"BUY"` | `"SELL"` | `null`
-- **BUY conditions:** Viewpoint = Bullish AND Trade Dir = Bullish AND Trend Dir = Bullish AND `Math.abs(close - tradeLRR) / tradeLRR ≤ 0.02`
-- **SELL conditions:** Viewpoint = Bearish AND Trade Dir = Bearish AND Trend Dir = Bearish AND `Math.abs(close - tradeHRR) / tradeHRR ≤ 0.02`
+- **BUY conditions:** Viewpoint = Bullish AND Trade Dir = Bullish AND Trend Dir = Bullish AND `prox_bullish > 0.85`
+  - `prox_bullish = 1 - (close - tradeLRR) / (tradeHRR - tradeLRR)` — peaks at 1.0 when close = LRR
+- **SELL conditions:** Viewpoint = Bearish AND Trade Dir = Bearish AND Trend Dir = Bearish AND `prox_bearish > 0.85`
+  - `prox_bearish = (close - tradeLRR) / (tradeHRR - tradeLRR)` — peaks at 1.0 when close = HRR
+- **Replaces:** 2%-of-price absolute threshold — not normalized to instrument volatility
+- **Why prox > 0.85 works:** HRR - LRR is derived from STD20 → already volatility-scaled per instrument. prox > 0.85 = within bottom 15% of the range (from entry side) for any ticker
 - Neutral viewpoint never triggers ENTRY signal regardless of price proximity
 - Sort comparator must handle `null` — `typeof null === "object"` causes NaN on subtraction
 - **Fix:** Null values explicitly sorted to bottom before string/numeric comparison in the sort function
@@ -227,11 +238,38 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
 - **Production reset required after this fix:** run `DELETE FROM iv_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
 
-### Conviction Score Rebalance — Rel IV Removed
-- Old weights: Trade H × 0.55 + Trend H × 0.25 + IV Score × 0.20
-- **New weights:** Trade H × 0.65 + Trend H × 0.35
-- Rel IV retained for LRR/HRR width scaling only — no longer in conviction formula
-- Volume multiplier unchanged: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (now OBV-driven)
+### Conviction Score Rebalance — v1.7 (50/50 + Proximity Boost)
+- Old weights (v1.6): Trade H × 0.65 + Trend H × 0.35
+- **v1.7 formula:** equal-weight H split + direction-aware proximity boost
+  ```
+  base = (H_trade × 0.50 + H_trend × 0.50) × 100
+  conviction_raw = base × (0.70 + 0.30 × prox)
+  ```
+  where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
+- Rel IV **removed from conviction formula entirely** — informational display in popup only; NOT in LRR/HRR formula (v1.7)
+- Volume multiplier unchanged: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (OBV-driven)
+
+### Bollinger Band LRR/HRR — v1.7 Formula Replaces sigma/anchor/bc_range (`conviction_engine.py`)
+- **Supersedes:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas — do not use v1.6 or earlier
+- **New formula:** `LRR = MA20 - k_lrr × STD20` ; `HRR = MA20 + k_hrr × STD20` (regime-switched)
+  ```
+  k_lrr    = 3 - 2 × H_trade     (regime-agnostic; wide floor when H low, tight when H high)
+  k_hrr_up = 3 - 2 × H_trend     (uptrend regime — BB_Upper; same shape as k_lrr)
+  k_hrr_down = max(0, H_trend - 0.5)   (downtrend regime — tight ceiling ≈ MA20; clamped ≥ 0)
+  ```
+- **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction. `ma20_regime` stored in `price_cache`. 1 close on wrong side of MA20 is forgiven (mirrors BREAK_OF_TRADE logic); day 2 flips regime and HRR formula
+- **k_hrr_down clamping:** `max(0, H_trend - 0.5)` prevents negative k when H_trend < 0.5 — gives HRR = MA20 exactly in mean-reverting regimes
+- **STD20:** 21-day realized vol in dollar terms: `std(log_returns[-21:]) × close` — same `_sigma()` function
+- **Rel IV completely removed from LRR/HRR** — was used for f_hrr/f_lrr scaling in v1.6; now purely informational
+- **MA20 / STD20 / MA20 regime stored in price_cache** — written on every price fetch alongside MA100 / MA200
+
+### Trend Level and Tail Level — Single MA (v1.7, replaces dual LRR/HRR for Trend and LT)
+- **Supersedes:** Dual Trend LRR/HRR and LT LRR/HRR bands — only one level per timeframe now
+- **Trend Level:** MA100, shown only when Trend Dir ≠ Neutral AND 10-day slope confirms direction
+  - Uptrend: green floor (buy/add zone); Downtrend: red ceiling (sell/short zone)
+- **Tail Level:** MA200, shown only when LT Dir ≠ Neutral AND 20-day slope confirms direction
+- **Code/DB key unchanged:** still `"lt"` everywhere in models and DB; display label only is "Tail"
+- **Trend HRR removed from table and popup** — only one level per Trend/Tail timeframe
 
 ### Supabase Direct Connection — IPv6 Only from Docker (`alembic/env.py`)
 - `db.wxqioudsteiwaazrgbao.supabase.co:5432` resolves to **IPv6 only** inside the Docker container
@@ -344,7 +382,9 @@ signal-matrix/
 │   ├── launch.json
 │   └── settings.local.json
 ├── Docs/
-│   ├── SignalMatrix_Spec_v1.5.txt         ← ✅ Neo's readable copy — full spec (v1.5)
+│   ├── SignalMatrix_Spec_v1.7.txt         ← ✅ Neo's readable copy — CURRENT spec (v1.7)
+│   ├── SignalMatrix_Spec_v1.6.txt         ← ✅ Neo's readable copy — superseded by v1.7
+│   ├── SignalMatrix_Spec_v1.5.txt         ← ✅ Neo's readable copy — Phase 4 era (superseded)
 │   ├── SignalMatrix_Phase5_Spec_v1.0.docx ← spec — NOT readable by Neo (.docx)
 │   ├── SignalMatrix_Phase5_Spec_v1.0.txt  ← ✅ Neo's readable copy — Phase 5 spec
 │   └── QuadTracker_Spec_v1.1.docx        ← spec — NOT readable by Neo (.docx)
@@ -381,7 +421,10 @@ signal-matrix/
 │   ├── alembic/                           ← Task 5.1 — DB migration tooling ✅
 │   │   ├── env.py
 │   │   └── versions/
-│   │       └── aa2d62ea88e4_initial_schema.py
+│   │       ├── aa2d62ea88e4_initial_schema.py
+│   │       ├── b3f1c9d2e4a7_price_cache_add_ma_columns.py   ← v1.7 Phase A
+│   │       ├── c9a4e1f2b8d3_signal_output_add_ma_levels.py  ← v1.7 Phase B
+│   │       └── d5e3f1a2c4b7_signal_output_add_extended_flags.py ← v1.7 Phase C
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -746,7 +789,7 @@ Must be environment-variable driven — not hardcoded to localhost:8000.
 - **Lookback windows:**
   - Trade: 63 trading days
   - Trend: 252 trading days
-  - Long Term: 756 trading days
+  - Tail / Long Term: 756 trading days
 - **Minimum bars required:** same as lookback — return null if insufficient, do not skip ticker
 - **D = 2 − H** (Fractal Dimension derived directly from H)
 
@@ -762,25 +805,34 @@ def dfa(prices, window):
     # H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk
 ```
 
-### Conviction Score Formula
+### Conviction Score Formula — v1.7 (Equal Weight + Proximity Boost)
 ```
-Base Score = weighted average:
-  Trade H (DFA, 63-day)   → 65%   primary signal
-  Trend H (DFA, 252-day)  → 35%   alignment filter
+Base Score = equal-weight Hurst:
+  Trade H (DFA, 63-day)   → 50%
+  Trend H (DFA, 252-day)  → 50%
 
-Rel IV removed from conviction formula — used for LRR/HRR width scaling only.
+Proximity boost (direction-aware — peaks at entry zone):
+  Bullish: prox = 1 - (close - trade_lrr) / (trade_hrr - trade_lrr)   # 1.0 at LRR, 0.0 at HRR
+  Bearish: prox = (close - trade_lrr) / (trade_hrr - trade_lrr)        # 1.0 at HRR, 0.0 at LRR
+  Clamp:   prox = max(0.0, min(1.0, prox))
+
+  conviction_raw = base × (0.70 + 0.30 × prox)
+    → At ideal entry (prox = 1.0): conviction_raw = base × 1.00  (full boost)
+    → At opposite extreme (prox = 0.0): conviction_raw = base × 0.70  (70% floor)
+
+Rel IV removed from conviction formula entirely (v1.7) — informational popup only.
 
 Volume Multiplier (OBV pivot direction vs Trade Dir — applied after base score):
   Confirming  → × 1.15   Vol Direction matches Trade Dir
   Neutral     → × 1.00   Vol Direction Neutral or mixed
   Diverging   → × 0.80   Vol Direction opposes Trade Dir
 
-Final Conviction = Base Score × Volume Multiplier
+Final Conviction = conviction_raw × Volume Multiplier
 
 CRITICAL: Conviction is BLANK (not calculated) when Viewpoint = Neutral
 ```
 
-**Long Term H (756-day):** calculated and stored, displayed in popup as context only.
+**Tail/Long Term H (756-day):** calculated and stored, displayed in popup as context only.
 Not used in conviction formula.
 
 ### Direction Determination — Pivots Only (H has NO role)
@@ -812,18 +864,21 @@ else:
 | Uptrend + price above C | Bullish |
 | Downtrend + price below C | Bearish |
 | Break of Trade (one close through C) | Neutral — immediate, no two-close rule |
-| FORMING — pullback from D, price still above C | Bullish (trend intact) |
-| FORMING — bounce from D, price still below C | Bearish (trend intact) |
+| Pullback from D, price still above C | Bullish (UPTREND_VALID — trend intact; FORMING state eliminated v1.7) |
+| Bounce from D, price still below C | Bearish (DOWNTREND_VALID — trend intact; FORMING state eliminated v1.7) |
+| EXTENDED (structural: D > B + bc_range) | Bullish or Bearish — EXTENDED allows direction; break_level = B |
 | Insufficient pivot history | Neutral |
 | Everything else | Neutral |
 
 ### LRR / HRR Display — Always Show
 
-LRR and HRR always calculate and always display regardless of viewpoint.
+Trade LRR and HRR always calculate and always display regardless of viewpoint.
+Trend Level and Tail Level display only when direction is not Neutral AND slope confirms direction.
 Color communicates the state:
-- Bullish viewpoint → green
-- Bearish viewpoint → red
-- Neutral viewpoint → grey (`#8899aa`)
+- Bullish direction → green
+- Bearish direction → red
+- Neutral direction → grey (`#8899aa`)
+Each LRR/HRR cell uses its own timeframe's direction for color — not the overall viewpoint.
 
 ### Viewpoint States — FINAL (LOCKED)
 
@@ -953,125 +1008,89 @@ NOT $427.13 (stale C)
 **Uptrend:** Enter at LRR, target HRR (above D)
 **Downtrend:** Enter at HRR (bounce), target LRR (below D)
 
-### LRR / HRR Formula — Redesigned (conviction_engine.py)
+### LRR / HRR Formula — Bollinger Band Framework v1.7 (`conviction_engine.py`)
 
-#### Anchor Selection Logic (LOCKED)
+**SUPERSEDES:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas from v1.6 and earlier. Do not use.
+
+#### Inputs
 ```python
-bc_range = abs(B - C)
-
-# Downtrend
-if D < B - bc_range:    # D is more than one full bc_range below B
-    anchor = B          # deep impulse — B is resistance, unlikely to reach C
-else:
-    anchor = C          # shallow new low — bounce likely reaches toward C
-
-# Uptrend (mirror)
-if D > B + bc_range:    # D is more than one full bc_range above B
-    anchor = B          # extended move — B is support, unlikely to reach C
-else:
-    anchor = C          # shallow new high — pullback likely reaches toward C
-```
-The bc_range is the natural unit of measurement for this structure. If D exceeds B by more than
-one full B-C distance, the move is large enough that C is no longer a realistic near-term target —
-B becomes the ceiling. Under one full distance, the structure is shallow enough that C remains in play.
-
-**QQQ example:** B=597.03, C=616.68, bc_range=19.65, B-bc_range=577.38, D=558.28
-D (558.28) < B-bc_range (577.38) → anchor = B ✅ (deep impulse, $39 below B on a $20 bc_range)
-
----
-
-#### ⚠ SUPERSEDED — H_factor bucket lookup (replaced by continuous hf below)
-```
-# DO NOT USE — retained for reference only
-H > 0.65   →  hf = 0.95
-H 0.55–0.65 →  hf = 0.50
-H 0.50–0.55 →  hf = 0.05
-H < 0.50   →  hf = 0.00
+MA20   = 20-day simple moving average of close prices          # stored in price_cache.ma20
+STD20  = std(log_returns[-21:]) × close                        # 21-day realized vol in dollar terms
+         (same as _sigma() in conviction_engine.py)
+H_trade = Hurst exponent, Trade timeframe (63-day DFA)
+H_trend = Hurst exponent, Trend timeframe (252-day DFA)
+ma20_regime = 'uptrend' | 'downtrend'                          # stored in price_cache.ma20_regime
 ```
 
-#### ⚠ SUPERSEDED — bc_range width formula (replaced by sigma-based formula below)
+#### k Coefficients
 ```python
-# DO NOT USE — retained for reference only
-lrr = anchor + bc_range * (1 - hf) - sigma * lrr_mult   # uptrend
-hrr = anchor - bc_range * (1 - hf) + sigma * hrr_mult   # downtrend
+k_lrr      = 3 - 2 × H_trade      # LRR width — regime-agnostic
+k_hrr_up   = 3 - 2 × H_trend      # HRR in uptrend regime (BB_Upper)
+k_hrr_down = max(0, H_trend - 0.5) # HRR in downtrend regime (tiny k → HRR ≈ MA20); clamped ≥ 0
+
+# k_lrr behavior:
+#   H = 0.50 (random walk)    → k = 2.0  (standard 2σ lower band)
+#   H = 0.75 (strong trend)   → k = 1.5  (tighter floor — trend persisting)
+#   H = 0.25 (mean-reverting) → k = 2.5  (wider floor — more uncertainty)
 ```
 
-#### ⚠ SUPERSEDED — Rel IV Multipliers bucket table and trend-conditional formula
+#### MA20 Price Regime Switch — 2-Consecutive-Close Rule
 ```
-# DO NOT USE — both the original bucket table and the bias=0.40 trend-conditional
-# formula are superseded by the continuous f_hrr/f_lrr scaling below
+regime = "uptrend"   if 2+ consecutive closes ABOVE MA20
+regime = "downtrend" if 2+ consecutive closes BELOW MA20
 ```
+- Independent of ABC pivot structural direction. Pivots say "what is the trend." Regime says "where is price vs MA20 right now."
+- 1 close on wrong side of MA20 is forgiven (mirrors BREAK_OF_TRADE forgiveness logic). Day 2 flips regime.
+- On regime flip: HRR formula changes discretely on day 2. This is intentional.
+- Stored in `price_cache.ma20_regime` — written on every price fetch
 
----
-
-#### Continuous hf — Replaces Bucket Lookup
+#### LRR/HRR Formulas
 ```python
-hf = max(0.0, (H - 0.50) / 0.50)   # maps H 0.50–1.00 → hf 0.00–1.00
-# H < 0.50 → hf = 0.00 (mean-reverting, no trending signal)
-# H = 0.75 → hf = 0.50 (strong trend)
-# H = 1.00 → hf = 1.00 (theoretical ceiling)
+LRR = MA20 - k_lrr × STD20              # identical in both regimes — regime-agnostic
+
+# Uptrend regime:
+HRR = MA20 + k_hrr_up × STD20           # BB_Upper — lighten near here; wide target
+
+# Downtrend regime:
+HRR = MA20 + k_hrr_down × STD20         # ≈ MA20 — sell the bounce here; tight ceiling
 ```
 
-#### Continuous IV Scaling — Replaces Bucket Table
+#### Role Reversal in Downtrend
+```
+Uptrend:   LRR = floor (add longs, entry zone)
+           HRR = target ceiling (lighten, take profits)
+
+Downtrend: HRR = ceiling (sell/add short zone) — tight, ≈ MA20
+           LRR = profit target (cover shorts) — wide lower band, same formula as uptrend
+```
+
+#### Self-Correction Property
+When close drops below LRR → tomorrow's MA20 falls (new low enters window, old high exits) → LRR follows MA20 downward automatically. No hard floor/ceiling against C or D required — formula self-heals within 1–3 sessions.
+
+#### H Modifier Split (Intentional)
+- **LRR uses H_trade (63-day)** — more volatile, reacts to short-term changes in trend persistence; entry level adjusts dynamically
+- **HRR uses H_trend (252-day)** — stable, slow-moving, consistent target/ceiling reference
+
+#### Daily Overshoot Flag (Tactical — Separate from Structural EXTENDED)
 ```python
-k = 0.667   # calibrated to QQQ at IV Rank 30, hf=0.00
-f_hrr = (rel_iv / 100) * k          # 0.00 → 0.667 at IV Rank 100
-f_lrr = (rel_iv / 100) * k * 2.0   # 0.00 → 1.333 at IV Rank 100
-# f_lrr is always 2× f_hrr — consistent with SPX/QQQ back-solve
-# At IV Rank 0: HRR = anchor exactly, LRR = D exactly — pure structure
-# As IV rises: both pull away from structural levels proportionally
+# uptrend:   if today_close > prior_hrr → hrr_extended = True  (↑ flag, "do not chase" tooltip)
+# downtrend: if today_close < prior_lrr → lrr_extended = True  (↓ flag, "do not chase" tooltip)
+# Stored in signal_output.lrr_extended / hrr_extended (Boolean)
+# State cell still shows UPTREND_VALID / DOWNTREND_VALID — this is NOT the structural EXTENDED state
 ```
 
-#### FORMING State Formula — New (Replaces bc_range Logic)
-```python
-# Downtrend FORMING
-hrr = anchor - sigma * (1 - hf) * f_hrr   # anchor minus vol buffer
-lrr = D      - sigma * (1 + hf) * f_lrr   # D minus vol buffer
-
-# Uptrend FORMING (mirror)
-lrr = anchor + sigma * (1 - hf) * f_lrr   # anchor plus vol buffer
-hrr = D      + sigma * (1 + hf) * f_hrr   # D plus vol buffer
-```
-
-**H role:** high H (strong trend) → hf near 1.0 → `(1-hf)` near 0 → HRR closer to anchor;
-`(1+hf)` near 2.0 → LRR further from D. Fractal dimension drives the asymmetry.
-
-#### FORMING Warning Flags
-- **Downtrend:** `lrr_warn` fires when `LRR > D` — bounce has compressed downside probability
-- **Uptrend:** `hrr_warn` fires when `HRR < D` — pullback has compressed upside probability
-- Show computed value always — never clamp silently. Warning is information.
-
-#### Sigma Source
-```python
-# Current: 21-day realized vol in dollar terms
-sigma = std(log_returns[-21:]) * close
-
-# Future (once iv_history has 63+ Schwab observations):
-# sigma = (iv_history.implied_vol / sqrt(252)) * close
-# iv_history.implied_vol is raw annual implied vol decimal from Schwab options chain
-# NOT IV Rank — two different roles:
-#   implied_vol  → sigma (dollar width input)
-#   IV Rank      → f_hrr / f_lrr scaling (distribution input)
-```
-
-#### VALID and EXTENDED State Formulas
-- **DOWNTREND_VALID / UPTREND_VALID** — formula TBD next session.
-  Original bc_range × hf logic retained in code until replacement is locked.
-  Do not modify `conviction_engine.py` VALID state paths until spec is updated.
-- **EXTENDED** — formula TBD next session. Likely similar to FORMING but anchor logic differs.
-  Do not modify until spec is updated.
-
-**Sigma window:** 21 trading days — matches IV30 constant-maturity horizon. `_sigma()` in `conviction_engine.py`.
+#### STD20 Window
+21 trading days — `_sigma()` in `conviction_engine.py`. Matches IV30 constant-maturity horizon.
 
 ### Structural States
 
 | State | Uptrend Condition | Downtrend Condition | Display |
 |---|---|---|---|
 | UPTREND_VALID / DOWNTREND_VALID | C > A, price within LRR–HRR range | C < A, price within LRR–HRR range | Normal green/red |
-| EXTENDED | Today's close > yesterday's HRR | Today's close < yesterday's LRR | Green/red state cell; ↑/↓ flag on exceeded cell with tooltip |
+| EXTENDED (structural) | D > B + abs(B-C) — break_level shifts to B | D < B - abs(B-C) — break_level shifts to B | State cell shows EXTENDED; reverts when new C forms; ↑/↓ overshoot flag if daily overshoot also fires |
 | WARNING | LRR drifted below C (IV-driven only) | HRR drifted above C (IV-driven only) | LRR or HRR cell → amber |
 | BREAK_OF_TRADE | Price closes below C (trade tf) | Price closes above C (trade tf) | Trade Dir → Neutral, LRR/HRR grey — forgiveness: 1 day |
-| BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir → Neutral, Trend LRR grey — forgiveness: 1 day |
+| BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir → Neutral, Trend Level grey — forgiveness: 1 day |
 | BREAK_CONFIRMED | 2+ consecutive closes on wrong side of C | same | Permanently Neutral until price closes above B — recovery above C alone is not enough |
 | NO_STRUCTURE | Insufficient pivot history | Insufficient pivot history | LRR/HRR grey |
 
@@ -1093,7 +1112,7 @@ sigma = std(log_returns[-21:]) * close
 ```
 Trade:     C older than  60 trading days → NO_STRUCTURE (structure too old to trade)
 Trend:     C older than 120 trading days → NO_STRUCTURE (structure too old for directional bias)
-Long Term: No cutoff                     → LT structures are inherently old
+Tail/LT:   No cutoff                     → LT structures are inherently old
 ```
 
 **ABC transition to bearish after uptrend break:**
@@ -1180,17 +1199,17 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 ## Methodology Reference
 
 ### Timeframes
-- **Trade** — ≤ 3 weeks — entry/exit timing
-- **Trend** — ≤ 3 months — directional bias filter
-- **Long Term** — 3 years — macro structural context (display/context only)
+- **Trade** — ≤ 3 weeks — entry/exit timing; risk level: LRR + HRR (BB framework)
+- **Trend** — ≤ 3 months — directional bias filter; risk level: Trend Level (MA100 single floor/ceiling)
+- **Tail / Long Term** — ~3 years — macro structural context (display only); risk level: Tail Level (MA200); code/DB key stays "lt"; display label is "Tail"
 
 ### Signal Components
 1. **Fractal Dimension (D)** — D→1.0 trending, D→1.5 choppy, D→2.0 mean-reverting. D = 2 − H
 2. **Hurst Exponent (H)** — H>0.5 trending, H<0.5 mean-reverting, H=0.5 random walk. Method: DFA
-3. **Gaussian Component** — normal distribution of returns, foundation for HRR (1σ above/below D)
+3. **Bollinger Band LRR/HRR** — MA20 ± k×STD20; k modulated by H. Replaces Gaussian sigma framework (v1.7)
 4. **Relative IV** — IV as percentile of its own 52-week range. Stock-specific, not vs VIX.
-   Primary role: LRR/HRR width scaling (ATR equivalent). Secondary: conviction score component.
-5. **Volume Signal** — Confirming / Diverging / Neutral. Applied as multiplier to conviction score.
+   **v1.7 role: informational display in popup only.** NOT in conviction formula. NOT in LRR/HRR formula.
+5. **Volume Signal (OBV)** — Confirming / Diverging / Neutral. Applied as multiplier to conviction score.
 
 ### Direction Values (ALL three timeframes)
 - **Bullish** / **Bearish** / **Neutral** — never Up / Down
@@ -1203,10 +1222,11 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 |---|---|---|
 | Hurst Exponent | **Frequentist** | Objective measurement of price series property |
 | Fractal Dimension | **Frequentist** | Derived from H: D = 2 − H |
-| Gaussian Return Distribution | **Frequentist** | Historical return frequency → confidence intervals |
-| Relative IV Percentile | **Frequentist** | Rank within own 52-week historical distribution |
-| Conviction Score | **Frequentist** | Signal profile historically hit HRR frequency |
-| LRR / HRR Ranges | **Frequentist** | Anchored to Gaussian sigma bands and pivot points |
+| Bollinger Band LRR/HRR | **Frequentist** | MA20 ± k×STD20; k modulated by H (v1.7) |
+| Relative IV Percentile | **Frequentist** | Rank within own 52-week history — informational only (v1.7) |
+| Conviction Score | **Frequentist** | Equal-weight H + proximity boost to entry zone (v1.7) |
+| Trend / Tail Level | **Frequentist** | MA100 / MA200 slope-confirmed floor or ceiling (v1.7) |
+| OBV Pivot Direction | **Frequentist** | Structural pivot logic applied to OBV series |
 | Quad Probability Distribution | **Bayesian** | Continuously updated belief across 4 quads |
 | Forward Quarter Projections Q2-Q4 | **Bayesian** | Prior decay without new confirming evidence |
 | Policy Signal Modifiers | **Bayesian** | Discrete evidence updates to forward projections |
@@ -1244,7 +1264,7 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 - **Needle position formula:** `Math.min(Math.max((vix - 9) / 36, 0), 1) * 100` percent
 - Labels: INVESTABLE (green) · CHOPPY (amber) · DANGER (red) shown inline next to numeric VIX value
 
-## Dashboard Columns (current, in order)
+## Dashboard Columns (current, in order) — v1.7
 | Column | Description |
 |--------|-------------|
 | › | Tier 2 expand/collapse chevron |
@@ -1255,16 +1275,16 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Trend | SVG sparkline — 60-day real price history |
 | Viewpoint | Bullish / Bearish / Neutral (three states only) |
 | Conviction % | 0-100% — blank when Neutral; green ≥70%, amber 50-69%, grey <50% |
-| ENTRY | ▲ BUY (green) or ▼ SELL (red) badge — see ENTRY Signal rules below; blank when conditions not met; sortable |
+| ENTRY | ▲ BUY (green) or ▼ SELL (red) badge — prox > 0.85 at entry zone, all timeframes aligned; blank when conditions not met; sortable |
 | Trade Dir | Short-term direction |
-| Trade LRR | Lower risk range — color = trade direction; ⚠ when LRR < C (uptrend) or LRR > B (downtrend) |
-| Trade HRR | Higher risk range — color = trade direction; ⚠ when HRR < B (uptrend) or HRR > C (downtrend) |
+| Trade LRR | BB lower band (MA20 - k_lrr×STD20) — color = trade direction; ⚠ when LRR < C (uptrend) or LRR > B (downtrend); ↑↓ overshoot flag |
+| Trade HRR | BB upper band (MA20 + k_hrr×STD20) — color = trade direction; ⚠ when HRR < B (uptrend) or HRR > C (downtrend); ↑↓ overshoot flag |
 | Trend Dir | Medium-term direction |
-| Trend LRR | Support level — color = trend direction; ⚠ when LRR < C (uptrend) or HRR > C (downtrend) |
+| Trend Level | MA100 — floor (uptrend, green) or ceiling (downtrend, red); hidden when Neutral or slope contradicts direction |
 | Asset Class | Classification — tightened badge, far right |
 | Sector | GICS sector / type — tightened badge, far right |
 
-## Popup Fields (click any row)
+## Popup Fields (click any row) — v1.7
 | Field | Notes |
 |---|---|
 | Close | Live price |
@@ -1274,22 +1294,21 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Vol Direction | Bullish / Bearish / Neutral — OBV pivot trend direction (`obv_direction`) |
 | Vol Signal vs Trade | Confirming ✓ / Diverging ✗ / Neutral — compared against Trade Dir (`obv_confirming`) |
 | Trade Dir | Direction + icon |
-| Trade LRR | Color = trade dir; ⚠ + hover tooltip when warn |
-| Trade HRR | Color = trade dir; ⚠ + hover tooltip when warn |
-| Trade C | C pivot — trade invalidation level |
+| Trade LRR | BB lower band; color = trade dir; ⚠ + hover tooltip when warn; ↑↓ overshoot flag |
+| Trade HRR | BB upper band; color = trade dir; ⚠ + hover tooltip when warn; ↑↓ overshoot flag |
+| Trade C | C pivot — trade invalidation level (or B when structural EXTENDED) |
 | Trade B | B pivot — prior swing high/low |
 | Trade State | Structural state string |
 | Trend Dir | Direction + icon |
-| Trend LRR | Color = trend dir; ⚠ when LRR < C |
-| Trend HRR | Color = trend dir; ⚠ when HRR > C |
+| Trend Level | MA100 floor/ceiling — hidden when Neutral or slope contradicts direction; ⚠ when warn |
 | Trend C | C pivot — trend invalidation level |
 | Trend State | Structural state string |
-| LT Dir | Direction + icon |
-| LT LRR | Color = LT direction |
+| Tail Dir | Direction + icon (code/DB key: "lt") |
+| Tail Level | MA200 floor/ceiling — hidden when Neutral |
 | Hurst (T) | Trade timeframe H value |
 | Hurst (Tr) | Trend timeframe H value |
-| Hurst (LT) | Long term H value |
-| Rel IV% | Realized vol percentile |
+| Hurst (Tail) | Tail/LT timeframe H value |
+| Rel IV% | IV Rank — schwab or proxy source tagged; informational only (not in conviction formula) |
 | Updated | Last data fetch timestamp |
 
 ## Color Coding
@@ -1304,11 +1323,13 @@ Each LRR/HRR cell uses its **own timeframe's direction** color, not the overall 
 - Warn flags are price-based, independent of the IV-driven `warning` structural state
 
 ### Warning Flag Scope (LOCKED)
-| Timeframe | LRR ⚠ condition | HRR ⚠ condition |
+Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has a single Trend Level (MA100) — the warn flag applies to that level vs C. Tail never warns.
+
+| Timeframe | LRR/Level ⚠ condition | HRR ⚠ condition |
 |---|---|---|
 | **Trade** | Bullish: `lrr < c` · Bearish: `lrr > b` | Bullish: `hrr < b` · Bearish: `hrr > c` |
-| **Trend** | Bullish: `lrr < c` only | Bearish: `hrr > c` only |
-| **LT** | Never | Never |
+| **Trend** | Bullish: `level < c` only (MA100 below C pivot) | Bearish: `level > c` only |
+| **Tail** | Never | Never (no HRR column) |
 
 ---
 
@@ -1398,6 +1419,12 @@ git checkout -- .   # roll back if needed
 48. **Alembic manages all schema changes** — never modify Supabase tables directly via dashboard
 49. **IV-eligible tickers exclude VIX, $DJI, SPX, NDX** — index options chains have different structure
 50. **data_source column must be written on every price_cache upsert** — 'schwab', 'yahoo', or 'yahoo_fallback'
+51. **MA20 regime (`'uptrend'`/`'downtrend'`) is independent of ABC pivot direction** — do not conflate. Pivots say "what is the structural trend." MA20 regime says "where is price vs MA20 right now." They can disagree.
+52. **LT timeframe code/DB key stays `"lt"` everywhere** — display label only changes to "Tail" (UI, popup headers, table header). Never rename in models, DB columns, or backend API responses.
+53. **EXTENDED state has two independent meanings** — structural (D > B + abs(B-C) → persistent, break_level = B) and daily overshoot flag (close vs prior HRR/LRR → `hrr_extended`/`lrr_extended` Boolean). Never conflate.
+54. **Trend Level and Tail Level display `None` when direction is Neutral** — no level shown; also hidden when MA slope contradicts Trend/Tail direction
+55. **ENTRY prox threshold = 0.85** — do not revert to 2%-of-price absolute threshold; prox is range-normalized via HRR-LRR (STD20-derived, automatically volatility-scaled)
+56. **Proximity in conviction formula is direction-aware** — peaks at 1.0 when close is at the entry zone: LRR for Bullish (floor entry), HRR for Bearish (ceiling short entry)
 
 ---
 
