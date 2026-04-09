@@ -103,17 +103,24 @@ def _infer_pivot_direction(pivot_row) -> str | None:
 
 def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
                            h_trend: float | None,
-                           ma20_regime: str | None) -> tuple:
+                           ma20_regime: str | None,
+                           pivot_dir: str | None = None) -> tuple:
     """
-    BB framework for Trade timeframe — perfect mirror symmetry (v1.7 spec §2.7).
+    BB framework for Trade timeframe (v1.7 spec §2.7).
 
-    k_entry  = max(0, H_trend - 0.5)   # tight — entry side sits close to MA20; clamped ≥ 0
-    k_target = 3 - 2 × H_trend         # wide  — profit target side sits far from MA20
+    Two k coefficients, named by function:
+      k_wide  = 3 - 2 × H_trend          # target side — always wide, never flips
+      k_tight = max(0, H_trend - 0.5)    # entry side  — tight near MA20; wide when counter-trend
 
-    Price above MA20:  LRR = MA20 - k_entry × STD20   (tight floor — buy/add near MA20)
-                       HRR = MA20 + k_target × STD20  (wide target above)
-    Price below MA20:  HRR = MA20 + k_entry × STD20   (tight ceiling — sell/short near MA20)
-                       LRR = MA20 - k_target × STD20  (wide target below)
+    Structural uptrend (ABC pivot = uptrend):
+      HRR = MA20 + k_wide  × STD20       # target above — always wide
+      LRR = MA20 - k_tight × STD20       # normal (above MA20): tight floor ≈ MA20
+      LRR = MA20 - k_wide  × STD20       # counter-trend (below MA20): wide floor = BB lower
+
+    Structural downtrend (mirror):
+      LRR = MA20 - k_wide  × STD20       # target below — always wide
+      HRR = MA20 + k_tight × STD20       # normal (below MA20): tight ceiling ≈ MA20
+      HRR = MA20 + k_wide  × STD20       # counter-trend (above MA20): wide ceiling = BB upper
 
     Returns (None, None) if any required input is missing.
     """
@@ -122,15 +129,18 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
     if std20 <= 0:
         return None, None
 
-    k_entry  = max(0.0, h_trend - 0.5)
-    k_target = 3.0 - 2.0 * h_trend
+    k_wide  = 3.0 - 2.0 * h_trend
+    k_tight = max(0.0, h_trend - 0.5)
+    above   = (ma20_regime or "uptrend") == "uptrend"   # True = price above MA20
 
-    if (ma20_regime or "uptrend") == "uptrend":
-        lrr = round(ma20 - k_entry  * std20, 4)
-        hrr = round(ma20 + k_target * std20, 4)
+    if pivot_dir == "downtrend":
+        # LRR is always the wide target; HRR switches tight/wide by regime
+        lrr = round(ma20 - k_wide  * std20, 4)
+        hrr = round(ma20 + (k_tight if not above else k_wide) * std20, 4)
     else:
-        hrr = round(ma20 + k_entry  * std20, 4)
-        lrr = round(ma20 - k_target * std20, 4)
+        # uptrend or unknown: HRR is always the wide target; LRR switches tight/wide by regime
+        hrr = round(ma20 + k_wide  * std20, 4)
+        lrr = round(ma20 - (k_tight if above else k_wide) * std20, 4)
 
     return lrr, hrr
 
@@ -395,7 +405,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
 
         # ── LRR / HRR by timeframe ───────────────────────────────────────────
         if tf == "trade":
-            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trend, ma20_regime)
+            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trend, ma20_regime, pivot_dir)
 
             # WARNING: LRR drifted below C (uptrend) or HRR above C (downtrend)
             warning = is_warning(lrr, hrr, c, pivot_dir)
