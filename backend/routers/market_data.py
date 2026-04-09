@@ -3,9 +3,10 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.price_cache import PriceCache
 from models.ticker import Ticker
-from services.yahoo_finance import fetch_ticker_data, RateLimitError
+from services.yahoo_finance import fetch_ticker_data, RateLimitError, compute_ma20_regime
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
+import numpy as np
 
 _ET = ZoneInfo("America/New_York")
 import json
@@ -74,6 +75,9 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
         existing.ma20                = data["ma20"]
         existing.ma50                = data["ma50"]
         existing.ma100               = data["ma100"]
+        existing.ma200               = data["ma200"]
+        existing.std20               = data["std20"]
+        existing.ma20_regime         = data["ma20_regime"]
         existing.rel_iv              = data["rel_iv"]
         existing.spark_json          = json.dumps(data["spark_prices"])
         existing.history_json        = json.dumps(data["history_prices"])
@@ -91,6 +95,9 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
             ma20                 = data["ma20"],
             ma50                 = data["ma50"],
             ma100                = data["ma100"],
+            ma200                = data["ma200"],
+            std20                = data["std20"],
+            ma20_regime          = data["ma20_regime"],
             rel_iv               = data["rel_iv"],
             spark_json           = json.dumps(data["spark_prices"]),
             history_json         = json.dumps(data["history_prices"]),

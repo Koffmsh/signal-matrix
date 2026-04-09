@@ -13,6 +13,9 @@ class PriceCache(Base):
     ma20         = Column(Float)
     ma50         = Column(Float)
     ma100        = Column(Float)
+    ma200        = Column(Float)
+    std20        = Column(Float)     # 21-day realized vol in dollar terms (STD20 for BB formula)
+    ma20_regime  = Column(String)    # 'uptrend' | 'downtrend' — 2-consecutive-close rule vs MA20
     rel_iv       = Column(Integer)   # realized vol percentile 0-100
     spark_json         = Column(Text)      # JSON array of 60 closing prices (sparkline)
     history_json        = Column(Text)      # JSON array of full 4-year closing prices

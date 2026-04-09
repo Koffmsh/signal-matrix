@@ -18,6 +18,8 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import numpy as np
+
 from sqlalchemy.orm import Session
 import schwab.client
 
@@ -28,6 +30,7 @@ from services.yahoo_finance import (
     fetch_ticker_data,
     RateLimitError,
     compute_realized_vol_percentile,
+    compute_ma20_regime,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +66,15 @@ def _get_active_tickers(db: Session) -> list:
     return [r.ticker for r in rows]
 
 
+def _compute_std20(prices: list, close: float) -> float | None:
+    """21-day realized vol in dollar terms. Matches conviction_engine._sigma()."""
+    if len(prices) < 22:
+        return None
+    arr      = np.array(prices[-22:], dtype=float)
+    log_rets = np.log(arr[1:] / arr[:-1])
+    return round(float(np.std(log_rets) * close), 4)
+
+
 def _upsert(db: Session, data: dict, data_source: str) -> None:
     """Write fetched ticker data into price_cache (no commit — caller commits).
 
@@ -88,11 +100,21 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
             new_d = old_dates[:cut]  + new_d
             new_v = old_vols[:cut]   + new_v
 
-        existing.close               = data["close"]
+        # Compute MA/vol metrics from merged full history — Schwab alone is only 3 months
+        # so MA200 and ma20_regime require the prepended history to be meaningful.
+        close     = data["close"]
+        std20     = _compute_std20(new_p, close)
+        ma200     = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
+        ma20_regime = compute_ma20_regime(new_p)
+
+        existing.close               = close
         existing.volume              = data["volume"]
         existing.ma20                = data["ma20"]
         existing.ma50                = data["ma50"]
         existing.ma100               = data["ma100"]
+        existing.ma200               = ma200
+        existing.std20               = std20
+        existing.ma20_regime         = ma20_regime
         existing.rel_iv              = data["rel_iv"]
         existing.spark_json          = json.dumps(data["spark_prices"])
         existing.history_json        = json.dumps(new_p)
@@ -102,14 +124,23 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         existing.updated_at          = datetime.utcnow()
         existing.data_source         = data_source
     else:
+        new_p = data["history_prices"]
+        close = data["close"]
+        std20     = _compute_std20(new_p, close)
+        ma200     = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
+        ma20_regime = compute_ma20_regime(new_p)
+
         db.add(PriceCache(
             ticker               = ticker,
             yahoo_symbol         = data.get("schwab_symbol", ticker),
-            close                = data["close"],
+            close                = close,
             volume               = data["volume"],
             ma20                 = data["ma20"],
             ma50                 = data["ma50"],
             ma100                = data["ma100"],
+            ma200                = ma200,
+            std20                = std20,
+            ma20_regime          = ma20_regime,
             rel_iv               = data["rel_iv"],
             spark_json           = json.dumps(data["spark_prices"]),
             history_json         = json.dumps(data["history_prices"]),

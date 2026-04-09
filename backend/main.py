@@ -37,6 +37,13 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
             _conn.execute(text("ALTER TABLE price_cache ADD COLUMN data_source TEXT DEFAULT 'yahoo'"))
         if "iv_source" not in _cols:
             _conn.execute(text("ALTER TABLE price_cache ADD COLUMN iv_source TEXT"))
+        # Phase A — v1.7 Risk Range Engine: BB formula inputs
+        if "std20" not in _cols:
+            _conn.execute(text("ALTER TABLE price_cache ADD COLUMN std20 REAL"))
+        if "ma200" not in _cols:
+            _conn.execute(text("ALTER TABLE price_cache ADD COLUMN ma200 REAL"))
+        if "ma20_regime" not in _cols:
+            _conn.execute(text("ALTER TABLE price_cache ADD COLUMN ma20_regime TEXT"))
         _conn.commit()
 
     with engine.connect() as _conn:
