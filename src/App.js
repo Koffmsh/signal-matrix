@@ -834,7 +834,7 @@ function Dashboard() {
               <th style={{ width: "24px", padding: "10px 4px 10px 8px", borderBottom: "1px solid #1a2535" }} />
               {/* Change 2 — tooltip on alert header */}
               <SortHdr label="⚡" k="isAlert"
-                title="High conviction alert — H>0.55 (trade & trend), conviction ≥70%, viewpoint Bullish or Bearish" />
+                title="High conviction alert — Trend H>0.55, conviction ≥70%, viewpoint Bullish or Bearish" />
               <SortHdr label="TICKER"      k="ticker" />
               <SortHdr label="DESCRIPTION" k="description" />
               {/* Change 1 — CLOSE / TREND before signal columns; ASSET CLASS / SECTOR at far right */}

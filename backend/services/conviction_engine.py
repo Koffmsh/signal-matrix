@@ -102,12 +102,12 @@ def _infer_pivot_direction(pivot_row) -> str | None:
 # ── Trade timeframe: Bollinger Band LRR/HRR (v1.7) ───────────────────────────
 
 def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
-                           h_trade: float | None, h_trend: float | None,
+                           h_trend: float | None,
                            ma20_regime: str | None) -> tuple:
     """
     BB framework for Trade timeframe (v1.7 spec §2.7).
 
-    k_lrr      = 3 - 2 × H_trade          # regime-agnostic
+    k_lrr      = 3 - 2 × H_trend          # regime-agnostic (uses H_trend — single H source)
     k_hrr_up   = 3 - 2 × H_trend          # uptrend regime
     k_hrr_down = max(0, H_trend - 0.5)    # downtrend regime (clamped — H<0.5 gives k=0 → HRR=MA20)
 
@@ -116,12 +116,12 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
 
     Returns (None, None) if any required input is missing.
     """
-    if ma20 is None or std20 is None or h_trade is None or h_trend is None:
+    if ma20 is None or std20 is None or h_trend is None:
         return None, None
     if std20 <= 0:
         return None, None
 
-    k_lrr = 3.0 - 2.0 * h_trade
+    k_lrr = 3.0 - 2.0 * h_trend
     lrr   = round(ma20 - k_lrr * std20, 4)
 
     if (ma20_regime or "uptrend") == "uptrend":
@@ -270,26 +270,26 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
 
 # ── Conviction Score (v1.7 spec §2.9) ────────────────────────────────────────
 
-def compute_conviction(h_trade: float | None, h_trend: float | None,
+def compute_conviction(h_trend: float | None,
                        vol_signal: str, close: float,
                        trade_lrr: float | None, trade_hrr: float | None,
                        trade_dir: str) -> float | None:
     """
-    v1.7 conviction formula:
-      Base = H_trade × 0.50 + H_trend × 0.50   (equal-weight)
+    Conviction formula (H_trend only — single reliable H source):
+      Base = H_trend × 100
       Proximity boost — direction-aware, peaks at entry zone:
         Bullish: prox = 1 - (close - LRR) / (HRR - LRR)  (1.0 at LRR)
         Bearish: prox = (close - LRR) / (HRR - LRR)       (1.0 at HRR)
       conviction_raw = Base × (0.70 + 0.30 × prox)
       Final = conviction_raw × OBV_multiplier
 
-    Returns 0–100 float, or None if either H is unavailable.
+    Returns 0–100 float, or None if H_trend is unavailable.
     CRITICAL: caller must blank this when Viewpoint = Neutral.
     """
-    if h_trade is None or h_trend is None:
+    if h_trend is None:
         return None
 
-    base = (h_trade * 0.50 + h_trend * 0.50) * 100.0
+    base = h_trend * 100.0
 
     prox = 0.5   # neutral default when LRR/HRR unavailable
     if (trade_lrr is not None and trade_hrr is not None
@@ -360,7 +360,6 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
         "lt":    getattr(hurst_row, "h_lt",    None) if hurst_row else None,
     }
 
-    h_trade = h_map["trade"]
     h_trend = h_map["trend"]
 
     timeframe_results = {}
@@ -395,7 +394,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
 
         # ── LRR / HRR by timeframe ───────────────────────────────────────────
         if tf == "trade":
-            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trade, h_trend, ma20_regime)
+            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trend, ma20_regime)
 
             # WARNING: LRR drifted below C (uptrend) or HRR above C (downtrend)
             warning = is_warning(lrr, hrr, c, pivot_dir)
@@ -471,13 +470,12 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
         trade_lrr = timeframe_results["trade"]["lrr"]
         trade_hrr = timeframe_results["trade"]["hrr"]
         conviction = compute_conviction(
-            h_trade, h_trend, vol_signal,
+            h_trend, vol_signal,
             price, trade_lrr, trade_hrr, trade_dir,
         )
 
     # ── Alert flag ⚡ ────────────────────────────────────────────────────────
     alert = bool(
-        h_trade is not None and h_trade > 0.55 and
         h_trend is not None and h_trend > 0.55 and
         viewpoint != "Neutral" and
         conviction is not None and conviction >= 70.0

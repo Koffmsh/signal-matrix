@@ -238,11 +238,12 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
 - **Production reset required after this fix:** run `DELETE FROM iv_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
 
-### Conviction Score Rebalance — v1.7 (50/50 + Proximity Boost)
+### Conviction Score — H_trend only + Proximity Boost
 - Old weights (v1.6): Trade H × 0.65 + Trend H × 0.35
-- **v1.7 formula:** equal-weight H split + direction-aware proximity boost
+- v1.7 interim: (H_trade × 0.50 + H_trend × 0.50) × 100 — superseded
+- **Current formula:** H_trend only (H_trade removed — noisy 63-bar DFA; already embedded in k_lrr)
   ```
-  base = (H_trade × 0.50 + H_trend × 0.50) × 100
+  base = H_trend × 100
   conviction_raw = base × (0.70 + 0.30 × prox)
   ```
   where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
@@ -253,8 +254,8 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Supersedes:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas — do not use v1.6 or earlier
 - **New formula:** `LRR = MA20 - k_lrr × STD20` ; `HRR = MA20 + k_hrr × STD20` (regime-switched)
   ```
-  k_lrr    = 3 - 2 × H_trade     (regime-agnostic; wide floor when H low, tight when H high)
-  k_hrr_up = 3 - 2 × H_trend     (uptrend regime — BB_Upper; same shape as k_lrr)
+  k_lrr    = 3 - 2 × H_trend     (regime-agnostic; single H source — H_trade removed)
+  k_hrr_up = 3 - 2 × H_trend     (uptrend regime — BB_Upper)
   k_hrr_down = max(0, H_trend - 0.5)   (downtrend regime — tight ceiling ≈ MA20; clamped ≥ 0)
   ```
 - **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction. `ma20_regime` stored in `price_cache`. 1 close on wrong side of MA20 is forgiven (mirrors BREAK_OF_TRADE logic); day 2 flips regime and HRR formula
@@ -891,7 +892,7 @@ Each LRR/HRR cell uses its own timeframe's direction for color — not the overa
 **No Diverging state.** Three states only: Bullish, Bearish, Neutral.
 
 ### Alert Flag ⚡ Trigger (ALL THREE must be true)
-1. Trade H > 0.55 AND Trend H > 0.55
+1. Trend H > 0.55
 2. Viewpoint = Bullish OR Bearish (never fires on Neutral)
 3. Final Conviction ≥ 70%
 
@@ -1024,7 +1025,7 @@ ma20_regime = 'uptrend' | 'downtrend'                          # stored in price
 
 #### k Coefficients
 ```python
-k_lrr      = 3 - 2 × H_trade      # LRR width — regime-agnostic
+k_lrr      = 3 - 2 × H_trend      # LRR width — uses H_trend (single H source, no double-counting)
 k_hrr_up   = 3 - 2 × H_trend      # HRR in uptrend regime (BB_Upper)
 k_hrr_down = max(0, H_trend - 0.5) # HRR in downtrend regime (tiny k → HRR ≈ MA20); clamped ≥ 0
 
