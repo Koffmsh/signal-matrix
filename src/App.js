@@ -842,7 +842,7 @@ function Dashboard() {
               <th style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral" />
+                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Components: Trend H · Proximity · OBV" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -892,7 +892,7 @@ function Dashboard() {
           ...(row.viewpoint !== "Neutral" && row.viewpointSince ? [
             ["Aligned since", fmtSince(row.viewpointSince),                                               vpColor(row.viewpoint),                 false],
           ] : []),
-          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false, null, "Trend H · Proximity · OBV"],
+          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
@@ -929,13 +929,12 @@ function Dashboard() {
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
-              {fields.map(([label, val, color, isState, tip, subtitle]) => (
+              {fields.map(([label, val, color, isState, tip]) => (
                 <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
                   <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "2px" }}>{label}</div>
                   <div style={{ fontSize: "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>
                     {tip ? <span title={tip} style={{ cursor: "help" }}>{val}</span> : val}
                   </div>
-                  {subtitle && <div style={{ fontSize: "9px", color: "#556677", marginTop: "3px", letterSpacing: "0.04em" }}>{subtitle}</div>}
                 </div>
               ))}
             </div>
