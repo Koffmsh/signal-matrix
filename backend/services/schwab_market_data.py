@@ -80,7 +80,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
 
     History merge: if existing history is longer than the new Schwab data
     (which only fetches 3 months), preserve the existing history and only
-    update the recent portion. This prevents overwriting 4-year Yahoo history
+    update the recent portion. This prevents overwriting 5-year Yahoo history
     with 3 months of Schwab data.
     """
     today  = datetime.now(_ET).strftime("%Y-%m-%d")

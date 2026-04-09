@@ -72,7 +72,7 @@ def dfa(prices: list, window: int) -> float | None:
 
     scales = np.unique(
         np.round(
-            np.logspace(np.log10(min_scale), np.log10(max_scale), 20)
+            np.geomspace(min_scale, max_scale, 20)
         ).astype(int)
     )
 

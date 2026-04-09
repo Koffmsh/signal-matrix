@@ -65,16 +65,16 @@ def get_yahoo_symbol(ticker: str) -> str:
 
 def fetch_ticker_data(ticker: str) -> dict | None:
     """
-    Fetch 4 years of history for a ticker.
+    Fetch 5 years of history for a ticker.
     Returns dict with close, volume, ma20/50/100, rel_iv, spark_prices,
-    history_prices (full 4-year list), and history_dates (corresponding YYYY-MM-DD list).
+    history_prices (full 5-year list), and history_dates (corresponding YYYY-MM-DD list).
     Returns None if fetch fails.
     """
     yahoo_symbol = get_yahoo_symbol(ticker)
 
     try:
         yf_ticker = yf.Ticker(yahoo_symbol)
-        hist = yf_ticker.history(period="4y")
+        hist = yf_ticker.history(period="5y")
 
         if hist.empty or len(hist) < 20:
             logger.warning(f"Insufficient data for {ticker} ({yahoo_symbol})")

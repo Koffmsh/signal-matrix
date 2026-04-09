@@ -932,7 +932,7 @@ function Dashboard() {
               {fields.map(([label, val, color, isState, tip]) => (
                 <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
                   <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "2px" }}>{label}</div>
-                  <div style={{ fontSize: isState ? "9px" : "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>
+                  <div style={{ fontSize: "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>
                     {tip ? <span title={tip} style={{ cursor: "help" }}>{val}</span> : val}
                   </div>
                 </div>
