@@ -27,6 +27,8 @@ class SignalOutput(Base):
     pivot_c          = Column(Float,   nullable=True)   # C pivot — trade invalidation level
     obv_direction    = Column(String,  nullable=True)   # OBV pivot trend: Bullish | Bearish | Neutral
     obv_confirming   = Column(Boolean, nullable=True)   # True when OBV direction aligns with viewpoint
+    lrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close < prior LRR (bearish)
+    hrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close > prior HRR (bullish)
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

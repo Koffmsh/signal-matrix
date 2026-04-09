@@ -431,10 +431,15 @@ function Dashboard() {
       const mockRow  = generateMockData(t);
       const priceRow = mergeRealData(mockRow, realDataMap);
       const sigRow   = mergeSignalData(priceRow, signalMap);
+      // ENTRY v1.7 — proximity-based (prox > 0.85), range-normalized via HRR–LRR (STD20 scaled)
+      const _band   = (sigRow.tradeLRR != null && sigRow.tradeHRR != null && sigRow.tradeHRR > sigRow.tradeLRR)
+        ? sigRow.tradeHRR - sigRow.tradeLRR : null;
+      const proxBull = _band != null ? Math.max(0, Math.min(1, 1 - (sigRow.close - sigRow.tradeLRR) / _band)) : null;
+      const proxBear = _band != null ? Math.max(0, Math.min(1, (sigRow.close - sigRow.tradeLRR) / _band)) : null;
       const isBuy  = sigRow.viewpoint === "Bullish" && sigRow.tradeDir === "Bullish" && sigRow.trendDir === "Bullish" &&
-        sigRow.tradeLRR != null && sigRow.close != null && Math.abs(sigRow.close - sigRow.tradeLRR) / sigRow.tradeLRR <= 0.02;
+        proxBull != null && proxBull > 0.85;
       const isSell = sigRow.viewpoint === "Bearish" && sigRow.tradeDir === "Bearish" && sigRow.trendDir === "Bearish" &&
-        sigRow.tradeHRR != null && sigRow.close != null && Math.abs(sigRow.close - sigRow.tradeHRR) / sigRow.tradeHRR <= 0.02;
+        proxBear != null && proxBear > 0.85;
       return { ...sigRow, entrySignal: isBuy ? "BUY" : isSell ? "SELL" : null };
     }),
     [tickerUniverse, realDataMap, signalMap]
@@ -603,11 +608,10 @@ function Dashboard() {
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
-        {/* Trend LRR */}
+        {/* Trend Level — MA100 floor (Bullish) or ceiling (Bearish); blank when Neutral */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB)} style={{ cursor: "help" }}> ⚠</span>}
-          {row.trendLrrExtended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↓</span>}
         </td>
         {/* Asset Class — moved to far right, tightened */}
         <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -840,12 +844,12 @@ function Dashboard() {
               <SortHdr label="CONVICTION"  k="conviction"
                 title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
-                title="▲ BUY — within 2% of Trade LRR, all timeframes Bullish · ▼ SELL — within 2% of Trade HRR, all timeframes Bearish" />
+                title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
               <SortHdr label="TRADE LRR"   k="tradeLRR" />
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
-              <SortHdr label="TREND LRR"   k="trendLRR" />
+              <SortHdr label="TREND LEVEL" k="trendLRR" />
               <SortHdr label="ASSET CLASS" k="assetClass" />
               <SortHdr label="SECTOR"      k="sector" />
             </tr>
@@ -898,15 +902,18 @@ function Dashboard() {
           ["Trade B",      fmtPrice(row.tradeB),                                                          "#8899aa",                                                  false],
           ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
           ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
-          ["Trend LRR",    `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}${row.trendLrrExtended ? " ↓" : ""}`,  dirRangeColor(row.trendDir, row.trendLrrWarn),  false, row.trendLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB) : null],
-          ["Trend HRR",    `${fmtPrice(row.trendHRR)}${row.trendHrrWarn ? " ⚠" : ""}${row.trendHrrExtended ? " ↑" : ""}`,  dirRangeColor(row.trendDir, row.trendHrrWarn),  false, row.trendHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.trendHrrWarn ? warnTip(row.trendDir, "hrr", row.trendC, row.trendB) : null],
+          ...(row.trendDir !== "Neutral" && row.trendLRR != null ? [
+            ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB) : null],
+          ] : []),
           ["Trend C",      fmtPrice(row.trendC),                                                          "#8899aa",                                                  false],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
-          ["LT Dir",       `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
-          ["LT LRR",       fmtPrice(row.ltLRR),                                                           dirColor(row.ltDir),                                       false],
+          ["Tail Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
+          ...(row.ltDir !== "Neutral" && row.ltLRR != null ? [
+            ["Tail Level",  fmtPrice(row.ltLRR),                                                           dirColor(row.ltDir),                                       false],
+          ] : []),
           ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false],
           ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false],
-          ["Hurst (LT)",   fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
+          ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
           [row.ivSource === "schwab" ? "IV% \u2014 schwab" : "IV% \u2014 proxy",
                            `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
           ["Updated",      row.updated,                                                                    "#667788",                              false],

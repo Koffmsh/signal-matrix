@@ -55,8 +55,10 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
             ("warning",    "ALTER TABLE signal_output ADD COLUMN warning INTEGER"),
             ("lrr_warn",   "ALTER TABLE signal_output ADD COLUMN lrr_warn INTEGER"),
             ("hrr_warn",   "ALTER TABLE signal_output ADD COLUMN hrr_warn INTEGER"),
-            ("pivot_b",    "ALTER TABLE signal_output ADD COLUMN pivot_b REAL"),
-            ("pivot_c",    "ALTER TABLE signal_output ADD COLUMN pivot_c REAL"),
+            ("pivot_b",      "ALTER TABLE signal_output ADD COLUMN pivot_b REAL"),
+            ("pivot_c",      "ALTER TABLE signal_output ADD COLUMN pivot_c REAL"),
+            ("lrr_extended", "ALTER TABLE signal_output ADD COLUMN lrr_extended INTEGER"),
+            ("hrr_extended", "ALTER TABLE signal_output ADD COLUMN hrr_extended INTEGER"),
         ]:
             if _col not in _cols_out:
                 _conn.execute(text(_ddl))
