@@ -258,17 +258,27 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 ### Bollinger Band LRR/HRR — v1.7 Formula Replaces sigma/anchor/bc_range (`conviction_engine.py`)
 - **Supersedes:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas — do not use v1.6 or earlier
-- **New formula:** `LRR = MA20 - k_lrr × STD20` ; `HRR = MA20 + k_hrr × STD20` (regime-switched)
+- **k coefficients — two, named by function:**
   ```
-  k_lrr    = 3 - 2 × H_trend     (regime-agnostic; single H source — H_trade removed)
-  k_hrr_up = 3 - 2 × H_trend     (uptrend regime — BB_Upper)
-  k_hrr_down = max(0, H_trend - 0.5)   (downtrend regime — tight ceiling ≈ MA20; clamped ≥ 0)
+  k_wide  = 2.0                      # standard 2σ BB — target side, never flips
+  k_tight = max(0, H_trend - 0.5)    # entry side — ≈ MA20 when H < 0.5; clamped ≥ 0
   ```
-- **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction. `ma20_regime` stored in `price_cache`. 1 close on wrong side of MA20 is forgiven (mirrors BREAK_OF_TRADE logic); day 2 flips regime and HRR formula
-- **k_hrr_down clamping:** `max(0, H_trend - 0.5)` prevents negative k when H_trend < 0.5 — gives HRR = MA20 exactly in mean-reverting regimes
-- **STD20:** 21-day realized vol in dollar terms: `std(log_returns[-21:]) × close` — same `_sigma()` function
-- **Rel IV completely removed from LRR/HRR** — was used for f_hrr/f_lrr scaling in v1.6; now purely informational
-- **MA20 / STD20 / MA20 regime stored in price_cache** — written on every price fetch alongside MA100 / MA200
+- **Pivot direction determines which side is target vs entry; MA20 regime switches the entry side:**
+  ```
+  Structural uptrend:
+    HRR = MA20 + k_wide  × STD20    # target above — always BB upper
+    LRR = MA20 - k_tight × STD20    # normal (above MA20): tight floor ≈ MA20
+    LRR = MA20 - k_wide  × STD20    # counter-trend (below MA20): wide floor = BB lower
+
+  Structural downtrend (mirror):
+    LRR = MA20 - k_wide  × STD20    # target below — always BB lower
+    HRR = MA20 + k_tight × STD20    # normal (below MA20): tight ceiling ≈ MA20
+    HRR = MA20 + k_wide  × STD20    # counter-trend (above MA20): wide ceiling = BB upper
+  ```
+- **STD20:** `std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std (not return vol)
+- **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction. 1 close on wrong side forgiven; day 2 flips regime. Stored in `price_cache.ma20_regime`
+- **Rel IV completely removed from LRR/HRR** — informational display in popup only
+- **MA20 / STD20 / MA20 regime stored in price_cache** — written on every price fetch
 
 ### Trend Level and Tail Level — Single MA (v1.7, replaces dual LRR/HRR for Trend and LT)
 - **Supersedes:** Dual Trend LRR/HRR and LT LRR/HRR bands — only one level per timeframe now
@@ -1021,24 +1031,22 @@ NOT $427.13 (stale C)
 
 #### Inputs
 ```python
-MA20   = 20-day simple moving average of close prices          # stored in price_cache.ma20
-STD20  = std(log_returns[-21:]) × close                        # 21-day realized vol in dollar terms
-         (same as _sigma() in conviction_engine.py)
-H_trade = Hurst exponent, Trade timeframe (63-day DFA)
-H_trend = Hurst exponent, Trend timeframe (252-day DFA)
+MA20        = 20-day simple moving average of close prices     # stored in price_cache.ma20
+STD20       = std(prices[-20:], ddof=0)                        # standard BB price-level std
+H_trend     = Hurst exponent, Trend timeframe (252-day DFA)    # single H source — H_trade removed
+pivot_dir   = 'uptrend' | 'downtrend' | None                   # from ABC pivot structure
 ma20_regime = 'uptrend' | 'downtrend'                          # stored in price_cache.ma20_regime
 ```
 
-#### k Coefficients
+#### k Coefficients — Named by Function
 ```python
-k_lrr      = 3 - 2 × H_trend      # LRR width — uses H_trend (single H source, no double-counting)
-k_hrr_up   = 3 - 2 × H_trend      # HRR in uptrend regime (BB_Upper)
-k_hrr_down = max(0, H_trend - 0.5) # HRR in downtrend regime (tiny k → HRR ≈ MA20); clamped ≥ 0
+k_wide  = 2.0                       # standard 2σ BB — target side, never flips
+k_tight = max(0, H_trend - 0.5)     # entry side — ≈ MA20 when H < 0.5; clamped ≥ 0
 
-# k_lrr behavior:
-#   H = 0.50 (random walk)    → k = 2.0  (standard 2σ lower band)
-#   H = 0.75 (strong trend)   → k = 1.5  (tighter floor — trend persisting)
-#   H = 0.25 (mean-reverting) → k = 2.5  (wider floor — more uncertainty)
+# k_tight behavior:
+#   H < 0.50 (mean-reverting) → k = 0.00  (entry = MA20 exactly)
+#   H = 0.60 (moderate trend) → k = 0.10
+#   H = 0.75 (strong trend)   → k = 0.25
 ```
 
 #### MA20 Price Regime Switch — 2-Consecutive-Close Rule
@@ -1046,48 +1054,45 @@ k_hrr_down = max(0, H_trend - 0.5) # HRR in downtrend regime (tiny k → HRR ≈
 regime = "uptrend"   if 2+ consecutive closes ABOVE MA20
 regime = "downtrend" if 2+ consecutive closes BELOW MA20
 ```
-- Independent of ABC pivot structural direction. Pivots say "what is the trend." Regime says "where is price vs MA20 right now."
-- 1 close on wrong side of MA20 is forgiven (mirrors BREAK_OF_TRADE forgiveness logic). Day 2 flips regime.
-- On regime flip: HRR formula changes discretely on day 2. This is intentional.
+- Independent of ABC pivot structural direction. Pivots say "what is the structural trend." Regime says "where is price vs MA20 right now."
+- 1 close on wrong side of MA20 is forgiven. Day 2 flips regime.
 - Stored in `price_cache.ma20_regime` — written on every price fetch
 
-#### LRR/HRR Formulas
+#### LRR/HRR Formulas — Pivot Direction + Regime Switch
 ```python
-LRR = MA20 - k_lrr × STD20              # identical in both regimes — regime-agnostic
+# Structural uptrend (ABC pivot direction = uptrend):
+HRR = MA20 + k_wide  × STD20    # target above — always BB upper, never flips
+LRR = MA20 - k_tight × STD20    # normal (above MA20): tight floor ≈ MA20
+LRR = MA20 - k_wide  × STD20    # counter-trend (below MA20): wide floor = BB lower
 
-# Uptrend regime:
-HRR = MA20 + k_hrr_up × STD20           # BB_Upper — lighten near here; wide target
-
-# Downtrend regime:
-HRR = MA20 + k_hrr_down × STD20         # ≈ MA20 — sell the bounce here; tight ceiling
+# Structural downtrend (perfect mirror):
+LRR = MA20 - k_wide  × STD20    # target below — always BB lower, never flips
+HRR = MA20 + k_tight × STD20    # normal (below MA20): tight ceiling ≈ MA20
+HRR = MA20 + k_wide  × STD20    # counter-trend (above MA20): wide ceiling = BB upper
 ```
 
-#### Role Reversal in Downtrend
+#### Role Summary
 ```
-Uptrend:   LRR = floor (add longs, entry zone)
-           HRR = target ceiling (lighten, take profits)
-
-Downtrend: HRR = ceiling (sell/add short zone) — tight, ≈ MA20
-           LRR = profit target (cover shorts) — wide lower band, same formula as uptrend
+Uptrend + above MA20 (normal):       LRR = entry (tight ≈ MA20),  HRR = target (BB upper)
+Uptrend + below MA20 (counter-trend): LRR = wide (BB lower),       HRR = target (BB upper)
+Downtrend + below MA20 (normal):     HRR = entry (tight ≈ MA20),  LRR = target (BB lower)
+Downtrend + above MA20 (counter-trend): HRR = wide (BB upper),    LRR = target (BB lower)
 ```
+k_wide always defines the side where you exit. k_tight always defines the normal entry side.
 
 #### Self-Correction Property
-When close drops below LRR → tomorrow's MA20 falls (new low enters window, old high exits) → LRR follows MA20 downward automatically. No hard floor/ceiling against C or D required — formula self-heals within 1–3 sessions.
-
-#### H Modifier Split (Intentional)
-- **LRR uses H_trade (63-day)** — more volatile, reacts to short-term changes in trend persistence; entry level adjusts dynamically
-- **HRR uses H_trend (252-day)** — stable, slow-moving, consistent target/ceiling reference
+When close drops below LRR → tomorrow's MA20 falls → LRR follows MA20 downward automatically. Formula self-heals within 1–3 sessions.
 
 #### Daily Overshoot Flag (Tactical — Separate from Structural EXTENDED)
 ```python
 # uptrend:   if today_close > prior_hrr → hrr_extended = True  (↑ flag, "do not chase" tooltip)
 # downtrend: if today_close < prior_lrr → lrr_extended = True  (↓ flag, "do not chase" tooltip)
 # Stored in signal_output.lrr_extended / hrr_extended (Boolean)
-# State cell still shows UPTREND_VALID / DOWNTREND_VALID — this is NOT the structural EXTENDED state
+# State cell still shows UPTREND_VALID / DOWNTREND_VALID — NOT the structural EXTENDED state
 ```
 
-#### STD20 Window
-21 trading days — `_sigma()` in `conviction_engine.py`. Matches IV30 constant-maturity horizon.
+#### STD20
+`std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std. Written to `price_cache.std20` on every price fetch.
 
 ### Structural States
 

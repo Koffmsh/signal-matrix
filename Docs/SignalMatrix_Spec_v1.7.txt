@@ -1,0 +1,716 @@
+Signal Matrix Platform
+Master Specification Document
+Version 1.7  |  April 2026  |  Confidential
+
+
+
+Change Log v1.6 → v1.7
+LRR/HRR formula replaced: sigma/anchor/bc_range system replaced with Bollinger Band framework (MA20 ± k×STD20) modulated by Hurst exponent — reverse-engineered from Hedgeye methodology and confirmed against SPX data
+k coefficients: k_wide = 2.0 (standard BB, fixed); k_tight = max(0, H_trend-0.5) (tight, entry side ≈ MA20). Both use H_trend only — H_trade removed as unreliable at 63 days.
+ABC pivot structural direction determines which side is the target (never moves): structural uptrend → HRR always wide, LRR switches; structural downtrend → LRR always wide, HRR switches. MA20 regime (2-consecutive-close rule, independent of pivot direction) determines whether the entry side is tight (≈MA20) or wide (BB band).
+Conviction scoring redesigned: H_trend only (H_trade removed) plus proximity boost; proximity is direction-aware (peaks at LRR for Bullish, at HRR for Bearish)
+ENTRY signal threshold replaced: 2%-of-price replaced with proximity > 0.85 — normalized to instrument volatility via the HRR-LRR range
+EXTENDED state split into two independent concepts: structural EXTENDED (D > B + bc_range, persistent) and daily overshoot flag (close vs prior day HRR/LRR, tactical)
+Trend Level (100MA) replaces Trend LRR/HRR dual bands: single floor/ceiling based on MA slope
+Tail Level (200MA) replaces LT LRR/HRR dual bands: same single-level logic; display rename only ("LT" → "Tail" in UI, "lt" stays in code/DB)
+Pivot bar window updates: Trend bar_window confirmed at 10; LT bar_window reduced to 50 (was 90 — major reversals were invisible for ~9 months at bw=90)
+Trend C staleness threshold updated: 120 trading days (was 100)
+
+
+
+1. Project Overview
+Signal Matrix is a multi-timeframe, probabilistic trading signal platform designed to identify high-conviction trade opportunities across a diversified universe of ~51 assets. The platform is built around the principle that simplicity and structural clarity outperform complex over-engineered systems. The methodology is rooted in fractal market theory, wave structure analysis, and probabilistic statistics rather than traditional lagging indicators.
+
+Core Philosophy
+Fewer, higher quality signals beat more, lower quality signals
+Trend alignment across timeframes is the primary filter
+Risk ranges are mathematically derived, not discretionary
+The system tells you where the market is, not where you want it to be
+
+
+
+2. Methodology
+
+2.1 Timeframe Definitions
+
+Trade — entry/exit timing (≤ 3 weeks)
+  Bar window: 5 bars each side to confirm pivot
+  H lookback: 63 trading days
+  Risk level: LRR + HRR (Bollinger Band framework — see 2.7)
+
+Trend — directional bias filter (≤ 3 months)
+  Bar window: 10 bars each side to confirm pivot
+  H lookback: 252 trading days
+  Risk level: Trend Level (100MA — single floor or ceiling — see 2.8)
+  C staleness: 120 trading days → NO_STRUCTURE
+
+Long Term / Tail — macro structural context (display only, ~3 years)
+  Bar window: 90 bars each side to confirm pivot
+  H lookback: 756 trading days
+  Risk level: Tail Level (200MA — single floor or ceiling — see 2.8)
+  C staleness: No cutoff (LT structures are inherently old)
+  Display label: "Tail" everywhere in UI; code/DB key stays "lt"
+
+Direction values: Bullish / Bearish / Neutral — never Up / Down
+
+
+2.2 ABC Wave Structure
+Four-point pivot structure (A, B, C, D) applies identically to uptrends and downtrends.
+
+Uptrend Structure
+  A = pivot low        (e.g. $100)
+  B = pivot high       (e.g. $110) — higher high
+  C = higher low       (e.g. $105) — C > A confirms uptrend
+  D = running high               — established when price closes above B
+
+Downtrend Structure (mirror)
+  A = pivot high       (e.g. $100)
+  B = pivot low        (e.g. $90)  — lower low
+  C = lower high       (e.g. $95)  — C < A confirms downtrend
+  D = running low                — established when price closes below B
+
+Pivot Bar Windows
+  Trade:    5 bars before AND after — confirms within ~1 week
+  Trend:   10 bars before AND after — confirms within ~2 weeks
+  Tail/LT: 90 bars before AND after — confirms within ~4.5 months
+
+CRITICAL: Pivot confirmation requires bar_window bars on BOTH sides.
+  Pivot high at index i: prices[i] == max(prices[i - bw : i + bw + 1])
+  Pivot low  at index i: prices[i] == min(prices[i - bw : i + bw + 1])
+  The most recent bar_window bars can NEVER be confirmed pivots.
+  D is always a running value — never a confirmed pivot.
+
+CRITICAL: Today's EOD bar IS included in price history.
+  history_closes = closes[closes.index.date <= date.today()]
+  The scheduler fetches at 4:00 PM ET after market close — today's bar is a confirmed EOD price.
+  Do NOT revert to < date.today() — it delays pivot confirmation by one trading day.
+
+C Update Logic — CRITICAL
+C is NOT set once and frozen. C updates dynamically as the trend develops.
+
+  # UPTREND — C walks UP (higher lows)
+  new_pivot_low = find_most_recent_confirmed_pivot_low(prices, bar_window)
+  if new_pivot_low > current_C:
+      current_C = new_pivot_low
+
+  # DOWNTREND — C walks DOWN (lower highs)
+  new_pivot_high = find_most_recent_confirmed_pivot_high(prices, bar_window)
+  if new_pivot_high < current_C:
+      current_C = new_pivot_high
+
+  # Break check always uses CURRENT C — never stale C
+  if direction == UPTREND and current_price < current_C:  BREAK_OF_TRADE
+  if direction == DOWNTREND and current_price > current_C: BREAK_OF_TRADE
+
+Pivot Staleness Thresholds (_STALE_C_DAYS in pivot_engine.py)
+  Trade:  C older than  60 trading days → NO_STRUCTURE
+  Trend:  C older than 120 trading days → NO_STRUCTURE
+  Tail:   No cutoff
+
+ABC Pivot Search — All A Candidates Tried
+For each (C, B) pair, all A candidates are iterated newest-first. The engine stops at the first A satisfying C > A (uptrend) or C < A (downtrend). Do not assume the nearest A before B is correct.
+
+Structure Selection Priority in find_abc_structure()
+  1. Only one direction found → use it
+  2. Both found, only one intact (price on correct side of C) → use intact
+  3. Both intact or both broken → most recent C wins, UNLESS:
+     a. Newer structure has never established D → older structure governs
+     b. Winner spans a prior BREAK_CONFIRMED of same-direction structure → use other
+
+ABC Transition to Bearish After Uptrend Break
+  Bearish A = old bullish D    (highest confirmed point)
+  Bearish C = first lower high after D  (lower high, C < A, already exists)
+  Bearish B = first confirmed lower low (bar_window × 2 bars minimum after break)
+  DOWNTREND_VALID fires as soon as bearish B confirms
+
+EXTENDED State — Structural Definition (v1.7)
+EXTENDED is a persistent structural state, distinct from the daily overshoot flag.
+
+  # Uptrend EXTENDED: D has pushed more than one full BC range beyond B
+  bc_range = abs(B - C)
+  if D > B + bc_range: state = EXTENDED; break_level = B  (shifts from C to B)
+
+  # Downtrend EXTENDED (mirror)
+  if D < B - bc_range: state = EXTENDED; break_level = B
+
+  Reversion: when new C forms (current D becomes new B, new C established)
+             → state returns to UPTREND_VALID / DOWNTREND_VALID
+             → break_level returns to new C
+
+Break Level Summary
+  Normal structure:      break_level = C (most recent confirmed higher low / lower high)
+  EXTENDED structure:    break_level = B (D has exceeded B by more than one bc_range)
+
+
+2.3 Structural States
+
+  UPTREND_VALID / DOWNTREND_VALID
+    Condition: ABC confirmed, price on correct side of C
+    Display: Normal green/red
+
+  EXTENDED
+    Condition (structural): D > B + bc_range (uptrend) or D < B - bc_range (downtrend)
+    Break level shifts from C to B
+    Display: State cell shows EXTENDED; ↑/↓ overshoot flag appears on range cell if daily overshoot also fires
+
+  WARNING
+    Condition (IV-driven only, never price-driven): LRR drifted below C (uptrend) or HRR drifted above C (downtrend)
+    Display: Affected LRR or HRR cell → amber
+
+  BREAK_OF_TRADE
+    Condition: One close through C (trade timeframe)
+    Forgiveness: Recovery above C on day 1 restores direction
+    Display: Trade Dir → Neutral; LRR/HRR grey
+
+  BREAK_OF_TREND
+    Condition: One close through C (trend timeframe)
+    Forgiveness: Same 1-day recovery rule
+    Display: Trend Dir → Neutral; Trend Level grey
+
+  BREAK_CONFIRMED
+    Condition: 2+ consecutive closes on wrong side of C
+    Recovery: Price must close above B (not just above C) to restore direction
+    Display: Permanently Neutral until B recovery
+
+  NO_STRUCTURE
+    Condition: Insufficient pivot history OR C older than staleness threshold
+    Display: LRR/HRR grey
+
+States that force Neutral: BREAK_OF_TRADE, BREAK_OF_TREND, BREAK_CONFIRMED, NO_STRUCTURE only.
+EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID all allow Bullish/Bearish direction.
+
+Intraday violations irrelevant — engine uses EOD closes only.
+Trade and Trend states are independent — Trend break does not auto-flip Trade.
+
+
+2.4 Signal Components
+
+1. Fractal Dimension (D)
+D → 1.0 = trending, D → 1.5 = choppy, D → 2.0 = mean-reverting. Derived from Hurst: D = 2 − H.
+
+2. Hurst Exponent (H) — DFA Method
+H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk.
+Calculated at Trade (63d), Trend (252d), and Tail/LT (756d) timeframes independently.
+H has NO role in direction. H drives conviction and LRR/HRR width only.
+
+DFA Algorithm:
+  1. Convert prices to log returns
+  2. Compute cumulative sum (integration)
+  3. Scales: log-spaced from 10 bars to window//4, ~20 points
+  4. For each scale n: fit linear trend per segment, compute RMS of residuals F(n)
+  5. H = slope of log(F(n)) vs log(n) via linear regression
+  Returns H in [0, 1]
+
+3. Relative Implied Volatility (Rel IV%)
+IV expressed as percentile of its own 252-day history. IV Rank formula: (current_iv - min_252) / (max_252 - min_252) × 100.
+PRIMARY role: informational display in popup. NOT in conviction formula. NOT in LRR/HRR formula (v1.7).
+Source: Schwab options chain (falls back to Yahoo proxy on token expiry).
+
+4. OBV Volume Signal
+Applied as multiplier to conviction score. OBV direction determined by applying the same pivot structure logic as the price engine (bar_window = 9) to the OBV series. Compared against Trade Dir (not Viewpoint) — volume is a short-term signal confirming the trade timeframe move.
+  Confirming  = OBV direction matches Trade Dir
+  Diverging   = OBV direction opposes Trade Dir
+  Neutral     = OBV has no structure or Trade Dir is Neutral
+
+5. VIX Macro Regime
+Dashboard header indicator — not a per-ticker signal.
+  VIX < 20  → Green  (INVESTABLE)
+  VIX 20–29 → Amber  (CHOPPY)
+  VIX ≥ 30  → Red    (DANGER)
+
+
+2.5 Viewpoint States — Three States Only
+
+  Bullish: Trade Dir = Bullish AND Trend Dir = Bullish → Conviction calculated
+  Bearish: Trade Dir = Bearish AND Trend Dir = Bearish → Conviction calculated
+  Neutral: Any other combination                       → Conviction BLANK
+
+No Diverging state. Three states only. Conviction is BLANK when Viewpoint = Neutral.
+
+
+2.6 Direction Determination — Pivots Only (H has NO role)
+
+  # Uptrend
+  if structural_state in (BREAK_OF_TRADE, BREAK_OF_TREND, BREAK_CONFIRMED, NO_STRUCTURE):
+      trade_dir = "Neutral"
+  elif direction == "uptrend" and current_price > c:
+      trade_dir = "Bullish"
+  elif direction == "downtrend" and current_price < c:
+      trade_dir = "Bearish"
+  else:
+      trade_dir = "Neutral"
+
+  # Viewpoint
+  if trade_dir == "Bullish" and trend_dir == "Bullish":   viewpoint = "Bullish"
+  elif trade_dir == "Bearish" and trend_dir == "Bearish": viewpoint = "Bearish"
+  else:                                                   viewpoint = "Neutral"
+
+Direction check uses C only (or B when EXTENDED). LRR has no role in direction.
+
+
+2.7 Trade Timeframe — LRR/HRR: Bollinger Band Framework (v1.7)
+
+SUPERSEDES: All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas. Do not use v1.6 or earlier formulas.
+
+Inputs
+  MA20        = 20-day simple moving average of close prices
+  STD20       = std(prices[-20:], ddof=0)   ← standard Bollinger Band price-level std
+  H_trend     = Hurst exponent, Trend timeframe (252-day DFA) — single H source; H_trade removed
+  pivot_dir   = 'uptrend' | 'downtrend'     ← from ABC pivot engine
+  ma20_regime = 'uptrend' | 'downtrend'     ← from 2-consecutive-close rule
+
+k Coefficients — 2, Named by Function
+  k_wide  = 2.0                        # standard 2σ BB — target side; never flips
+  k_tight = max(0, H_trend - 0.5)      # entry side — tight near MA20; clamped ≥ 0
+
+  k_wide:  fixed at 2.0 (standard Bollinger Band). k coefficient refinement deferred.
+  k_tight behavior:
+    H < 0.50 (mean-reverting) → k = 0.00 → entry = MA20 exactly
+    H = 0.60                  → k = 0.10 → entry ≈ MA20 ± 0.1σ
+    H = 0.75 (trending)       → k = 0.25 → entry ≈ MA20 ± 0.25σ
+
+Two Inputs Required
+  The formula requires BOTH:
+  1. Structural direction — from ABC pivot engine (uptrend / downtrend)
+  2. MA20 regime — from 2-consecutive-close rule (price above / below MA20)
+  These are independent and CAN disagree. Example: SPX 4/8/2026 — structural downtrend,
+  but price bounced above MA20 for 2+ days → HRR expanded from tight to BB upper.
+
+MA20 Price Regime Switch — 2-Consecutive-Close Rule
+  regime = "uptrend"  if 2+ consecutive closes ABOVE MA20
+  regime = "downtrend" if 2+ consecutive closes BELOW MA20
+
+  Independent of ABC pivot structural direction. Pivots say "what is the structural trend."
+  Regime says "where is price vs MA20 right now."
+  Forgiveness: 1 close on wrong side of MA20 does not flip the regime. Day 2 flips.
+  Stored in price_cache.ma20_regime — written on every price fetch.
+
+LRR/HRR Formulas — Structural Direction × MA20 Regime
+
+  STRUCTURAL UPTREND:
+    HRR = MA20 + k_wide  × STD20            # always BB upper — never changes
+
+    if ma20_regime == "uptrend":             # normal — price above MA20
+        LRR = MA20 - k_tight × STD20        # tight floor ≈ MA20 — buy dip here
+    elif ma20_regime == "downtrend":         # counter-trend dip — price below MA20
+        LRR = MA20 - k_wide  × STD20        # wide floor = BB lower — dip expanded
+
+  STRUCTURAL DOWNTREND (mirror):
+    LRR = MA20 - k_wide  × STD20            # always BB lower — never changes
+
+    if ma20_regime == "downtrend":           # normal — price below MA20
+        HRR = MA20 + k_tight × STD20        # tight ceiling ≈ MA20 — sell bounce here
+    elif ma20_regime == "uptrend":           # counter-trend bounce — price above MA20
+        HRR = MA20 + k_wide  × STD20        # wide ceiling = BB upper — bounce expanded
+
+Key Behavior
+  Target side NEVER moves — always standard 2σ BB. Structural direction determines which side is target.
+  Entry side flips on 2 consecutive closes crossing MA20. When price is on the "normal" side
+  (above MA20 in uptrend, below in downtrend) → entry is tight near MA20. When price crosses
+  to the counter-trend side → entry widens to full BB band.
+  SPX 4/8/2026 is a confirmed example: structural downtrend, counter-trend bounce above MA20
+  → HRR expanded from tight (≈MA20) to BB upper (MA20 + 2σ).
+
+Self-Correction Property (no hard clamps needed)
+  When close drops below LRR → tomorrow's MA20 falls (new low enters window, old high exits)
+  → LRR follows MA20 downward automatically. Same in reverse for uptrend HRR breaches.
+  No hard floor/ceiling against C or D required — the formula self-heals within 1–3 sessions.
+
+H Source — Single: H_trend (252-day)
+  H_trade (63-day) removed entirely — too noisy for k coefficients and conviction scoring.
+  H_trend drives k_tight. k_wide is fixed at 2.0 (standard BB). MA20 provides the daily
+  dynamic movement; H_trend provides the stable entry-side width.
+
+Display
+  LRR/HRR always display regardless of viewpoint.
+  Color: Bullish → green (#00e5a0) | Bearish → red (#ff4d6d) | Neutral → grey (#8899aa)
+  Each cell uses its OWN timeframe direction for color, not overall viewpoint.
+
+Daily Overshoot Flag (tactical, separate from structural EXTENDED state)
+  Reads prior_hrr / prior_lrr from yesterday's signal_output before overwriting.
+
+  Uptrend:   if today_close > prior_hrr → hrr_overshoot = True  (↑ flag, "do not chase" tooltip)
+  Downtrend: if today_close < prior_lrr → lrr_overshoot = True  (↓ flag, "do not chase" tooltip)
+
+  This is NOT a structural state. State cell still shows UPTREND_VALID / DOWNTREND_VALID.
+  Structural EXTENDED (D > B + bc_range) shows "EXTENDED" in state cell.
+
+
+2.8 Trend and Tail Timeframes — Single Moving Average Level (v1.7)
+
+SUPERSEDES: Dual LRR/HRR bands for Trend and LT/Tail timeframes. Rel IV scaling removed entirely from Trend/Tail.
+
+Rationale
+  LRR adds no value for managing risk on the correct side of a Trend or Tail downtrend.
+  Only one level matters per regime: the floor in an uptrend, the ceiling in a downtrend.
+  The MA level is both the floor (uptrend) and the ceiling (downtrend).
+
+Trend Level — 100MA
+  MA100 = 100-day simple moving average of close prices
+  Slope  = MA100[today] - MA100[10 trading days ago]   # + = bullish slope; - = bearish slope
+
+  Uptrend (slope > 0 AND Trend Dir = Bullish):
+    Trend Level = MA100   # floor — support on pullback; add to longs here
+    Display: green
+
+  Downtrend (slope < 0 AND Trend Dir = Bearish):
+    Trend Level = MA100   # ceiling — resistance on bounce; sell/short here
+    Display: red
+
+  Neutral OR slope direction contradicts Trend Dir:
+    Trend Level = None    # hidden — no level displayed
+
+  Break level: Pivot C (or Pivot B if structural EXTENDED state)
+  Display column: "Trend Level" (replaces "Trend LRR")
+  "Trend HRR" column: removed from table and popup
+
+Tail Level — 200MA
+  MA200 = 200-day simple moving average of close prices
+  Slope  = MA200[today] - MA200[20 trading days ago]   # longer slope window for LT
+
+  Uptrend (slope > 0 AND LT Dir = Bullish):
+    Tail Level = MA200    # structural floor — macro support
+    Display: green
+
+  Downtrend (slope < 0 AND LT Dir = Bearish):
+    Tail Level = MA200    # structural ceiling — macro resistance
+    Display: red
+
+  Neutral:
+    Tail Level = None
+
+  Break level: Pivot C (or Pivot B if structural EXTENDED state)
+  Display column: "Tail Level" (replaces "LT LRR")
+  Code/DB key: "lt" — unchanged everywhere in code, models, and database
+  Display label only: "Tail Dir", "Tail Level", "Tail State" in popup and table header
+
+
+2.9 Conviction Score — v1.7
+
+Base Score
+  Base = H_trend × 100   # H_trade removed — single H source (252-day DFA)
+
+Proximity Boost (direction-aware)
+  The proximity score measures how close price is to the entry zone.
+  Entry zone = LRR for Bullish, HRR for Bearish.
+
+  Bullish (entry zone = LRR):
+    prox = 1 - (close - trade_lrr) / (trade_hrr - trade_lrr)
+    prox = 1.0 when close = LRR (at the floor — ideal entry)
+    prox = 0.0 when close = HRR (at the target)
+
+  Bearish (entry zone = HRR):
+    prox = (close - trade_lrr) / (trade_hrr - trade_lrr)
+    prox = 1.0 when close = HRR (at the ceiling — ideal short entry)
+    prox = 0.0 when close = LRR (at the profit target)
+
+  Clamp: prox = max(0.0, min(1.0, prox))
+  Combined: conviction_raw = Base × (0.70 + 0.30 × prox)
+
+OBV Volume Multiplier (unchanged)
+  Confirming → × 1.15   (OBV direction matches Trade Dir)
+  Neutral    → × 1.00
+  Diverging  → × 0.80   (OBV direction opposes Trade Dir)
+
+Final Conviction = conviction_raw × OBV_multiplier
+
+CRITICAL: Conviction is BLANK when Viewpoint = Neutral.
+Stored fields: conviction (final, existing field). h_score and proximity_score may be added for debugging.
+
+
+2.10 ENTRY Signal — v1.7 (Proximity-Based)
+
+SUPERSEDES: 2%-of-price absolute threshold. Replaced with range-normalized proximity.
+
+BUY Conditions (all four must be true)
+  Viewpoint = Bullish
+  Trade Dir = Bullish
+  Trend Dir = Bullish
+  prox_bullish > 0.85
+    where: prox_bullish = 1 - (close - tradeLRR) / (tradeHRR - tradeLRR)
+
+SELL Conditions (all four must be true)
+  Viewpoint = Bearish
+  Trade Dir = Bearish
+  Trend Dir = Bearish
+  prox_bearish > 0.85
+    where: prox_bearish = (close - tradeLRR) / (tradeHRR - tradeLRR)
+
+Rationale: 2%-of-price was not normalized to instrument volatility.
+  HRR - LRR is derived from STD20 → already volatility-scaled per instrument.
+  prox > 0.85 = within bottom 15% of the range (from entry side) for any ticker.
+  Example: SPY range = $40 → ENTRY fires within $6 of LRR.
+           NVDA range = $8 → ENTRY fires within $1.20 of LRR. Both correct.
+
+Neutral viewpoint never triggers ENTRY signal regardless of price proximity.
+ENTRY count displayed in header summary row alongside BULLISH / BEARISH / ALIGNED / ALERTS.
+
+Display: ▲ BUY (green #00e5a0) | ▼ SELL (red #ff4d6d) | blank when conditions not met.
+
+
+2.11 Alert Flag Trigger Conditions (unchanged)
+All three must be simultaneously true:
+  Trade H > 0.55 AND Trend H > 0.55
+  Viewpoint = Bullish OR Bearish (never fires on Neutral)
+  Final Conviction ≥ 70% (after OBV volume multiplier)
+
+
+2.12 OBV Pivot Engine (unchanged from v1.6)
+Replaces the price-momentum proxy entirely. Same pivot structure logic as price engine (bar_window = 9) applied to OBV series. Vol Signal compared against Trade Dir (not Viewpoint).
+
+  Confirming = OBV direction matches Trade Dir
+  Diverging  = OBV direction opposes Trade Dir
+  Neutral    = OBV has no structure or Trade Dir is Neutral
+
+
+
+3. Asset Universe
+
+3.1 Tier 1 — Core Watchlist (~51 tickers)
+See tickers.js for seed data. Live universe managed via SQLite/Supabase tickers table.
+Admin panel: signal.suttonmc.com/admin (password protected).
+
+3.2 Futures Tickers
+Futures use continuous front-month symbols with a leading slash (e.g. /CL).
+All futures route through Yahoo Finance (Schwab does not serve continuous contracts).
+
+3-File Checklist for New Futures
+  YAHOO_SYMBOL_MAP in yahoo_finance.py          — add "/XX": "XX=F"
+  SCHWAB_UNSUPPORTED in schwab_market_data.py   — add "/XX"
+  IV_INELIGIBLE in schwab_options.py            — add "/XX"
+
+Currently configured: /CL (WTI Crude), /ZN (10-Year Note), /GC (Gold)
+
+3.3 Tier 2 — Dynamic Expansion
+Pre-defined per Tier 1 parent. Displays when Tier 1 parent expanded via chevron.
+
+
+4. Dashboard
+
+4.1 Current State
+React at signal.suttonmc.com (Fly.io) and localhost:3000 (local Docker).
+All signal columns live. Schwab data primary, Yahoo fallback.
+
+4.2 Dashboard Columns (v1.7 target state)
+
+  ›            Tier 2 expand/collapse chevron
+  ⚡           Alert flag
+  Ticker       Symbol
+  Description  Asset name
+  Close        Last closing price
+  Trend        SVG sparkline — 60-day price history
+  Viewpoint    Bullish / Bearish / Neutral
+  Conviction % 0–100% — blank when Neutral; green ≥70%, amber 50–69%, grey <50%
+  ENTRY        ▲ BUY (green) or ▼ SELL (red) — prox > 0.85 at entry zone; blank otherwise
+  Trade Dir    Short-term direction
+  Trade LRR    Lower risk range (BB floor) — color = trade direction; ⚠/↑↓ flags
+  Trade HRR    Upper risk range (BB ceiling) — color = trade direction; ⚠/↑↓ flags
+  Trend Dir    Medium-term direction
+  Trend Level  100MA — floor (uptrend, green) or ceiling (downtrend, red); hidden when Neutral
+  Asset Class  Classification badge
+  Sector       GICS sector badge
+
+4.3 Popup Fields (v1.7 target state)
+
+  Close            Live price
+  Viewpoint        Bullish / Bearish / Neutral
+  Aligned Since    ET timestamp — hidden when Neutral
+  Conviction       % or — when Neutral
+  Vol Direction    Bullish / Bearish / Neutral (obv_direction)
+  Vol Signal vs Trade  Confirming ✓ / Diverging ✗ / Neutral — (obv_confirming vs Trade Dir)
+  Trade Dir        Direction + icon
+  Trade LRR        Color = trade dir; ⚠ + tooltip; ↑↓ overshoot flag
+  Trade HRR        Color = trade dir; ⚠ + tooltip; ↑↓ overshoot flag
+  Trade C          C pivot — trade invalidation level
+  Trade B          B pivot — prior swing high/low
+  Trade State      Structural state string
+  Trend Dir        Direction + icon
+  Trend Level      100MA — floor or ceiling; hidden when Neutral
+  Trend C          C pivot — trend invalidation level
+  Trend State      Structural state string
+  Tail Dir         Direction + icon  (display only — "lt" in code)
+  Tail Level       200MA — floor or ceiling; hidden when Neutral
+  Hurst (T)        Trade timeframe H value
+  Hurst (Tr)       Trend timeframe H value
+  Hurst (Tail)     Tail/LT timeframe H value
+  Rel IV%          IV Rank — schwab or proxy source tagged
+  Updated          Last data fetch timestamp
+
+4.4 VIX Gauge (unchanged from v1.6)
+Horizontal gauge bar between dashboard title and summary counts.
+Range: 9–45+. Zones: Green (9–20), Amber (20–30), Red (30–45).
+Needle: 3px, colored to match zone, glow effect.
+Formula: Math.min(Math.max((vix - 9) / 36, 0), 1) × 100 percent.
+
+4.5 Filter UX (unchanged from v1.6)
+Asset Class: MultiSelectDropdown — dynamic, multi-select, count badge.
+Sector: MultiSelectDropdown alongside Asset Class.
+Viewpoint, ALIGNED ONLY, ALERTS: button filters.
+
+4.6 Warning Flag Scope (unchanged)
+  Trade:  LRR ⚠ when Bullish: lrr < c · Bearish: lrr > b
+          HRR ⚠ when Bullish: hrr < b · Bearish: hrr > c
+  Trend:  LRR ⚠ when Bullish: lrr < c only · Bearish: hrr > c only
+  Tail:   Never
+
+
+
+5. Implementation Sequence — v1.7 Changes
+
+Phase A — Data Layer
+  1. Alembic migration: add ma20, std20, ma100, ma200, ma20_regime columns to price_cache
+  2. Compute in yahoo_finance.py / schwab_market_data.py on every price write:
+       MA20  = close.rolling(20).mean()
+       STD20 = std(prices[-20:], ddof=0)   (standard Bollinger Band std — price level, not return volatility)
+       MA100 = close.rolling(100).mean()
+       MA200 = close.rolling(200).mean()
+       ma20_regime: track 2-consecutive-close rule against MA20 — write 'uptrend' or 'downtrend'
+  3. MA slope for Trend/Tail not stored in DB — computed at signal calculation time from history
+
+Phase B — Conviction Engine Rewrite (conviction_engine.py)
+  1. Replace LRR/HRR formula for Trade timeframe:
+       Read MA20, STD20, ma20_regime from price_cache
+       Compute k_wide = 2.0 (fixed), k_tight = max(0, H_trend - 0.5)
+       Apply pivot_dir + regime-switched formula (uptrend: HRR always wide, LRR switches tight/wide; downtrend: mirror)
+  2. Add Trend Level: read MA100, compute 10-day slope, return single level or None
+  3. Add Tail Level: read MA200, compute 20-day slope, return single level or None
+  4. Redefine structural EXTENDED: D > B + bc_range → persistent, break_level = B
+  5. Add daily overshoot flag: compare today_close vs prior_hrr / prior_lrr
+  6. Update conviction formula: 50/50 H split + direction-aware proximity boost
+
+Phase C — signals.py / signal_output model
+  1. Add trend_level, tail_level fields to signal_output (replace trendLRR, trendHRR for Trend/Tail)
+     OR: reuse existing lrr/hrr fields for Trend/Tail but store single value; store None for the other
+  2. Expose trend_level and tail_level in /api/signals/stored response
+
+Phase D — Dashboard (App.js)
+  1. ENTRY: replace 2%-of-price with proximity > 0.85 formula
+  2. Rename "Trend LRR" column → "Trend Level"
+  3. Remove "Trend HRR" from table and popup
+  4. Add "Tail Level" to popup (rename from "LT LRR")
+  5. Rename "LT Dir" → "Tail Dir", "LT LRR" → "Tail Level", "LT State" → "Tail State" in popup
+  6. Overshoot ↑↓ flags: wire from new hrr_overshoot / lrr_overshoot fields
+
+Phase E — CLAUDE.md
+  1. Update full LRR/HRR methodology section
+  2. Update conviction formula
+  3. Update ENTRY signal section
+  4. Update structural states (EXTENDED redefined)
+  5. Update display column and popup tables
+  6. Confirm Trend staleness = 120 trading days throughout
+
+
+
+6. Technical Architecture
+
+6.1 Current Stack
+  Frontend:  React (Create React App) — signal.suttonmc.com
+  Backend:   Python FastAPI — api.signal.suttonmc.com
+  Database:  Supabase (Postgres) in production; SQLite (local dev)
+  Container: Docker + docker-compose
+  Data:      Schwab Trader API (primary) / Yahoo Finance (fallback)
+  Hosting:   Fly.io — signal-matrix-api (512MB) + signal-matrix-web (256MB), region iad
+
+6.2 Infrastructure
+  Domain: suttonmc.com — Cloudflare nameservers (kinsley + kyrie)
+  Supabase: project signal-matrix, US East, free tier
+    Direct connection: port 5432 (Alembic migrations only — use POOLED from Docker)
+    Pooled connection: port 6543, Transaction mode (app runtime)
+  Fly.io: auto_stop_machines = false on API app (scheduler must stay running)
+  Schwab App: Signal Matrix — Production, Ready For Use
+    APIs: Accounts and Trading Production + Market Data Production (Order Limit: 0)
+    Callback URL: https://api.signal.suttonmc.com/api/auth/schwab/callback
+
+6.3 Deployment Rules
+  Web: ./deploy-web.sh — never bare fly deploy (REACT_APP_ADMIN_PASSWORD bakes in at build)
+  API: fly deploy --config fly.api.toml --app signal-matrix-api
+  Local verify at localhost:3000 before any Fly.io deploy
+  Never use npm start on Fly.io — always npm run build → nginx
+  Alembic migrations: use SUPABASE_POOLED_CONNECTION_STRING from Docker (IPv4 reachable)
+
+6.4 EOD Scheduler
+  Single chained job fires at 4:00 PM ET on NYSE trading days:
+    schwab_fetch_all()     → price_cache (Schwab primary, Yahoo fallback)
+    schwab_fetch_iv()      → price_cache.rel_iv + iv_history
+    calculate_signals()    → signal_hurst, signal_pivots, signal_output, signal_history
+    scheduler_log          → success/failure entry
+  Startup catch-up: if past 4:00 PM ET, trading day, no successful run today → runs immediately
+  All dates use ET timezone — never UTC
+
+
+
+7. Statistical Framework
+
+  Component                  | Paradigm      | Reason
+  Hurst Exponent             | Frequentist   | Objective measurement of price series property
+  Fractal Dimension          | Frequentist   | Derived from H: D = 2 − H
+  Bollinger Band LRR/HRR     | Frequentist   | MA20 ± k×STD20; k modulated by H
+  Rel IV Percentile          | Frequentist   | Rank within own 52-week history
+  Conviction Score           | Frequentist   | H-based + proximity to entry zone
+  OBV Pivot Direction        | Frequentist   | Structural pivot logic on OBV series
+  Trend / Tail Level         | Frequentist   | MA100 / MA200 slope as directional floor/ceiling
+  Quad Probability Dist.     | Bayesian      | Continuously updated belief across 4 quads (future)
+  Forward Quarter Projections| Bayesian      | Prior decay without confirming evidence (future)
+
+
+
+8. Project Rules — Authoritative
+
+1. Never modify ticker universe without explicit instruction — use admin panel
+2. Never hardcode passwords, API keys, or secrets — always use .env
+3. Never hard delete tickers — use active: false
+4. Direction values: Bullish / Bearish / Neutral — never Up / Down
+5. HRR = Higher Risk Range (always higher price) — do not rename
+6. LRR = Lower Risk Range (always lower price) — do not rename
+7. Neutral color: #8899aa grey; amber #f0b429 for alerts, 50–69% conviction, WARNING, ⚠ flags
+8. Asset Class values must exactly match: Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities
+9. Keep components modular — one component per file
+10. Docker: src/ changes reflect on save — no rebuild needed for frontend
+11. Do not modify docker-compose.yml, Dockerfile, or package.json without flagging first
+12. Signal calculations are locked per this spec — no deviations without updating spec first
+13. Commit to Git after every confirmed working state
+14. No worktrees or feature branches — all changes committed directly to master
+15. Never auto-fetch from Yahoo Finance — REFRESH DATA button only
+16. Never auto-calculate signals — CALCULATE SIGNALS button only
+17. backend/signal_matrix.db must never be committed to Git
+18. Signal engine never calls yfinance directly — always reads from price_cache table
+19. Pivot confirmation requires bar_window bars on BOTH sides — before AND after
+20. Today's EOD bar IS included (<=) — do not revert to (<)
+21. C updates dynamically — always most recent confirmed higher low / lower high
+22. Conviction is blank when Viewpoint = Neutral
+23. H has no role in direction — pivots only (C is the gate; B when EXTENDED)
+24. LRR/HRR always show — grey when Neutral, green when Bullish, red when Bearish
+25. Viewpoint has three states only — Bullish, Bearish, Neutral (no Diverging)
+26. LRR/HRR cell color = timeframe direction — use dirRangeColor(dir, isWarn), NOT viewpoint
+27. Per-cell ⚠ warn flags are price-based — separate from IV-driven warning structural state
+28. Warning scope: Trade full (C+B); Trend C-based only; Tail: none
+29. ET timezone everywhere — never UTC for trading day keys, cache dates, or run dates
+30. get_active_tickers(db) is the only backend ticker retrieval — no hardcoded arrays
+31. tickers.js is seed data only — never import for live universe; use /api/tickers
+32. Asset class overrides checked first — ASSET_CLASS_OVERRIDES in tickers.py
+33. Neo cannot read .docx files — CLAUDE.md is the primary spec source; keep it current
+34. BREAK_CONFIRMED recovery requires close above B — not just above C
+35. OBV pivot bar_window = 9 bars — confirmed pivots require bar_window on both sides
+36. schwab-py is the only Schwab API client — never write raw HTTP calls
+37. Yahoo Finance is a permanent fallback — never removed
+38. Token encryption is mandatory — Schwab tokens Fernet-encrypted before DB write
+39. REACT_APP_API_URL must be env-variable driven — never hardcode localhost:8000
+40. auto_stop_machines = false on API app — scheduler must keep running
+41. Alembic manages all schema changes — never modify Supabase tables directly
+42. IV-eligible tickers exclude VIX, $DJI, SPX, NDX
+43. data_source column written on every price_cache upsert: 'schwab', 'yahoo', 'yahoo_fallback'
+44. MA20 regime ('uptrend'/'downtrend') is independent of ABC pivot direction — do not conflate
+45. LT timeframe code/DB key stays "lt" everywhere — display label only changes to "Tail"
+46. EXTENDED state has two independent meanings: structural (D > B + bc_range) and overshoot flag (close vs prior HRR/LRR) — never conflate
+47. Trend Level and Tail Level display None when direction is Neutral — no level shown
+48. ENTRY prox threshold = 0.85 — do not revert to 2%-of-price absolute threshold
+49. Proximity in conviction formula is direction-aware: peaks at LRR for Bullish, at HRR for Bearish
+
+
+
+9. Open Questions / TBD
+None at v1.7 close. All methodology decisions locked.
+
+
+
+Signal Matrix Platform  |  Master Specification  |  v1.7  |  April 2026  |  Confidential

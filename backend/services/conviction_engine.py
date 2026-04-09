@@ -109,16 +109,16 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
     BB framework for Trade timeframe (v1.7 spec §2.7).
 
     Two k coefficients, named by function:
-      k_wide  = 3 - 2 × H_trend          # target side — always wide, never flips
-      k_tight = max(0, H_trend - 0.5)    # entry side  — tight near MA20; wide when counter-trend
+      k_wide  = 2.0                       # standard BB (2σ) — target side, never flips
+      k_tight = max(0, H_trend - 0.5)    # entry side — tight near MA20 (0 when H < 0.5)
 
     Structural uptrend (ABC pivot = uptrend):
-      HRR = MA20 + k_wide  × STD20       # target above — always wide
+      HRR = MA20 + k_wide  × STD20       # target above — always BB upper
       LRR = MA20 - k_tight × STD20       # normal (above MA20): tight floor ≈ MA20
       LRR = MA20 - k_wide  × STD20       # counter-trend (below MA20): wide floor = BB lower
 
     Structural downtrend (mirror):
-      LRR = MA20 - k_wide  × STD20       # target below — always wide
+      LRR = MA20 - k_wide  × STD20       # target below — always BB lower
       HRR = MA20 + k_tight × STD20       # normal (below MA20): tight ceiling ≈ MA20
       HRR = MA20 + k_wide  × STD20       # counter-trend (above MA20): wide ceiling = BB upper
 
@@ -129,7 +129,7 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
     if std20 <= 0:
         return None, None
 
-    k_wide  = 3.0 - 2.0 * h_trend
+    k_wide  = 2.0
     k_tight = max(0.0, h_trend - 0.5)
     above   = (ma20_regime or "uptrend") == "uptrend"   # True = price above MA20
 
