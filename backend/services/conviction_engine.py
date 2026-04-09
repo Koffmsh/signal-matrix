@@ -1,11 +1,16 @@
 """
-Conviction Engine — Task 3.3
+Conviction Engine — v1.7
 LRR / HRR calculation + Conviction Score for each ticker / timeframe.
+
+Trade timeframe:  Bollinger Band framework (MA20 ± k×STD20, k driven by Hurst).
+Trend timeframe:  Single MA100 level — floor (uptrend) or ceiling (downtrend).
+Tail/LT timeframe: Single MA200 level — structural floor or ceiling.
 
 Reads from:
   - signal_hurst   (h_trade, h_trend, h_lt)
   - signal_pivots  (pivot_a/b/c/d, structural_state)
-  - price_cache    (close, rel_iv, history_json)
+  - price_cache    (close, ma20, std20, ma20_regime, ma100, ma200, history_json,
+                    volume_history_json)
 
 Never calls yfinance directly.
 """
@@ -19,59 +24,7 @@ from models.price_cache   import PriceCache
 logger = logging.getLogger(__name__)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _h_factor(h: float | None) -> float | None:
-    """
-    Map Hurst value to LRR placement factor (0–1 between C and B).
-    Returns None when H is None (no data — cannot compute LRR/HRR).
-    Returns 0.0 when H < 0.50 — LRR defaults to C per spec.
-    """
-    if h is None:
-        return None   # insufficient history
-    if h < 0.50:
-        return 0.00   # defaults LRR to C — shown grey (Neutral viewpoint)
-    if h > 0.65:
-        return 0.95
-    if h >= 0.55:
-        return 0.50
-    return 0.05       # 0.50 – 0.55
-
-
-def _iv_multipliers(rel_iv: int, direction: str) -> tuple:
-    """
-    Trend-conditional continuous IV scaling — asymmetric by direction.
-    bias = 0.40 controls the maximum expansion.
-
-    Uptrend (expanding IV = momentum + upside pricing):
-      lrr_mult: 1.0 → 1.20  (entry expands modestly — pullbacks shallower)
-      hrr_mult: 1.0 → 1.40  (target expands aggressively — momentum confirmed)
-
-    Downtrend (expanding IV = downside risk pricing):
-      lrr_mult: 1.0 → 1.40  (target expands aggressively — slide can accelerate)
-      hrr_mult: 1.0 → 0.80  (entry compresses — bounces are weak, don't recover far)
-    """
-    bias = 0.40
-    iv   = rel_iv / 100.0
-
-    if direction == "uptrend":
-        lrr_mult = 1.0 + iv * (bias * 0.5)  # 1.0 → 1.20 max (entry expands modestly)
-        hrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max (target expands aggressively)
-    else:  # downtrend
-        lrr_mult = 1.0 + iv * bias           # 1.0 → 1.40 max (target expands aggressively)
-        hrr_mult = 1.0 + iv * (bias * 0.5)  # 1.0 → 1.20 max (entry expands modestly)
-
-    return lrr_mult, hrr_mult
-
-
-def _sigma(prices: list, window: int = 21) -> float:
-    """1σ of recent returns in price units (last `window` bars). 21 days matches IV30 horizon."""
-    if len(prices) < window + 1:
-        return 0.0
-    arr = np.array(prices[-(window + 1):], dtype=float)
-    log_returns = np.log(arr[1:] / arr[:-1])
-    return float(np.std(log_returns) * arr[-1])
-
+# ── OBV helpers ───────────────────────────────────────────────────────────────
 
 def _build_obv(closes: list, volumes: list) -> list:
     """Compute OBV series from aligned close prices and volumes."""
@@ -90,20 +43,16 @@ def _build_obv(closes: list, volumes: list) -> list:
 
 def _obv_direction(closes: list, volumes: list, bar_window: int = 9) -> str:
     """
-    Determine OBV trend direction using pivot structure.
-    Same structural logic as price pivot engine — applied to OBV series.
-    Requires bar_window bars on BOTH sides of a pivot to confirm.
+    Determine OBV trend direction using pivot structure (bar_window = 9 each side).
     Returns: 'Bullish' | 'Bearish' | 'Neutral'
     """
     obv = _build_obv(closes, volumes)
     n   = len(obv)
-
     if n < bar_window * 2 + 2:
         return "Neutral"
 
     pivot_highs = []
     pivot_lows  = []
-
     for i in range(bar_window, n - bar_window):
         window = obv[i - bar_window : i + bar_window + 1]
         if obv[i] == max(window):
@@ -114,10 +63,8 @@ def _obv_direction(closes: list, volumes: list, bar_window: int = 9) -> str:
     if len(pivot_highs) < 2 or len(pivot_lows) < 2:
         return "Neutral"
 
-    last_high  = pivot_highs[-1][1]
-    prior_high = pivot_highs[-2][1]
-    last_low   = pivot_lows[-1][1]
-    prior_low  = pivot_lows[-2][1]
+    last_high, prior_high = pivot_highs[-1][1], pivot_highs[-2][1]
+    last_low,  prior_low  = pivot_lows[-1][1],  pivot_lows[-2][1]
 
     if last_high > prior_high and last_low > prior_low:
         return "Bullish"
@@ -130,13 +77,13 @@ def _volume_multiplier(vol_signal: str) -> float:
     return {"Confirming": 1.15, "Diverging": 0.80}.get(vol_signal, 1.00)
 
 
+# ── Direction inference from pivot row ────────────────────────────────────────
+
 def _infer_pivot_direction(pivot_row) -> str | None:
     """
     Infer 'uptrend' | 'downtrend' | None from the pivot row.
-    NO_STRUCTURE returns None — no pivot data exists.
-    BREAK states still infer direction from pivot levels so LRR/HRR
-    can be computed and displayed grey. _compute_direction forces Neutral
-    for BREAK states regardless of what this returns.
+    NO_STRUCTURE → None. BREAK states still infer direction so LRR/HRR
+    can be computed and displayed grey.
     """
     state = pivot_row.structural_state or "NO_STRUCTURE"
     if state == "NO_STRUCTURE":
@@ -145,127 +92,218 @@ def _infer_pivot_direction(pivot_row) -> str | None:
         return "uptrend"
     if "DOWNTREND" in state:
         return "downtrend"
-    # WARNING / BREAK_OF_TRADE / BREAK_OF_TREND / EXTENDED
-    # — pivot levels exist, infer direction from them
+    # EXTENDED, WARNING, BREAK_OF_TRADE, BREAK_OF_TREND, BREAK_CONFIRMED
+    # — pivot levels still exist; infer direction from A/B relationship
     if pivot_row.pivot_a is not None and pivot_row.pivot_b is not None:
         return "uptrend" if pivot_row.pivot_b > pivot_row.pivot_a else "downtrend"
     return None
 
 
-# ── LRR / HRR calculation ─────────────────────────────────────────────────────
+# ── Trade timeframe: Bollinger Band LRR/HRR (v1.7) ───────────────────────────
 
-def compute_lrr_hrr(b: float, c: float, d: float | None,
-                    h: float | None, rel_iv: int,
-                    prices: list, direction: str) -> tuple:
+def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
+                           h_trade: float | None, h_trend: float | None,
+                           ma20_regime: str | None) -> tuple:
     """
-    Compute (lrr, hrr) for one ticker / timeframe.
-    Returns (None, None) when H data is unavailable (h is None).
+    BB framework for Trade timeframe (v1.7 spec §2.7).
 
-    H < 0.50 → hf = 0.0 → deep pullback / shallow target (shown grey, Neutral viewpoint).
-    LRR = always the lower price value.
-    HRR = always the higher price value.
+    k_lrr      = 3 - 2 × H_trade          # regime-agnostic
+    k_hrr_up   = 3 - 2 × H_trend          # uptrend regime
+    k_hrr_down = max(0, H_trend - 0.5)    # downtrend regime (clamped — H<0.5 gives k=0 → HRR=MA20)
 
-    Anchor selection — switches from C to B when price has extended beyond one full
-    BC range past B, meaning the old C is no longer a relevant anchor:
-      Uptrend:   anchor = C if D < B + bc_range, else B
-      Downtrend: anchor = C if D > B - bc_range, else B
+    LRR = MA20 - k_lrr × STD20
+    HRR = MA20 + k_hrr × STD20   (regime-switched)
 
-    H_factor applied as (1 - hf) for entry-side range:
-      High H (strong trend) → small (1-hf) → entry level close to anchor (shallow pullback)
-      Low H  (weak trend)   → large (1-hf) → entry level far from anchor (deep pullback)
+    Returns (None, None) if any required input is missing.
     """
-    hf = _h_factor(h)
-    if hf is None:
-        return None, None   # no H data — cannot compute
+    if ma20 is None or std20 is None or h_trade is None or h_trend is None:
+        return None, None
+    if std20 <= 0:
+        return None, None
 
-    sigma    = _sigma(prices)
-    bc_range = abs(b - c)
-    d_val    = d if d is not None else b   # D falls back to B when not yet established
+    k_lrr = 3.0 - 2.0 * h_trade
+    lrr   = round(ma20 - k_lrr * std20, 4)
 
-    lrr_mult, hrr_mult = _iv_multipliers(rel_iv, direction)
+    if (ma20_regime or "uptrend") == "uptrend":
+        k_hrr = 3.0 - 2.0 * h_trend
+    else:
+        k_hrr = max(0.0, h_trend - 0.5)   # H < 0.5 → k = 0 → HRR = MA20
 
-    if direction == "uptrend":
-        anchor = c if d_val < b + bc_range else b
-        lrr = round(anchor + bc_range * (1.0 - hf) - sigma * lrr_mult, 4)
-        hrr = round(d_val  + bc_range * hf          + sigma * hrr_mult, 4)
-    else:  # downtrend
-        anchor = c if d_val > b - bc_range else b
-        hrr = round(anchor - bc_range * (1.0 - hf) + sigma * hrr_mult, 4)
-        lrr = round(d_val  - bc_range * hf          - sigma * lrr_mult, 4)
-
-    # Clamp — IV can push them past each other (WARNING state check follows)
-    if lrr > hrr:
-        lrr, hrr = hrr, lrr
+    hrr = round(ma20 + k_hrr * std20, 4)
 
     return lrr, hrr
 
 
+# ── Trend timeframe: single MA100 level (v1.7 spec §2.8) ─────────────────────
+
+def compute_trend_level(ma100: float | None, prices: list,
+                        trend_dir: str) -> tuple:
+    """
+    MA100 floor (uptrend) or ceiling (downtrend).
+    Slope window: MA100[today] - MA100[10 trading days ago].
+    Returns (level, None) when slope confirms direction, else (None, None).
+    """
+    if ma100 is None or trend_dir == "Neutral" or len(prices) < 110:
+        return None, None
+
+    ma100_10d_ago = sum(prices[-110:-10]) / 100.0
+    slope = ma100 - ma100_10d_ago
+
+    if slope > 0 and trend_dir == "Bullish":
+        return round(ma100, 4), None
+    if slope < 0 and trend_dir == "Bearish":
+        return round(ma100, 4), None
+    return None, None   # slope contradicts direction — hide level
+
+
+# ── Tail/LT timeframe: single MA200 level (v1.7 spec §2.8) ──────────────────
+
+def compute_tail_level(ma200: float | None, prices: list,
+                       lt_dir: str) -> tuple:
+    """
+    MA200 structural floor (uptrend) or ceiling (downtrend).
+    Slope window: MA200[today] - MA200[20 trading days ago].
+    Returns (level, None) when slope confirms direction, else (None, None).
+    """
+    if ma200 is None or lt_dir == "Neutral" or len(prices) < 220:
+        return None, None
+
+    ma200_20d_ago = sum(prices[-220:-20]) / 200.0
+    slope = ma200 - ma200_20d_ago
+
+    if slope > 0 and lt_dir == "Bullish":
+        return round(ma200, 4), None
+    if slope < 0 and lt_dir == "Bearish":
+        return round(ma200, 4), None
+    return None, None
+
+
 # ── Direction determination ───────────────────────────────────────────────────
 
-def _compute_direction(price: float, lrr: float | None, hrr: float | None,
-                       c: float | None, state: str,
-                       pivot_direction: str | None) -> str:
+def _compute_direction(price: float, c: float | None, state: str,
+                       pivot_direction: str | None, b: float | None = None) -> str:
     """
     Derive Bullish / Bearish / Neutral for one timeframe.
 
-    C is the only invalidation level. Direction is Bullish/Bearish as long as price
-    hasn't closed through C — regardless of structural state. FORMING, EXTENDED, and
-    WARNING do not force Neutral; only BREAK_OF_TRADE, BREAK_OF_TREND, and NO_STRUCTURE do.
+    C is the invalidation level. When structurally EXTENDED (D > B + bc_range),
+    the break level shifts to B — direction checks price vs B instead of C.
 
     Direction is determined by pivots only — H (and therefore LRR/HRR) has no role.
     """
     if state in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "NO_STRUCTURE", "BREAK_CONFIRMED"):
         return "Neutral"
-    if pivot_direction is None or c is None:
+    if pivot_direction is None:
         return "Neutral"
 
+    # EXTENDED: B is the new break level
+    if state == "EXTENDED" and b is not None:
+        if pivot_direction == "uptrend":
+            return "Bullish" if price > b else "Neutral"
+        if pivot_direction == "downtrend":
+            return "Bearish" if price < b else "Neutral"
+
+    if c is None:
+        return "Neutral"
     if pivot_direction == "uptrend":
         return "Bullish" if price > c else "Neutral"
-
     if pivot_direction == "downtrend":
         return "Bearish" if price < c else "Neutral"
-
     return "Neutral"
 
 
 # ── WARNING state check ───────────────────────────────────────────────────────
 
 def is_warning(lrr: float | None, hrr: float | None,
-               c: float | None, direction: str | None) -> bool:
-    """IV-driven only: LRR drifted below C (uptrend) or HRR drifted above C (downtrend)."""
+               c: float | None, pivot_direction: str | None) -> bool:
+    """
+    Structural WARNING: LRR drifted below C (uptrend) or HRR above C (downtrend).
+    Applied to Trade timeframe only — Trend/LT use single levels.
+    """
     if c is None or lrr is None or hrr is None:
         return False
-    if direction == "uptrend":
+    if pivot_direction == "uptrend":
         return lrr < c
-    if direction == "downtrend":
+    if pivot_direction == "downtrend":
         return hrr > c
     return False
 
 
-# ── Conviction Score ──────────────────────────────────────────────────────────
+# ── Per-cell warn flags ───────────────────────────────────────────────────────
+
+def _compute_warn_flags(tf: str, pivot_dir: str | None,
+                        lrr: float | None, hrr: float | None,
+                        b: float | None, c: float | None) -> tuple:
+    """
+    Price-based pivot threshold flags (⚠ indicators on LRR/HRR cells).
+
+    Trade:  LRR ⚠ when uptrend: lrr < c  · downtrend: lrr > b
+            HRR ⚠ when uptrend: hrr < b  · downtrend: hrr > c
+    Trend:  LRR ⚠ when uptrend: lrr < c  · downtrend: lrr > c
+            HRR = None → hrr_warn always False
+    LT:     Never
+
+    Returns (lrr_warn: bool, hrr_warn: bool).
+    """
+    if tf == "lt":
+        return False, False
+
+    lrr_warn = False
+    hrr_warn = False
+
+    if tf == "trade":
+        if pivot_dir == "uptrend":
+            lrr_warn = lrr is not None and c is not None and lrr < c
+            hrr_warn = hrr is not None and b is not None and hrr < b
+        elif pivot_dir == "downtrend":
+            hrr_warn = hrr is not None and c is not None and hrr > c
+            lrr_warn = lrr is not None and b is not None and lrr > b
+
+    elif tf == "trend":
+        # lrr holds the Trend Level (single level); hrr is always None
+        if pivot_dir == "uptrend":
+            lrr_warn = lrr is not None and c is not None and lrr < c
+        elif pivot_dir == "downtrend":
+            lrr_warn = lrr is not None and c is not None and lrr > c
+
+    return lrr_warn, hrr_warn
+
+
+# ── Conviction Score (v1.7 spec §2.9) ────────────────────────────────────────
 
 def compute_conviction(h_trade: float | None, h_trend: float | None,
-                       vol_signal: str) -> float | None:
+                       vol_signal: str, close: float,
+                       trade_lrr: float | None, trade_hrr: float | None,
+                       trade_dir: str) -> float | None:
     """
-    Base Score = weighted average:
-      Trade H (DFA 63-day)   → 65%
-      Trend H (DFA 252-day)  → 35%
-
-    Rel IV removed from conviction formula — used for LRR/HRR width scaling only.
-
-    Volume Multiplier (OBV-based):
-      Confirming → × 1.15
-      Neutral    → × 1.00
-      Diverging  → × 0.80
+    v1.7 conviction formula:
+      Base = H_trade × 0.50 + H_trend × 0.50   (equal-weight)
+      Proximity boost — direction-aware, peaks at entry zone:
+        Bullish: prox = 1 - (close - LRR) / (HRR - LRR)  (1.0 at LRR)
+        Bearish: prox = (close - LRR) / (HRR - LRR)       (1.0 at HRR)
+      conviction_raw = Base × (0.70 + 0.30 × prox)
+      Final = conviction_raw × OBV_multiplier
 
     Returns 0–100 float, or None if either H is unavailable.
     CRITICAL: caller must blank this when Viewpoint = Neutral.
     """
     if h_trade is None or h_trend is None:
         return None
-    base       = (h_trade * 0.65 + h_trend * 0.35) * 100
-    conviction = base * _volume_multiplier(vol_signal)
-    return round(min(max(conviction, 0.0), 100.0), 2)
+
+    base = (h_trade * 0.50 + h_trend * 0.50) * 100.0
+
+    prox = 0.5   # neutral default when LRR/HRR unavailable
+    if (trade_lrr is not None and trade_hrr is not None
+            and trade_hrr > trade_lrr):
+        band = trade_hrr - trade_lrr
+        if trade_dir == "Bullish":
+            prox = 1.0 - (close - trade_lrr) / band
+        elif trade_dir == "Bearish":
+            prox = (close - trade_lrr) / band
+        prox = max(0.0, min(1.0, prox))
+
+    conviction_raw = base * (0.70 + 0.30 * prox)
+    final = conviction_raw * _volume_multiplier(vol_signal)
+    return round(min(max(final, 0.0), 100.0), 2)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -276,29 +314,41 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
 
     Returns:
         {
-            "ticker":     str,
-            "viewpoint":  str,          # Bullish | Bearish | Neutral
-            "conviction": float | None, # blank (None) when Neutral
-            "vol_signal": str,
-            "alert":      bool,         # ⚡ high-conviction aligned signal
-            "trade": { lrr, hrr, structural_state, direction, h_value, warning },
-            "trend": { ... },
-            "lt":    { ... },
+            "ticker":        str,
+            "viewpoint":     str,           # Bullish | Bearish | Neutral
+            "conviction":    float | None,  # blank (None) when Neutral
+            "vol_signal":    str,
+            "obv_direction": str,
+            "obv_confirming": bool,
+            "alert":         bool,
+            "trade": { lrr, hrr, structural_state, direction, h_value,
+                       warning, lrr_warn, hrr_warn, lrr_extended, hrr_extended,
+                       pivot_b, pivot_c },
+            "trend": { lrr (=Trend Level), hrr (=None), structural_state,
+                       direction, h_value, lrr_warn, hrr_warn, pivot_b, pivot_c },
+            "lt":    { lrr (=Tail Level),  hrr (=None), structural_state,
+                       direction, h_value, pivot_b, pivot_c },
         }
     """
     hurst_row = db.query(SignalHurst).filter(SignalHurst.ticker == ticker).first()
     cache_row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
 
     price  = float(cache_row.close  or 0.0) if cache_row else 0.0
-    rel_iv = int(cache_row.rel_iv   or 50)  if cache_row else 50
-    prices  = []
+    prices = []
     volumes = []
     if cache_row and cache_row.history_json:
         prices = json.loads(cache_row.history_json)
     if cache_row and cache_row.volume_history_json:
         volumes = json.loads(cache_row.volume_history_json)
 
-    # OBV pivot direction — replaces price-momentum proxy
+    # MA / vol inputs from price_cache (computed at fetch time — Phase A)
+    ma20        = float(cache_row.ma20)        if (cache_row and cache_row.ma20  is not None) else None
+    ma100       = float(cache_row.ma100)       if (cache_row and cache_row.ma100 is not None) else None
+    ma200       = float(cache_row.ma200)       if (cache_row and cache_row.ma200 is not None) else None
+    std20       = float(cache_row.std20)       if (cache_row and cache_row.std20 is not None) else None
+    ma20_regime = cache_row.ma20_regime        if cache_row else None
+
+    # OBV pivot direction — compared against Trade Dir for vol_signal
     if prices and volumes and len(prices) == len(volumes):
         obv_dir = _obv_direction(prices, volumes, bar_window=9)
     else:
@@ -310,6 +360,9 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
         "lt":    getattr(hurst_row, "h_lt",    None) if hurst_row else None,
     }
 
+    h_trade = h_map["trade"]
+    h_trend = h_map["trend"]
+
     timeframe_results = {}
 
     for tf in ("trade", "trend", "lt"):
@@ -318,70 +371,70 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
             SignalPivots.timeframe == tf,
         ).first()
 
-        h_tf = h_map[tf]
-
         if pivot_row is None:
             timeframe_results[tf] = {
                 "lrr": None, "hrr": None,
                 "structural_state": "NO_STRUCTURE",
                 "direction": "Neutral",
-                "h_value": h_tf,
-                "warning": False,
+                "h_value":   h_map[tf],
+                "warning":   False,
+                "lrr_warn":  False, "hrr_warn": False,
+                "lrr_extended": False, "hrr_extended": False,
+                "pivot_b": None, "pivot_c": None,
             }
             continue
 
         state     = pivot_row.structural_state or "NO_STRUCTURE"
         pivot_dir = _infer_pivot_direction(pivot_row)
-        b, c, d   = pivot_row.pivot_b, pivot_row.pivot_c, pivot_row.pivot_d
+        b = pivot_row.pivot_b
+        c = pivot_row.pivot_c
+        d = pivot_row.pivot_d
 
-        lrr, hrr = (None, None)
-        if pivot_dir is not None and b is not None and c is not None:
-            lrr, hrr = compute_lrr_hrr(b, c, d, h_tf, rel_iv, prices, pivot_dir)
+        # Direction — C-based (B when structurally EXTENDED)
+        direction = _compute_direction(price, c, state, pivot_dir, b=b)
 
-        warning = is_warning(lrr, hrr, c, pivot_dir)
-        if warning:
-            state = "WARNING"
+        # ── LRR / HRR by timeframe ───────────────────────────────────────────
+        if tf == "trade":
+            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trade, h_trend, ma20_regime)
 
-        direction = _compute_direction(price, lrr, hrr, c, state, pivot_dir)
+            # WARNING: LRR drifted below C (uptrend) or HRR above C (downtrend)
+            warning = is_warning(lrr, hrr, c, pivot_dir)
+            if warning:
+                state = "WARNING"
 
-        # EXTENDED: today's close exceeded yesterday's HRR (bullish) or LRR (bearish).
-        # prior_ranges holds the HRR/LRR written by yesterday's signal run —
-        # read before being overwritten by today's calculation in signals.py.
-        hrr_extended = False
-        lrr_extended = False
-        if state not in ("BREAK_OF_TRADE", "BREAK_OF_TREND", "BREAK_CONFIRMED", "NO_STRUCTURE"):
-            pr         = (prior_ranges or {}).get(tf, {})
-            prior_hrr  = pr.get("prior_hrr")
-            prior_lrr  = pr.get("prior_lrr")
-            if direction == "Bullish" and prior_hrr is not None and price > prior_hrr:
-                state = "EXTENDED"
-                hrr_extended = True
-            elif direction == "Bearish" and prior_lrr is not None and price < prior_lrr:
-                state = "EXTENDED"
-                lrr_extended = True
+            # Daily overshoot flag (B5) — tactical, does NOT change structural_state
+            hrr_extended = False
+            lrr_extended = False
+            if state not in ("BREAK_OF_TRADE", "BREAK_OF_TREND",
+                             "BREAK_CONFIRMED", "NO_STRUCTURE"):
+                pr        = (prior_ranges or {}).get(tf, {})
+                prior_hrr = pr.get("prior_hrr")
+                prior_lrr = pr.get("prior_lrr")
+                if direction == "Bullish" and prior_hrr is not None and price > prior_hrr:
+                    hrr_extended = True
+                elif direction == "Bearish" and prior_lrr is not None and price < prior_lrr:
+                    lrr_extended = True
 
-        # Per-cell warning flags — price-based pivot threshold checks
-        # LT: no warnings. Trade: C-based + B-based. Trend: C-based only.
-        lrr_warn = False
-        hrr_warn = False
-        if tf != "lt":
-            if pivot_dir == "uptrend":
-                if lrr is not None and c is not None:
-                    lrr_warn = lrr < c
-                if tf == "trade" and hrr is not None and b is not None:
-                    hrr_warn = hrr < b          # trade only: HRR below prior swing high
-            elif pivot_dir == "downtrend":
-                if hrr is not None and c is not None:
-                    hrr_warn = hrr > c
-                if tf == "trade" and lrr is not None and b is not None:
-                    lrr_warn = lrr > b          # trade only: LRR above prior swing low
+        elif tf == "trend":
+            lrr, hrr = compute_trend_level(ma100, prices, direction)
+            warning      = False
+            hrr_extended = False
+            lrr_extended = False
+
+        else:  # lt / tail
+            lrr, hrr = compute_tail_level(ma200, prices, direction)
+            warning      = False
+            hrr_extended = False
+            lrr_extended = False
+
+        lrr_warn, hrr_warn = _compute_warn_flags(tf, pivot_dir, lrr, hrr, b, c)
 
         timeframe_results[tf] = {
             "lrr":              lrr,
             "hrr":              hrr,
             "structural_state": state,
             "direction":        direction,
-            "h_value":          h_tf,
+            "h_value":          h_map[tf],
             "warning":          warning,
             "lrr_warn":         lrr_warn,
             "hrr_warn":         hrr_warn,
@@ -391,7 +444,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
             "pivot_c":          c,
         }
 
-    # ── Viewpoint (trade + trend alignment — three states only) ─────────────
+    # ── Viewpoint (trade + trend alignment) ─────────────────────────────────
     trade_dir = timeframe_results["trade"]["direction"]
     trend_dir = timeframe_results["trend"]["direction"]
 
@@ -402,10 +455,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
     else:
         viewpoint = "Neutral"
 
-    # ── OBV vol_signal — compared against Trade Dir (not viewpoint) ──────────
-    # Volume is a short-term signal — confirms or opposes the trade timeframe move
-    # independently of trend alignment. Conviction math is unaffected: vol_signal
-    # only applies when viewpoint != Neutral, where trade_dir == viewpoint anyway.
+    # ── OBV vol_signal — compared against Trade Dir ──────────────────────────
     if trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir:
         vol_signal = "Confirming"
     elif obv_dir != "Neutral" and obv_dir != trade_dir:
@@ -418,11 +468,14 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
     # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
     conviction = None
     if viewpoint != "Neutral":
-        conviction = compute_conviction(h_map["trade"], h_map["trend"], vol_signal)
+        trade_lrr = timeframe_results["trade"]["lrr"]
+        trade_hrr = timeframe_results["trade"]["hrr"]
+        conviction = compute_conviction(
+            h_trade, h_trend, vol_signal,
+            price, trade_lrr, trade_hrr, trade_dir,
+        )
 
-    # ── Alert flag ⚡ (all three conditions must be true) ───────────────────
-    h_trade = h_map["trade"]
-    h_trend = h_map["trend"]
+    # ── Alert flag ⚡ ────────────────────────────────────────────────────────
     alert = bool(
         h_trade is not None and h_trade > 0.55 and
         h_trend is not None and h_trend > 0.55 and
@@ -436,14 +489,14 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
     )
 
     return {
-        "ticker":        ticker,
-        "viewpoint":     viewpoint,
-        "conviction":    conviction,
-        "vol_signal":    vol_signal,
-        "obv_direction": obv_dir,
+        "ticker":         ticker,
+        "viewpoint":      viewpoint,
+        "conviction":     conviction,
+        "vol_signal":     vol_signal,
+        "obv_direction":  obv_dir,
         "obv_confirming": obv_confirming,
-        "alert":         alert,
-        "trade":         timeframe_results["trade"],
-        "trend":      timeframe_results["trend"],
-        "lt":         timeframe_results["lt"],
+        "alert":          alert,
+        "trade":          timeframe_results["trade"],
+        "trend":          timeframe_results["trend"],
+        "lt":             timeframe_results["lt"],
     }

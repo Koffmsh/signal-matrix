@@ -438,7 +438,11 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
         d_idx       = first_breach + d_local_idx
 
+        # Structural EXTENDED: D has pushed more than one full BC range beyond B.
+        # Break level shifts from C to B — conviction_engine._compute_direction handles it.
         state = "UPTREND_VALID"
+        if d_price > b_price + abs(b_price - c_price):
+            state = "EXTENDED"
         return round(d_price, 4), d_idx, state
 
     else:  # downtrend
@@ -470,6 +474,8 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_idx       = first_breach + d_local_idx
 
         state = "DOWNTREND_VALID"
+        if d_price < b_price - abs(b_price - c_price):
+            state = "EXTENDED"
         return round(d_price, 4), d_idx, state
 
 
