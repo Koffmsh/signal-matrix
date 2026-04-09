@@ -127,19 +127,25 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
 - **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
 
-### FORMING State Removed — EXTENDED Redefined (`pivot_engine.py`, `conviction_engine.py`) — v1.7
+### FORMING State Removed — EXTENDED Removed from structural_state (`pivot_engine.py`, `conviction_engine.py`) — v1.7 / post-v1.7
 - **FORMING eliminated:** "Pullback from D, no new C yet" is now simply `UPTREND_VALID` / `DOWNTREND_VALID` — the trend is confirmed, the pullback is normal operation, no special state needed
-- **EXTENDED — structural definition (v1.7):** D has pushed more than one full BC range beyond B → structural state shifts to EXTENDED; break_level shifts from C to B (persistent until new C forms)
+- **EXTENDED removed from `structural_state`** — EXTENDED is now a dedicated boolean field `d_extended` in `signal_pivots` and `signal_output`. `structural_state` never contains "EXTENDED". The five valid `structural_state` values are: `UPTREND_VALID`, `DOWNTREND_VALID`, `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` — nothing else.
+- **WARNING removed from `structural_state`** — WARNING was a conviction-engine concept that conflicted with pivot-engine states (e.g. both BREAK_OF_TRADE and WARNING active simultaneously). The `warning` boolean flag on LRR/HRR cells already communicates it. Never set `state = "WARNING"` in `conviction_engine.py`.
+- **`d_extended` boolean (dedicated field):** D has pushed more than one full BC range beyond B → `d_extended = True`; B becomes the break level (persistent until new C forms)
   ```python
   bc_range = abs(B - C)
-  if D > B + bc_range: state = EXTENDED; break_level = B   # uptrend
-  if D < B - bc_range: state = EXTENDED; break_level = B   # downtrend
+  d_extended = (D > B + bc_range)   # uptrend
+  d_extended = (D < B - bc_range)   # downtrend
   ```
-  Reversion: when new C forms (D becomes new B, new C established) → state returns to UPTREND_VALID / DOWNTREND_VALID; break_level returns to new C
-- **Daily overshoot flag (separate, tactical):** `signals.py` reads existing `signal_output.hrr` / `signal_output.lrr` before overwriting them; passes as `prior_ranges` to `compute_output`; conviction_engine compares today's close against those prior values → sets `lrr_extended` / `hrr_extended` Boolean fields. This is NOT the structural EXTENDED state — these two concepts are independent
+  Reversion: when new C forms (D becomes new B, new C established) → `d_extended` resets to False; break level returns to new C
+- **`d_extended` drives:** (1) B vs C selection in `_compute_warn_flags` and `is_warning`; (2) popup `*` asterisk on active break level (B when True, C when False); (3) the B-based break state machine in `compute_d_and_state` when extension threshold is crossed
+- **`d_extended` is independent of `structural_state`** — when extension fires and price subsequently breaks B, state = `BREAK_OF_TRADE` / `BREAK_CONFIRMED` AND `d_extended = True`. The B/C context survives the state transition.
+- **Daily overshoot flag (separate, tactical):** `signals.py` reads existing `signal_output.hrr` / `signal_output.lrr` before overwriting them; passes as `prior_ranges` to `compute_output`; conviction_engine compares today's close against those prior values → sets `lrr_extended` / `hrr_extended` Boolean fields. This is NOT `d_extended` — three independent concepts.
 - **Daily overshoot display:** ↑ flag appears on HRR cell (bullish overshoot) or ↓ flag on LRR cell (bearish overshoot) with "do not chase" tooltip; state cell still shows UPTREND_VALID / DOWNTREND_VALID
-- **States that force Neutral:** `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` only
-- **EXTENDED, WARNING, UPTREND_VALID, DOWNTREND_VALID** all allow Bullish/Bearish direction
+- **BREAK_OF_TRADE does NOT change direction** — direction holds on the first close through the break level (provisional break, first-day forgiveness). Only `BREAK_CONFIRMED` (2+ consecutive closes) changes direction to Neutral.
+- **BREAK_OF_TRADE = amber state cell; BREAK_CONFIRMED = red state cell** — visual distinction in `stateColor()`
+- **States that force Neutral:** `BREAK_CONFIRMED` and `NO_STRUCTURE` only
+- **UPTREND_VALID, DOWNTREND_VALID, BREAK_OF_TRADE, BREAK_OF_TREND** all allow Bullish/Bearish direction
 
 ### ABC Pivot Search — All A Candidates Tried (`pivot_engine.py`)
 - Old behavior: `_find_uptrend_abc` / `_find_downtrend_abc` used only the single nearest pivot low/high before B as A
@@ -207,9 +213,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 ### Warning Tooltip — C Pivot Price Injected Inline (`App.js`)
 - LRR/HRR ⚠ tooltips now include the C pivot value inline: e.g. `"LRR is below C ($448.20) — approaching trade invalidation level"`
-- `warnTip(dir, which, cVal, bVal)` helper builds the tooltip string — formats price as `$X,XXX.XX`
-- All 7 call sites (table rows + popup) pass `row.tradeC` / `row.tradeB` and `row.trendC` / `row.trendB`
+- `warnTip(dir, which, cVal, bVal, isExtended)` helper builds the tooltip string — formats price as `$X,XXX.XX`; when `isExtended=true` tooltip says "B replaces C" as the break level
+- All call sites (table rows + popup) pass `row.tradeExtended` / `row.trendExtended` as the `isExtended` param — **not** `row.tradeState === "EXTENDED"`
 - C and B pivot values flow from `signal_output.pivot_c` / `signal_output.pivot_b` via `mergeSignalData()` → `tradeC`, `tradeB`, `trendC`, `trendB`
+
+### EXTENDED Architectural Cleanup — `d_extended` Boolean (`pivot_engine.py`, `conviction_engine.py`, `App.js`)
+- **Problem:** EXTENDED was stored in `structural_state`, conflicting with other states (e.g. BREAK_OF_TRADE could not coexist with the "came from EXTENDED" context needed to keep B as break level) and lingering as a misleading label after SPX retraced from its March 2026 extreme.
+- **Fix:** `d_extended` Boolean added to `signal_pivots` and `signal_output`. `structural_state` no longer contains "EXTENDED" or "WARNING" — clean set of six values only.
+- **`d_extended`** turns ON when `D > B + abs(B-C)` (uptrend) / `D < B - abs(B-C)` (downtrend). Turns OFF when new C forms.
+- **`is_warning` and `_compute_warn_flags`** now accept `d_extended: bool` param instead of `orig_state` — `break_level = b if d_extended else c`
+- **`_compute_direction`** simplified — no EXTENDED case; pivot engine pre-handles B-based break state machine when d_extended is True
+- **`compute_output`** no longer sets `state = "WARNING"` — `warning` is a boolean flag only; `structural_state` is never overridden
+- **BREAK_OF_TRADE does NOT change direction** — `_compute_direction` returns Bullish/Bearish for BREAK_OF_TRADE/BREAK_OF_TREND; only BREAK_CONFIRMED returns Neutral
+- **`stateColor()`** in `App.js` — BREAK_OF_TRADE/BREAK_OF_TREND → amber; BREAK_CONFIRMED → red; removed EXTENDED and WARN cases
+- **`tradeBreakIsB` / `trendBreakIsB`** in popup — driven by `row.tradeExtended` / `row.trendExtended` (not state string check)
+- **Alembic migration:** `e2f4a6b8c1d0` — adds `d_extended` to `signal_pivots` and `signal_output`
+- **Verified:** SPX `state=BREAK_OF_TRADE`, `d_extended=True`, `hrr_warn=True` (HRR 6825 > B 6798), popup `*` on Trade B
 
 ### Filter UX — Dropdown Multi-Select (`App.js`)
 - Asset Class button row replaced with `MultiSelectDropdown` component — compact, multi-select, count badge, click-outside-to-close
@@ -441,7 +460,8 @@ signal-matrix/
 │   │       ├── aa2d62ea88e4_initial_schema.py
 │   │       ├── b3f1c9d2e4a7_price_cache_add_ma_columns.py   ← v1.7 Phase A
 │   │       ├── c9a4e1f2b8d3_signal_output_add_ma_levels.py  ← v1.7 Phase B
-│   │       └── d5e3f1a2c4b7_signal_output_add_extended_flags.py ← v1.7 Phase C
+│   │       ├── d5e3f1a2c4b7_signal_output_add_extended_flags.py ← v1.7 Phase C
+│   │       └── e2f4a6b8c1d0_add_d_extended_to_pivots_and_output.py ← EXTENDED architectural cleanup
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -857,12 +877,15 @@ Not used in conviction formula.
 **H does not determine direction. H drives conviction and LRR position only.**
 
 ```python
-# Direction check — C is the only invalidation level, LRR has no role in direction
-if structural_state == "BREAK_OF_TRADE":
+# Direction check — pivot engine pre-handles B-based breaks when d_extended; _compute_direction
+# receives clean state values and applies C-based check for VALID states.
+if structural_state in ("BREAK_CONFIRMED", "NO_STRUCTURE"):
     trade_dir = "Neutral"
-elif direction == "uptrend" and current_price > c:
+elif structural_state in ("BREAK_OF_TRADE", "BREAK_OF_TREND"):
+    trade_dir = "Bullish" if pivot_direction == "uptrend" else "Bearish"  # direction HOLDS
+elif pivot_direction == "uptrend" and current_price > c:
     trade_dir = "Bullish"
-elif direction == "downtrend" and current_price < c:
+elif pivot_direction == "downtrend" and current_price < c:
     trade_dir = "Bearish"
 else:
     trade_dir = "Neutral"
@@ -880,10 +903,12 @@ else:
 |---|---|
 | Uptrend + price above C | Bullish |
 | Downtrend + price below C | Bearish |
-| Break of Trade (one close through C) | Neutral — immediate, no two-close rule |
+| BREAK_OF_TRADE (one close through break level) | **Bullish or Bearish — direction HOLDS** (provisional, first-day forgiveness) |
+| BREAK_OF_TREND (one close through break level) | **Bullish or Bearish — direction HOLDS** (provisional, first-day forgiveness) |
+| BREAK_CONFIRMED (2+ consecutive closes through break level) | Neutral |
 | Pullback from D, price still above C | Bullish (UPTREND_VALID — trend intact; FORMING state eliminated v1.7) |
 | Bounce from D, price still below C | Bearish (DOWNTREND_VALID — trend intact; FORMING state eliminated v1.7) |
-| EXTENDED (structural: D > B + bc_range) | Bullish or Bearish — EXTENDED allows direction; break_level = B |
+| d_extended=True: D > B + bc_range — B is break level | Direction = Bullish/Bearish per state (pivot engine handles B-based break machine) |
 | Insufficient pivot history | Neutral |
 | Everything else | Neutral |
 
@@ -1096,27 +1121,32 @@ When close drops below LRR → tomorrow's MA20 falls → LRR follows MA20 downwa
 
 ### Structural States
 
-| State | Uptrend Condition | Downtrend Condition | Display |
-|---|---|---|---|
-| UPTREND_VALID / DOWNTREND_VALID | C > A, price within LRR–HRR range | C < A, price within LRR–HRR range | Normal green/red |
-| EXTENDED (structural) | D > B + abs(B-C) — break_level shifts to B | D < B - abs(B-C) — break_level shifts to B | State cell shows EXTENDED; reverts when new C forms; ↑/↓ overshoot flag if daily overshoot also fires |
-| WARNING | LRR drifted below C (IV-driven only) | HRR drifted above C (IV-driven only) | LRR or HRR cell → amber |
-| BREAK_OF_TRADE | Price closes below C (trade tf) | Price closes above C (trade tf) | Trade Dir → Neutral, LRR/HRR grey — forgiveness: 1 day |
-| BREAK_OF_TREND | Price closes below C (trend tf) | Price closes above C (trend tf) | Trend Dir → Neutral, Trend Level grey — forgiveness: 1 day |
-| BREAK_CONFIRMED | 2+ consecutive closes on wrong side of C | same | Permanently Neutral until price closes above B — recovery above C alone is not enough |
-| NO_STRUCTURE | Insufficient pivot history | Insufficient pivot history | LRR/HRR grey |
+`structural_state` has exactly **six valid values** — nothing else. EXTENDED and WARNING are NOT structural states.
+
+| State | Uptrend Condition | Downtrend Condition | Display | Direction |
+|---|---|---|---|---|
+| UPTREND_VALID | C > A, D established, price above C | — | Green | Bullish |
+| DOWNTREND_VALID | — | C < A, D established, price below C | Red | Bearish |
+| BREAK_OF_TRADE | Price closes below break level (trade tf) | Price closes above break level (trade tf) | **Amber** state cell — direction HOLDS | Bullish / Bearish |
+| BREAK_OF_TREND | Price closes below break level (trend tf) | Price closes above break level (trend tf) | **Amber** state cell — direction HOLDS | Bullish / Bearish |
+| BREAK_CONFIRMED | 2+ consecutive closes on wrong side of break level | same | **Red** state cell — direction → Neutral | Neutral |
+| NO_STRUCTURE | Insufficient pivot history | Insufficient pivot history | Grey — LRR/HRR grey | Neutral |
+
+**Break level = C normally; B when `d_extended = True` (D > B + abs(B-C)).** The break level applies to all state transitions (BREAK_OF_TRADE, BREAK_OF_TREND, BREAK_CONFIRMED) and to all warn flags (⚠ on LRR/HRR cells).
+
+**WARNING is a boolean flag only** — `warning` field in `signal_output`. It fires when LRR drifts below break level (uptrend) or HRR drifts above break level (downtrend). It is communicated via ⚠ on the LRR/HRR cells, NOT by overriding `structural_state`. Break level respects `d_extended` for this check too.
 
 **Critical rules:**
-- **C is the line in the sand** — Break of Trade/Trend fires on price closing through C
-- **One close below C = BREAK_OF_TRADE immediately** — forgiveness allowed on day 1 (recovery above C restores direction)
-- **2+ consecutive closes below C = BREAK_CONFIRMED** — permanently Neutral; recovery requires price to close above B
-- **Price recovers above C after 1-day break** → Trade Dir = Bullish restored (engine recalculates fresh each run)
-- **Price recovers above C after BREAK_CONFIRMED** → still Neutral until price closes above B
+- **Break level = C normally; B when d_extended = True** — applies to BREAK_OF_TRADE, BREAK_CONFIRMED, and warn flags
+- **One close through break level = BREAK_OF_TRADE immediately** — direction HOLDS (Bullish/Bearish), state cell → amber; forgiveness: recovery before day 2 restores the prior state
+- **2+ consecutive closes through break level = BREAK_CONFIRMED** — direction → Neutral, state cell → red; recovery requires close above B (same as before `d_extended` logic)
+- **BREAK_OF_TRADE does NOT change direction** — only BREAK_CONFIRMED does
+- **Price recovers above break level after 1-day break** → prior state restored (engine recalculates fresh each run)
+- **Price recovers above break level after BREAK_CONFIRMED** → still Neutral until price closes above B
 - **Intraday violations irrelevant** — engine uses EOD closes only
 - **Break of Trade = reduce to minimum position** — Trend break = go to zero
-- **WARNING state is IV-driven only** — never price-driven
 - **LRR/HRR always show** — color reflects state (green/red/grey); BREAK states show grey LRR/HRR
-- **Direction determined by pivots only — C only** — LRR has no role in direction check
+- **Direction determined by pivots only** — LRR has no role in direction check
 - **Trade and Trend states are independent** — Trend break does not auto-flip Trade
 - **C updates dynamically** — always references most recent confirmed higher low / lower high
 
@@ -1145,16 +1175,20 @@ signal_hurst:   ticker, h_trade, h_trend, h_lt, d_trade, d_trend, d_lt, calculat
 signal_pivots:  ticker, timeframe, bar_window,
                 pivot_a, pivot_b, pivot_c, pivot_d,
                 pivot_a_date, pivot_b_date, pivot_c_date, pivot_d_date,
-                structural_state, calculated_at
+                structural_state,           ← UPTREND_VALID | DOWNTREND_VALID | BREAK_OF_TRADE | BREAK_OF_TREND | BREAK_CONFIRMED | NO_STRUCTURE
+                d_extended,                 ← Boolean: True when D > B + abs(B-C); B becomes break level
+                calculated_at
                 UNIQUE(ticker, timeframe)
 
 signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 trade_direction, conviction, h_value,
                 viewpoint, viewpoint_since, ← ISO timestamp ET — when current aligned viewpoint began
                 alert, vol_signal,
-                warning,                    ← IV-driven WARNING flag (per timeframe)
+                warning,                    ← Boolean: LRR below / HRR above break level (per timeframe). NOT in structural_state.
                 lrr_warn, hrr_warn,         ← price-based pivot threshold flags (per timeframe)
                 pivot_b, pivot_c,           ← pivot values for UI comparison
+                d_extended,                 ← Boolean: True when D > B + abs(B-C); copied from signal_pivots; drives B/C break level in warn flags and popup
+                lrr_extended, hrr_extended, ← daily overshoot flags (close vs prior LRR/HRR) — SEPARATE from d_extended
                 obv_direction,              ← Vol Direction: OBV pivot trend: Bullish | Bearish | Neutral
                 obv_confirming,             ← True when Vol Direction aligns with Trade Dir (not Viewpoint)
                 calculated_at
@@ -1358,6 +1392,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `96346bc` — Fix scheduler run_date timezone (ET date, not UTC)
   - `0e510dd` — Fix cache_date timezone (ET date, not UTC)
   - `cd15150` — Tasks 4.6 + 4.7: Tickers table + dynamic backend + yfinance lookup
+  - `b91cb92` — EXTENDED architectural cleanup: d_extended boolean, structural_state clean set, BREAK_OF_TRADE direction holds
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -1387,7 +1422,7 @@ git checkout -- .   # roll back if needed
 4. **Direction values are Bullish / Bearish / Neutral** — never Up / Down
 5. **HRR = Higher Risk Range** — always the higher price value — do not rename
 6. **LRR = Lower Risk Range** — always the lower price value — do not rename
-7. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts, conviction 50-69%, WARNING state, and ⚠ per-cell pivot breach flags
+7. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts, conviction 50-69%, BREAK_OF_TRADE/BREAK_OF_TREND state cells, and ⚠ per-cell pivot breach flags
 8. **Asset Class values must exactly match:** Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities
 9. **Keep components modular** — one component per file
 10. **Docker:** changes to `src/` reflect on save — no rebuild needed for frontend
@@ -1409,7 +1444,7 @@ git checkout -- .   # roll back if needed
 26. **Direction determined by pivots only** — H has no role in direction or viewpoint
 27. **LRR/HRR always show** — grey when Neutral, green when Bullish, red when Bearish
 28. **Viewpoint has three states only** — Bullish, Bearish, Neutral (no Diverging)
-29. **Direction check uses C only** — `price > c` for Bullish, `price < c` for Bearish; LRR is not part of the direction check
+29. **Direction check uses C normally; B when d_extended=True** — `price > c` for Bullish, `price < c` for Bearish; LRR is not part of the direction check. When `d_extended=True`, pivot engine pre-handles B-based breaks before `_compute_direction` is called — no EXTENDED case needed in direction logic.
 30. **LRR/HRR always compute for BREAK states** — `_infer_pivot_direction` infers underlying direction even for BREAK_OF_TRADE/BREAK_OF_TREND/BREAK_CONFIRMED so LRR/HRR render grey
 31. **LRR/HRR cell color = timeframe direction** — use `dirRangeColor(dir, isWarn)`, NOT viewpoint color
 32. **Per-cell ⚠ warn flags are price-based** — separate from IV-driven `warning` structural state
@@ -1419,7 +1454,7 @@ git checkout -- .   # roll back if needed
 36. **tickers.js is seed data only** — never import it for the live ticker universe; use `/api/tickers`
 37. **Asset class overrides checked first** — add new entries to `ASSET_CLASS_OVERRIDES` in `tickers.py` when yfinance returns wrong asset class
 38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
-39. **One close below C = BREAK_OF_TRADE immediately** — forgiveness: recovery above C on day 1 restores direction; 2+ consecutive closes below C = BREAK_CONFIRMED — recovery requires close above B, not just above C
+39. **One close through break level = BREAK_OF_TRADE immediately** — break level = C normally; B when `d_extended=True`. Direction HOLDS during BREAK_OF_TRADE (not Neutral). Forgiveness: recovery on day 1 restores prior state; 2+ consecutive closes = BREAK_CONFIRMED → direction → Neutral. Recovery from BREAK_CONFIRMED requires close above B.
 40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
 41. **OBV pivot bar_window = 9 bars** — confirmed pivots require bar_window on both sides, same rule as price pivot engine
 42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
@@ -1433,10 +1468,17 @@ git checkout -- .   # roll back if needed
 50. **data_source column must be written on every price_cache upsert** — 'schwab', 'yahoo', or 'yahoo_fallback'
 51. **MA20 regime (`'uptrend'`/`'downtrend'`) is independent of ABC pivot direction** — do not conflate. Pivots say "what is the structural trend." MA20 regime says "where is price vs MA20 right now." They can disagree.
 52. **LT timeframe code/DB key stays `"lt"` everywhere** — display label only changes to "Tail" (UI, popup headers, table header). Never rename in models, DB columns, or backend API responses.
-53. **EXTENDED state has two independent meanings** — structural (D > B + abs(B-C) → persistent, break_level = B) and daily overshoot flag (close vs prior HRR/LRR → `hrr_extended`/`lrr_extended` Boolean). Never conflate.
+53. **Three independent "extended" concepts — never conflate:**
+    - `d_extended` (Boolean field) — D > B + abs(B-C); B becomes break level; drives warn flags and popup `*`; NOT in structural_state
+    - `lrr_extended` / `hrr_extended` (Boolean fields) — daily overshoot: today's close vs prior LRR/HRR; drives ↑↓ flags on LRR/HRR cells
+    - "EXTENDED" string — **no longer exists** in structural_state or anywhere in the system
 54. **Trend Level and Tail Level display `None` when direction is Neutral** — no level shown; also hidden when MA slope contradicts Trend/Tail direction
 55. **ENTRY prox threshold = 0.85** — do not revert to 2%-of-price absolute threshold; prox is range-normalized via HRR-LRR (STD20-derived, automatically volatility-scaled)
 56. **Proximity in conviction formula is direction-aware** — peaks at 1.0 when close is at the entry zone: LRR for Bullish (floor entry), HRR for Bearish (ceiling short entry)
+57. **`structural_state` has exactly six valid values** — `UPTREND_VALID`, `DOWNTREND_VALID`, `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE`. Never add EXTENDED, WARNING, or any other value.
+58. **BREAK_OF_TRADE / BREAK_OF_TREND do NOT change direction to Neutral** — direction holds (Bullish/Bearish) during provisional break; only BREAK_CONFIRMED flips direction to Neutral
+59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
+60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
 
 ---
 
