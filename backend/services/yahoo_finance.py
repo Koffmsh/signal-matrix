@@ -118,11 +118,9 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         volume_series  = hist["Volume"].reindex(history_closes.index).fillna(0)
         volume_history = [int(v) for v in volume_series.tolist()]
 
-        # STD20 — 21-day realized vol in dollar terms (BB formula input, matches _sigma() in conviction_engine)
-        if len(history_prices) >= 22:
-            arr      = np.array(history_prices[-22:], dtype=float)
-            log_rets = np.log(arr[1:] / arr[:-1])
-            std20    = round(float(np.std(log_rets) * close), 4)
+        # STD20 — standard Bollinger Band std: std of price levels over 20 days
+        if len(history_prices) >= 20:
+            std20 = round(float(np.std(history_prices[-20:], ddof=0)), 4)
         else:
             std20 = None
 

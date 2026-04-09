@@ -66,13 +66,11 @@ def _get_active_tickers(db: Session) -> list:
     return [r.ticker for r in rows]
 
 
-def _compute_std20(prices: list, close: float) -> float | None:
-    """21-day realized vol in dollar terms. Matches conviction_engine._sigma()."""
-    if len(prices) < 22:
+def _compute_std20(prices: list, close: float = None) -> float | None:
+    """Standard Bollinger Band std — std of price levels over 20 days."""
+    if len(prices) < 20:
         return None
-    arr      = np.array(prices[-22:], dtype=float)
-    log_rets = np.log(arr[1:] / arr[:-1])
-    return round(float(np.std(log_rets) * close), 4)
+    return round(float(np.std(prices[-20:], ddof=0)), 4)
 
 
 def _upsert(db: Session, data: dict, data_source: str) -> None:
