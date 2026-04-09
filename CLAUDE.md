@@ -1482,6 +1482,136 @@ git checkout -- .   # roll back if needed
 
 ---
 
+## Session-Start Checklist — Run at the Start of Every Backend Session
+
+Neo must run these steps at the start of any session that touches backend code, signals, or schema.
+Do not skip. Do not assume the environment is already in sync.
+
+```
+1. Confirm Docker is running
+   docker ps | grep signal-matrix
+
+2. Sync local SQLite schema with production
+   docker exec signal-matrix-backend alembic upgrade head
+   (uses local SQLite — keeps dev schema in sync with Alembic migrations)
+
+3. Confirm Fly.io auth is valid (only needed before deploys)
+   fly auth whoami
+
+4. Confirm production API is alive (only needed before deploys)
+   curl https://api.signal.suttonmc.com/health
+```
+
+If step 2 fails, stop and diagnose before making any code changes. A schema mismatch between
+local SQLite and the Alembic migration history means local test results are unreliable.
+
+---
+
+## Pre-Migration Checklist — Run Before Every Alembic Migration
+
+Every schema change must follow this sequence exactly. Do not skip steps, do not reorder.
+
+### Step 1 — Write and review the migration file
+- Generate: `docker exec signal-matrix-backend alembic revision --autogenerate -m "description"`
+- Review the generated file in `backend/alembic/versions/` before running it
+- Confirm upgrade() and downgrade() are correct
+- Confirm no unexpected table drops or column renames
+
+### Step 2 — Test migration against local SQLite first
+```bash
+docker exec signal-matrix-backend alembic upgrade head
+```
+- If this fails, fix the migration file before touching production
+- Local SQLite uses the standard connection string in `alembic/env.py`
+
+### Step 3 — Encode the Supabase password before production migration
+The Supabase password contains `#`, `$`, `/`, and `@` — these are silently mangled by Fly.io
+secret storage and break URL parsing if passed raw.
+
+Use the pre-encoded `DATABASE_URL` secret (already set in Fly.io) which has the password
+percent-encoded. Confirm it is set:
+```bash
+fly secrets list --app signal-matrix-api | grep DATABASE_URL
+```
+
+The encoded form is: `k%2C%2F2%23RY%40Jma%248rw`
+Never pass the raw password in any connection string that goes through Fly.io secret storage.
+
+### Step 4 — Run migration against production (Supabase via pooled connection)
+```bash
+# SSH into the running Fly.io API container
+fly ssh console --app signal-matrix-api
+
+# Inside the container — use pooled connection string (IPv4, port 6543)
+# DATABASE_URL env var is already set and pre-encoded
+alembic upgrade head
+
+exit
+```
+
+Do NOT use the direct connection string (port 5432) from inside Docker on Windows —
+it resolves to IPv6 only and Docker Desktop cannot route IPv6 egress.
+
+### Step 5 — Verify migration applied
+```bash
+fly ssh console --app signal-matrix-api
+alembic current   # should show the new revision head
+exit
+```
+
+Check the Supabase dashboard to confirm new columns/tables are present.
+
+### Step 6 — Redeploy both apps
+```bash
+fly deploy --app signal-matrix-api
+./deploy-web.sh                    # sources .env, passes REACT_APP_ADMIN_PASSWORD as build arg
+```
+
+Deploy API first, web second. Confirm both are healthy after deploy:
+```bash
+fly status --app signal-matrix-api
+fly status --app signal-matrix-web
+curl https://api.signal.suttonmc.com/health
+```
+
+### Step 7 — Smoke test
+- Open https://signal.suttonmc.com
+- Confirm dashboard loads, signals render, no console errors
+- If schema added new columns: run CALCULATE SIGNALS once to populate them
+
+### Step 8 — Commit
+```bash
+git add .
+git commit -m "migration: <description>"
+```
+Only commit after production is confirmed healthy.
+
+---
+
+## Deploy Drill — Run Monthly (No Code Changes Required)
+
+Purpose: keep the deploy path exercised so drift is caught before it matters.
+Scheduled: first weekday of each month, after market close (>4:15 PM ET).
+Can be delegated to Cowork — see `Docs/deploy_drill_cowork.md`.
+
+```
+Step 1  — git status                                    confirm clean working tree
+Step 2  — fly auth whoami                               confirm CLI auth is valid
+Step 3  — fly status --app signal-matrix-api            confirm API healthy before deploy
+Step 4  — fly status --app signal-matrix-web            confirm web healthy before deploy
+Step 5  — fly deploy --app signal-matrix-api            redeploy API (no code change)
+Step 6  — ./deploy-web.sh                               redeploy web (no code change)
+Step 7  — curl https://api.signal.suttonmc.com/health   confirm API responds post-deploy
+Step 8  — open https://signal.suttonmc.com              confirm web loads post-deploy
+Step 9  — curl https://api.signal.suttonmc.com/api/scheduler/status   confirm scheduler live
+Step 10 — log result in Docs/deploy_drill_log.md        date, outcome, any issues noted
+```
+
+If any step fails: stop, diagnose, fix before declaring the drill complete.
+A failing drill means the path has drifted — treat it as a bug, not a nuisance.
+
+---
+
 ## Roadmap
 
 | Phase | Description | Status |
