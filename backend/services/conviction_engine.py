@@ -105,14 +105,15 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
                            h_trend: float | None,
                            ma20_regime: str | None) -> tuple:
     """
-    BB framework for Trade timeframe (v1.7 spec §2.7).
+    BB framework for Trade timeframe — perfect mirror symmetry (v1.7 spec §2.7).
 
-    k_lrr      = 3 - 2 × H_trend          # regime-agnostic (uses H_trend — single H source)
-    k_hrr_up   = 3 - 2 × H_trend          # uptrend regime
-    k_hrr_down = max(0, H_trend - 0.5)    # downtrend regime (clamped — H<0.5 gives k=0 → HRR=MA20)
+    k_entry  = max(0, H_trend - 0.5)   # tight — entry side sits close to MA20; clamped ≥ 0
+    k_target = 3 - 2 × H_trend         # wide  — profit target side sits far from MA20
 
-    LRR = MA20 - k_lrr × STD20
-    HRR = MA20 + k_hrr × STD20   (regime-switched)
+    Price above MA20:  LRR = MA20 - k_entry × STD20   (tight floor — buy/add near MA20)
+                       HRR = MA20 + k_target × STD20  (wide target above)
+    Price below MA20:  HRR = MA20 + k_entry × STD20   (tight ceiling — sell/short near MA20)
+                       LRR = MA20 - k_target × STD20  (wide target below)
 
     Returns (None, None) if any required input is missing.
     """
@@ -121,15 +122,15 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
     if std20 <= 0:
         return None, None
 
-    k_lrr = 3.0 - 2.0 * h_trend
-    lrr   = round(ma20 - k_lrr * std20, 4)
+    k_entry  = max(0.0, h_trend - 0.5)
+    k_target = 3.0 - 2.0 * h_trend
 
     if (ma20_regime or "uptrend") == "uptrend":
-        k_hrr = 3.0 - 2.0 * h_trend
+        lrr = round(ma20 - k_entry  * std20, 4)
+        hrr = round(ma20 + k_target * std20, 4)
     else:
-        k_hrr = max(0.0, h_trend - 0.5)   # H < 0.5 → k = 0 → HRR = MA20
-
-    hrr = round(ma20 + k_hrr * std20, 4)
+        hrr = round(ma20 + k_entry  * std20, 4)
+        lrr = round(ma20 - k_target * std20, 4)
 
     return lrr, hrr
 
