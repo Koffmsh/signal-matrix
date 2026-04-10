@@ -1588,30 +1588,6 @@ Only commit after production is confirmed healthy.
 
 ---
 
-## Deploy Drill — Run Monthly (No Code Changes Required)
-
-Purpose: keep the deploy path exercised so drift is caught before it matters.
-Scheduled: first weekday of each month, after market close (>4:15 PM ET).
-Can be delegated to Cowork — see `Docs/deploy_drill_cowork.md`.
-
-```
-Step 1  — git status                                    confirm clean working tree
-Step 2  — fly auth whoami                               confirm CLI auth is valid
-Step 3  — fly status --app signal-matrix-api            confirm API healthy before deploy
-Step 4  — fly status --app signal-matrix-web            confirm web healthy before deploy
-Step 5  — fly deploy --app signal-matrix-api            redeploy API (no code change)
-Step 6  — ./deploy-web.sh                               redeploy web (no code change)
-Step 7  — curl https://api.signal.suttonmc.com/health   confirm API responds post-deploy
-Step 8  — open https://signal.suttonmc.com              confirm web loads post-deploy
-Step 9  — curl https://api.signal.suttonmc.com/api/scheduler/status   confirm scheduler live
-Step 10 — log result in Docs/deploy_drill_log.md        date, outcome, any issues noted
-```
-
-If any step fails: stop, diagnose, fix before declaring the drill complete.
-A failing drill means the path has drifted — treat it as a bug, not a nuisance.
-
----
-
 ## Roadmap
 
 | Phase | Description | Status |
