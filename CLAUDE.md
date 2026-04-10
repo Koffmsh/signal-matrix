@@ -374,7 +374,7 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 
 **Admin panel note:** Ticker symbol stored with slash (e.g. `/CL`). The PUT/DELETE/lookup endpoints use `{symbol:path}` to allow slashes in URL paths.
 
-**History fetch:** Schwab fetches 5-year history on bootstrap (< 252 bars cached), 3 months on subsequent daily updates. The merge logic in `_upsert` preserves existing long history when new data is shorter — prevents 3-month overwrite of 4-year history.
+**History fetch:** Schwab uses gap detection to determine what history to fetch per ticker — see Gap Detection section below. The merge logic in `_upsert` preserves existing long history when new data is shorter.
 
 **Idempotency check:** Uses first Schwab-supported ticker (excludes `SCHWAB_UNSUPPORTED`) to avoid perpetual cache miss when a Yahoo-only ticker sorts first.
 
@@ -382,8 +382,9 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - Schwab batch quotes API silently drops index symbols (SPX, NDX, $DJI, VIX) when mixed with equity symbols — no error, just missing keys in the response
 - Without this fix, these tickers never get `updated_at` stamped, causing REFRESH DATA to stay amber even after a successful refresh (SPX is `display_order=1` and its timestamp drives the header)
 - **Fix:** Added `"SPX"`, `"NDX"`, `"$DJI"`, `"VIX"` to `SCHWAB_UNSUPPORTED` set — they always route to Yahoo Finance
-- Full set: `{"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX"}`
+- Full set: `{"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT"}`
 - **Idempotency fix:** When Schwab cache is fresh and early return fires, the code now still runs `_yahoo_fetch_subset` for the unsupported tickers — without this, SPX/VIX/etc. would never get their `updated_at` stamped on subsequent manual refreshes
+- **RUT added 2026-04-10:** Russell 2000 Index — `YAHOO_SYMBOL_MAP["RUT"] = "^RUT"`, added to `SCHWAB_UNSUPPORTED` and `IV_INELIGIBLE`
 
 ### Initial Page Load Indicator — `isInitialLoading` (`App.js`)
 - On fresh page load, 4 parallel fetches fire; tickers resolve first, causing `ALL_DATA` to recompute with `generateMockData()` — shows fake sparklines, prices, and signal values
@@ -392,6 +393,44 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - Both buttons grey and disabled during initial load; REFRESH DATA shows "⟳ LOADING..." text
 - Loading banner "⟳ LOADING MARKET DATA..." appears above the table rows (shared with `isRefreshing` banner)
 - "⚠ LIVE DATA UNAVAILABLE — DISPLAYING MOCK DATA" banner shows when batch returns empty after load completes
+
+### Page Load vs REFRESH DATA — Separated Endpoints (`market_data.py`, `api.js`)
+- **Root problem:** Page load and REFRESH DATA both called `/api/market-data/batch` → both triggered Schwab/Yahoo fetch → every navigation to Dashboard caused a 20-30s wait and made CALCULATE SIGNALS go amber
+- **Fix:** Two separate endpoints with different responsibilities:
+  - `GET /api/market-data/cached` — **page load only** — pure DB read, never calls Schwab or Yahoo; returns whatever is in `price_cache` right now; single `IN` query with `load_only` (no large JSON blobs loaded)
+  - `GET /api/market-data/batch` — **REFRESH DATA button only** — triggers full Schwab/Yahoo fetch pipeline
+- `fetchCachedMarketData()` in `api.js` calls `/cached` — used in page load `useEffect`
+- `fetchBatchMarketData()` in `api.js` calls `/batch` — used by REFRESH DATA button handler only
+- **Rule:** Never call `/batch` on page load or navigation — it always triggers external API calls
+
+### React Router SPA Navigation (`App.js`, `AdminPanel.js`)
+- **Root problem:** Routing used `window.location.pathname` check — admin → dashboard was a full page reload, destroying all React state and re-firing all 5 API calls every navigation
+- **Fix:** `react-router-dom` v7 installed; `App` now uses `<BrowserRouter><Routes><Route>` — navigation is an SPA transition, no page reload, no white flash
+- `AdminPanel` uses `useNavigate()` hook; `← DASHBOARD` button calls `navigate("/")` instead of `window.location.href = "/"`
+- Dashboard still remounts on navigation (Routes unmounts inactive routes) but with `/cached` the re-fetch is instant (pure DB read)
+- nginx `try_files` config already handles SPA routing in production — no nginx changes needed
+
+### N+1 Query Fix — Batch Read Path (`market_data.py`)
+- **Root problem:** `refresh_data()` read cache results with a per-ticker loop: `for ticker in tickers: db.query(PriceCache).filter(ticker == t).first()` — 51 round trips to Supabase to build a single page load response
+- **Fix:** Single `IN` query with `load_only` — fetches only the columns needed for `serialize_cache_row`, skips `history_json` and `volume_history_json` blobs (252-756 data points each, never used in page load response)
+- Same pattern applied in the new `/cached` endpoint
+- **Rule:** Never re-introduce per-ticker query loops in read paths — always use `.filter(PriceCache.ticker.in_(tickers))`
+
+### Gap Detection — Incremental History Fetch (`schwab_market_data.py`)
+- **Root problem:** Every REFRESH DATA call fetched 3 months of history per ticker from Schwab, even though the DB already had the full history and only 1 new bar was needed
+- **Fix:** `_history_fetch_mode(existing_row, today_str)` determines what to fetch per ticker:
+  ```
+  "skip"      — last stored date == today → update quote fields only (no history change)
+  "append"    — gap 1-5 calendar days (normal day, weekend, holiday) → append today's bar from batch quote, no Schwab history API call
+  "short"     — gap 6-45 calendar days → 1-month targeted fetch (covers short outages)
+  "bootstrap" — no history, < 252 bars, or gap > 45 days → full 5-year fetch
+  ```
+- `_append_bar()` — appends close/volume from batch quote to existing `history_json`; recomputes MA20/50/100/200, STD20, spark, ma20_regime from merged history; no API call
+- `_update_quote_only()` — updates close/volume/timestamp only when history already contains today
+- Pre-load all existing cache rows before the ticker loop (one `IN` query) — eliminates another N+1 inside `_schwab_fetch`
+- `time.sleep(0.5)` rate-limit guard only executes when a Schwab history API call is actually made — not on skip/append paths
+- **Normal daily result:** 1 batch quote call (all tickers) + 0 per-ticker history calls → REFRESH DATA completes in seconds instead of ~26s
+- **New ticker result:** bootstrap path fires automatically — no special handling needed; existing tickers are unaffected
 
 ### Live Dot Removed from Header (`App.js`)
 - The `● LIVE` dot in the dashboard header was removed — it added no signal value and confused users about data freshness
@@ -1393,6 +1432,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `0e510dd` — Fix cache_date timezone (ET date, not UTC)
   - `cd15150` — Tasks 4.6 + 4.7: Tickers table + dynamic backend + yfinance lookup
   - `b91cb92` — EXTENDED architectural cleanup: d_extended boolean, structural_state clean set, BREAK_OF_TRADE direction holds
+  - `e02db23` — Perf: page load /cached endpoint, React Router SPA nav, N+1 fix, gap detection, RUT ticker
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -1432,7 +1472,7 @@ git checkout -- .   # roll back if needed
 14. **Commit to Git** after every confirmed working state
 15. **Neo = Claude Code** (VS Code extension) — all code changes go here
 16. **No worktrees or feature branches** — all changes committed directly to master
-17. **Never auto-fetch from Yahoo Finance** — REFRESH DATA button only; auto-loading from SQLite cache on page load IS allowed
+17. **Never auto-fetch from Yahoo Finance or Schwab** — REFRESH DATA button only (`/api/market-data/batch`); page load uses `/api/market-data/cached` which is a pure DB read and never calls external APIs. `fetchCachedMarketData()` for page load, `fetchBatchMarketData()` for REFRESH DATA — never swap these.
 18. **Never auto-calculate signals** — CALCULATE SIGNALS button only
 19. **`backend/signal_matrix.db` must never be committed to Git**
 20. **C is the invalidation level** — Break of Trade/Trend fires on price closing through C
