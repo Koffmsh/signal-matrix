@@ -1,7 +1,32 @@
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 /**
- * Fetch real market data for all Tier 1 tickers.
+ * Page load — read-only cache fetch. Never triggers Schwab/Yahoo.
+ * Returns whatever is stored in price_cache right now.
+ */
+export async function fetchCachedMarketData() {
+  try {
+    const response = await fetch(`${API_URL}/api/market-data/cached`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      console.warn(`[API] Cached fetch failed: ${response.status}`);
+      return { map: new Map(), dataSource: "cached" };
+    }
+    const json    = await response.json();
+    const dataMap = new Map();
+    (json.data || []).forEach(item => dataMap.set(item.ticker, item));
+    console.info(`[API] Loaded cached data for ${dataMap.size} tickers`);
+    return { map: dataMap, dataSource: json.data_source || "cached" };
+  } catch (err) {
+    console.warn("[API] fetchCachedMarketData error — using mock data", err);
+    return { map: new Map(), dataSource: "cached" };
+  }
+}
+
+/**
+ * REFRESH DATA button — triggers a full Schwab/Yahoo fetch and updates cache.
  * Returns a Map of ticker -> data object for O(1) lookup.
  * Returns empty Map on any failure — React falls back to mock.
  */

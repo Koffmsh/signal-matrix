@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 
 # These tickers are excluded — indices have non-standard chain structure; futures use different chain APIs
-IV_INELIGIBLE = {"VIX", "$DJI", "SPX", "NDX", "/CL", "/ZN", "/GC"}
+IV_INELIGIBLE = {"VIX", "$DJI", "SPX", "NDX", "RUT", "/CL", "/ZN", "/GC"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

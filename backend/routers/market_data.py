@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from database import get_db
 from models.price_cache import PriceCache
 from models.ticker import Ticker
@@ -147,10 +147,24 @@ def refresh_data(db: Session) -> dict:
     except Exception as e:
         logger.warning(f"IV fetch skipped during refresh: {e}")
 
-    # Read all active tickers from cache (now populated by fetch above)
+    # Read all active tickers from cache in one query — avoids N+1 round trips to Supabase.
+    # load_only skips history_json / volume_history_json blobs (not needed for page load).
+    tickers = get_active_tickers(db)
+    rows = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker.in_(tickers))
+        .options(load_only(
+            PriceCache.ticker, PriceCache.close, PriceCache.volume,
+            PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
+            PriceCache.rel_iv, PriceCache.iv_source,
+            PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
+        ))
+        .all()
+    )
+    row_map = {r.ticker: r for r in rows}
     results = []
-    for ticker in get_active_tickers(db):
-        row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+    for ticker in tickers:
+        row = row_map.get(ticker)
         if row and row.close is not None:
             results.append(serialize_cache_row(row))
         else:
@@ -165,12 +179,46 @@ def refresh_data(db: Session) -> dict:
     }
 
 
+@router.get("/cached")
+def get_cached(db: Session = Depends(get_db)):
+    """
+    Read-only cache endpoint for page load — never triggers an external fetch.
+    Returns whatever is currently stored in price_cache.
+    REFRESH DATA button uses /batch instead.
+    """
+    today    = datetime.now(_ET).strftime("%Y-%m-%d")
+    tickers  = get_active_tickers(db)
+    rows = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker.in_(tickers))
+        .options(load_only(
+            PriceCache.ticker, PriceCache.close, PriceCache.volume,
+            PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
+            PriceCache.rel_iv, PriceCache.iv_source,
+            PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
+        ))
+        .all()
+    )
+    row_map  = {r.ticker: r for r in rows}
+    results  = []
+    for ticker in tickers:
+        row = row_map.get(ticker)
+        if row and row.close is not None:
+            results.append(serialize_cache_row(row))
+    return {
+        "data":        results,
+        "count":       len(results),
+        "date":        today,
+        "data_source": "cached",
+    }
+
+
 @router.get("/batch")
 def get_batch(db: Session = Depends(get_db)):
     """
     Fetch market data for all active tickers.
     Tries Schwab first; falls back to Yahoo Finance.
-    Subsequent calls same day are served from cache (fast).
+    Only called by the REFRESH DATA button — never on page load.
     """
     return refresh_data(db)
 

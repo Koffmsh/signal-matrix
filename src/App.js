@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { fetchBatchMarketData } from "./services/api";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { fetchCachedMarketData, fetchBatchMarketData } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
@@ -20,8 +21,14 @@ function tickerFromApi(r) {
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 export default function App() {
-  if (window.location.pathname === "/admin") return <AdminPanel />;
-  return <Dashboard />;
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="*" element={<Dashboard />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
 // ── Seeded RNG ───────────────────────────────────────────────────────────────
@@ -358,9 +365,9 @@ function Dashboard() {
       .catch(() => {});
   }, []);
 
-  // Load market data from cache on page load (instant when cache is warm)
+  // Load market data from cache on page load — read-only, never triggers fetch
   useEffect(() => {
-    fetchBatchMarketData()
+    fetchCachedMarketData()
       .then(({ map, dataSource }) => {
         setRealDataMap(map);
         setBatchDataSource(dataSource);

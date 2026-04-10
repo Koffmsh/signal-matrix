@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 
 const API = `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/api/tickers`;
 
@@ -179,6 +180,7 @@ function EditCell({ value, onChange, onCommit, type = "text", options = null, di
 
 // ── Main AdminPanel ───────────────────────────────────────────────────────────
 export default function AdminPanel() {
+  const navigate = useNavigate();
   const [authed, setAuthed] = useState(false);
   const [rows, setRows] = useState([]);
   const [hoveredRow, setHoveredRow] = useState(null);
@@ -364,7 +366,7 @@ export default function AdminPanel() {
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
           <span style={{ fontSize: "10px", color: "#8899aa" }}>{rows.filter(r => r.active && !r._isNew).length} active · {rows.filter(r => !r.active).length} inactive · {rows.filter(r => !r._isNew).length} total</span>
           <button style={S.addBtn} onClick={addRow}>+ ADD TICKER</button>
-          <button style={S.backBtn} onClick={() => window.location.href = "/"}>← DASHBOARD</button>
+          <button style={S.backBtn} onClick={() => navigate("/")}>← DASHBOARD</button>
         </div>
       </div>
 

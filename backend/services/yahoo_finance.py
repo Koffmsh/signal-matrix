@@ -52,6 +52,7 @@ YAHOO_SYMBOL_MAP = {
     "NDX":  "^NDX",
     "$DJI": "^DJI",
     "VIX":  "^VIX",
+    "RUT":  "^RUT",    # Russell 2000 Index
     "USD":  "DX-Y.NYB",
     "JPY":  "JPY=X",
     "/CL":  "CL=F",    # WTI Crude Oil front-month futures

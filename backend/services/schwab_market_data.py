@@ -15,7 +15,7 @@ Called by:
 import json
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, date as date_cls
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -49,7 +49,7 @@ SCHWAB_SYMBOL_MAP = {
 #   FX (USD, JPY): non-equity instruments not available in Schwab equity quotes
 #   Futures (/CL, /ZN, /GC): continuous front-month symbols Schwab doesn't serve
 # Without this routing, Schwab errors leave updated_at stale → REFRESH DATA stays amber
-SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX"}
+SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT"}
 
 
 def get_schwab_symbol(ticker: str) -> str:
@@ -71,6 +71,93 @@ def _compute_std20(prices: list, close: float = None) -> float | None:
     if len(prices) < 20:
         return None
     return round(float(np.std(prices[-20:], ddof=0)), 4)
+
+
+def _history_fetch_mode(existing_row, today_str: str) -> str:
+    """
+    Determine what history fetch is needed for this ticker.
+
+      "bootstrap" — no history, < 252 bars, or gap > 45 days → full 5-year fetch
+      "short"     — gap 6–45 calendar days → 1-month fetch to fill gap
+      "append"    — gap 1–5 calendar days (normal day / weekend / holiday) → append from quote
+      "skip"      — last stored date is today → update quote fields only, no history change
+    """
+    if not existing_row or not existing_row.history_dates_json:
+        return "bootstrap"
+    dates = json.loads(existing_row.history_dates_json)
+    if len(dates) < 252:
+        return "bootstrap"
+    last_date    = date_cls.fromisoformat(dates[-1])
+    today        = date_cls.fromisoformat(today_str)
+    calendar_gap = (today - last_date).days
+    if calendar_gap == 0:
+        return "skip"
+    elif calendar_gap <= 5:
+        return "append"
+    elif calendar_gap <= 45:
+        return "short"
+    else:
+        return "bootstrap"
+
+
+def _update_quote_only(existing: PriceCache, close: float, volume: int,
+                       today: str, data_source: str) -> None:
+    """Update close/volume/timestamp only — history unchanged (today already stored)."""
+    import pandas as pd
+    prices   = json.loads(existing.history_json) if existing.history_json else []
+    closes_s = pd.Series(prices)
+    existing.close       = close
+    existing.volume      = volume
+    existing.ma20        = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
+    existing.ma50        = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
+    existing.ma100       = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
+    existing.cache_date  = today
+    existing.updated_at  = datetime.utcnow()
+    existing.data_source = data_source
+
+
+def _append_bar(existing: PriceCache, close: float, volume: int,
+                today: str, data_source: str) -> None:
+    """Append today's bar to existing history — no Schwab history API call needed."""
+    import pandas as pd
+    prices = json.loads(existing.history_json)        if existing.history_json        else []
+    dates  = json.loads(existing.history_dates_json)  if existing.history_dates_json  else []
+    vols   = json.loads(existing.volume_history_json) if existing.volume_history_json else []
+
+    if dates and dates[-1] == today:
+        # Already present — update in place (re-run same day after market close)
+        prices[-1] = close
+        vols[-1]   = volume
+    else:
+        prices.append(close)
+        dates.append(today)
+        vols.append(volume)
+
+    closes_s     = pd.Series(prices)
+    spark_raw    = prices[-60:] if len(prices) >= 60 else prices
+    spark_prices = [round(p, 2) for p in spark_raw]
+    if spark_prices:
+        spark_prices[-1] = close
+
+    std20       = _compute_std20(prices)
+    ma200       = round(float(np.mean(prices[-200:])), 2) if len(prices) >= 200 else None
+    ma20_regime = compute_ma20_regime(prices)
+
+    existing.close               = close
+    existing.volume              = volume
+    existing.ma20                = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
+    existing.ma50                = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
+    existing.ma100               = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
+    existing.ma200               = ma200
+    existing.std20               = std20
+    existing.ma20_regime         = ma20_regime
+    existing.spark_json          = json.dumps(spark_prices)
+    existing.history_json        = json.dumps(prices)
+    existing.history_dates_json  = json.dumps(dates)
+    existing.volume_history_json = json.dumps(vols)
+    existing.cache_date          = today
+    existing.updated_at          = datetime.utcnow()
+    existing.data_source         = data_source
 
 
 def _upsert(db: Session, data: dict, data_source: str) -> None:
@@ -222,9 +309,15 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
     quote_resp.raise_for_status()
     quotes = quote_resp.json()
 
-    # ── Step 2: Per-ticker price history ─────────────────────────────────────
+    # ── Step 2: Per-ticker history — gap detection decides what to fetch ─────────
     fetched = 0
     errors  = 0
+
+    # Pre-load all existing cache rows in one query — avoids N+1 within the loop
+    existing_map = {
+        r.ticker: r
+        for r in db.query(PriceCache).filter(PriceCache.ticker.in_(schwab_tickers)).all()
+    }
 
     for app_ticker in schwab_tickers:
         schwab_sym = get_schwab_symbol(app_ticker)
@@ -245,18 +338,31 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
             errors += 1
             continue
 
-        close = round(float(close), 2)
+        close        = round(float(close), 2)
+        existing_row = existing_map.get(app_ticker)
+        mode         = _history_fetch_mode(existing_row, today)
 
-        # Price history — 5 years on first fetch (bootstrap); 3 months on subsequent fetches
-        existing_row = db.query(PriceCache).filter(PriceCache.ticker == app_ticker).first()
-        existing_len = len(json.loads(existing_row.history_json)) if existing_row and existing_row.history_json else 0
-        needs_bootstrap = existing_len < 252
+        # ── No API call paths ────────────────────────────────────────────────
+        if mode == "skip":
+            logger.debug(f"Schwab: history current for {app_ticker} — updating quote only")
+            _update_quote_only(existing_row, close, volume, today, "schwab")
+            fetched += 1
+            continue
 
-        if needs_bootstrap:
+        if mode == "append":
+            logger.debug(f"Schwab: appending today's bar for {app_ticker}")
+            _append_bar(existing_row, close, volume, today, "schwab")
+            fetched += 1
+            continue
+
+        # ── Schwab history API call needed ───────────────────────────────────
+        if mode == "short":
+            period_type, period = PH.PeriodType.MONTH, PH.Period.ONE_MONTH
+            logger.info(f"Schwab: gap fill (1m) for {app_ticker}")
+        else:  # bootstrap
+            cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
             period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
-            logger.info(f"Schwab: bootstrap fetch (5y) for {app_ticker} ({existing_len} bars cached)")
-        else:
-            period_type, period = PH.PeriodType.MONTH, PH.Period.THREE_MONTHS
+            logger.info(f"Schwab: bootstrap (5y) for {app_ticker} ({cached_len} bars cached)")
 
         logger.debug(f"Schwab: fetching history for {app_ticker} ({schwab_sym})")
         try:
@@ -289,15 +395,15 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
         ]
         volume_history = [int(c.get("volume", 0)) for c in candles]
 
-        closes_s  = pd.Series(history_prices)
-        spark_raw = history_prices[-60:] if len(history_prices) >= 60 else history_prices
+        closes_s     = pd.Series(history_prices)
+        spark_raw    = history_prices[-60:] if len(history_prices) >= 60 else history_prices
         spark_prices = [round(p, 2) for p in spark_raw]
         if spark_prices:
             spark_prices[-1] = close  # anchor last point to exact quote
 
-        ma20  = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
-        ma50  = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
-        ma100 = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
+        ma20   = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
+        ma50   = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
+        ma100  = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
         rel_iv = compute_realized_vol_percentile(closes_s)
 
         _upsert(db, {
@@ -316,7 +422,7 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
         }, data_source="schwab")
 
         fetched += 1
-        time.sleep(0.5)  # Rate limit: 120 req/min; 51 calls @ 0.5s ≈ 26s
+        time.sleep(0.5)  # rate limit guard — only reached on bootstrap or gap fill
 
     db.commit()
 
