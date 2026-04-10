@@ -442,6 +442,14 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - Pre-load all existing rows before Yahoo loop (one `IN` query) — same N+1 fix as Schwab path
 - **Result:** Second REFRESH DATA same day → instant (all skip). Normal daily first hit → ~10s instead of ~60s (lightweight 5d fetch × 10 tickers)
 
+### IV Fetch — Idempotent on Manual REFRESH DATA (`market_data.py`, `schwab_options.py`)
+- **Root problem:** `market_data.py` called `schwab_fetch_iv(db, force=True)` — bypassed the built-in idempotency check on every manual REFRESH DATA press, running ~65 Schwab options chain calls (~55 seconds) even when IV was already fresh
+- **Fix:** Changed to `schwab_fetch_iv(db, force=False)` — the existing idempotency check now fires: if IV already fetched today, skip entirely
+- **Scheduler path unchanged:** Scheduler calls `schwab_fetch_iv(db)` (default `force=False`) — since IV has never been fetched when the 4 PM job runs, the idempotency check never fires and IV always fetches fresh at EOD
+- **First manual REFRESH DATA of the day:** IV fetches (~55 seconds) — unavoidable, 65 options chain calls
+- **Subsequent REFRESH DATA same day:** IV skipped entirely → near-instant
+- **Rule:** Never change back to `force=True` in `market_data.py` — it re-introduces the 55-second penalty on every button press
+
 ### Live Dot Removed from Header (`App.js`)
 - The `● LIVE` dot in the dashboard header was removed — it added no signal value and confused users about data freshness
 - SCHED indicator, EOD timestamp, and button colors already communicate all relevant freshness state
@@ -846,7 +854,7 @@ ASSET_CLASS_OVERRIDES = {
 ```
 4:00 PM ET — single chained job (prices → IV → signals)
     schwab_fetch_all()       Schwab primary / Yahoo fallback — writes price_cache
-    schwab_fetch_iv()        47 requests (options-eligible only) — writes iv_history
+    schwab_fetch_iv()        ~65 requests (options-eligible only) — writes iv_history
     calculate_signals()      full pipeline — writes signal_output + signal_history
     scheduler_log            success/failure entry
 ```
@@ -1444,6 +1452,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `b91cb92` — EXTENDED architectural cleanup: d_extended boolean, structural_state clean set, BREAK_OF_TRADE direction holds
   - `e02db23` — Perf: page load /cached endpoint, React Router SPA nav, N+1 fix, gap detection, RUT ticker
   - `110deaf` — Perf: Yahoo-only ticker gap detection, fetch_ticker_close lightweight fetch
+  - `d05d5b1` — Perf: IV fetch idempotent on manual REFRESH DATA (force=False)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
