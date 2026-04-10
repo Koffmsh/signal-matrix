@@ -140,10 +140,10 @@ def refresh_data(db: Session) -> dict:
     data_source  = fetch_result.get("data_source", "yahoo")
     rate_limited = fetch_result.get("rate_limited", False)
 
-    # Refresh IV — force=True so manual REFRESH DATA always gets current IV,
-    # not just the first fetch of the day
+    # Refresh IV — idempotent (force=False): skips if already fetched today.
+    # Scheduler always fetches fresh at 4 PM; manual REFRESH DATA skips IV if current.
     try:
-        schwab_fetch_iv(db, force=True)
+        schwab_fetch_iv(db, force=False)
     except Exception as e:
         logger.warning(f"IV fetch skipped during refresh: {e}")
 
