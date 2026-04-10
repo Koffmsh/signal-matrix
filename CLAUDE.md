@@ -429,8 +429,18 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - `_update_quote_only()` — updates close/volume/timestamp only when history already contains today
 - Pre-load all existing cache rows before the ticker loop (one `IN` query) — eliminates another N+1 inside `_schwab_fetch`
 - `time.sleep(0.5)` rate-limit guard only executes when a Schwab history API call is actually made — not on skip/append paths
-- **Normal daily result:** 1 batch quote call (all tickers) + 0 per-ticker history calls → REFRESH DATA completes in seconds instead of ~26s
+- **Normal daily result (Schwab tickers):** 1 batch quote call (all tickers) + 0 per-ticker history calls → completes in seconds
 - **New ticker result:** bootstrap path fires automatically — no special handling needed; existing tickers are unaffected
+
+### Gap Detection — Yahoo-Only Tickers (`schwab_market_data.py`, `yahoo_finance.py`)
+- **Root problem:** `_yahoo_fetch_subset` had no cache awareness — fetched full 5-year history from Yahoo for every Yahoo-only ticker (SPX, NDX, VIX, RUT, USD, JPY, /CL, /ZN, /GC, $DJI) on every REFRESH DATA call. Second hit of the day: ~66 seconds.
+- **Fix:** Same four-mode gap detection applied to the Yahoo path:
+  - `skip` — cache_date == today → no-op; second hit of the day is now instant for all Yahoo tickers
+  - `append` — gap 1-5 days → `fetch_ticker_close()` (5-day fetch, returns close+volume only) + `_append_bar()`; avoids full 5-year pull on normal daily runs
+  - `short` / `bootstrap` — full `fetch_ticker_data()` (5-year fetch) as before
+- `fetch_ticker_close(ticker)` added to `yahoo_finance.py` — uses `yf.Ticker().history(period="5d")`, returns `(close, volume)` tuple; fast, no history processing
+- Pre-load all existing rows before Yahoo loop (one `IN` query) — same N+1 fix as Schwab path
+- **Result:** Second REFRESH DATA same day → instant (all skip). Normal daily first hit → ~10s instead of ~60s (lightweight 5d fetch × 10 tickers)
 
 ### Live Dot Removed from Header (`App.js`)
 - The `● LIVE` dot in the dashboard header was removed — it added no signal value and confused users about data freshness
@@ -1433,6 +1443,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `cd15150` — Tasks 4.6 + 4.7: Tickers table + dynamic backend + yfinance lookup
   - `b91cb92` — EXTENDED architectural cleanup: d_extended boolean, structural_state clean set, BREAK_OF_TRADE direction holds
   - `e02db23` — Perf: page load /cached endpoint, React Router SPA nav, N+1 fix, gap detection, RUT ticker
+  - `110deaf` — Perf: Yahoo-only ticker gap detection, fetch_ticker_close lightweight fetch
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
