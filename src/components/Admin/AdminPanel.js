@@ -27,6 +27,36 @@ const toApi = (row) => ({
 });
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+const ASSET_CLASS_ORDER = [
+  "Domestic Equities",
+  "Domestic Fixed Income",
+  "Digital Assets",
+  "Foreign Exchange",
+  "International Equities",
+  "Commodities",
+];
+
+function adminSort(a, b) {
+  // New (unsaved) rows always float to the top
+  if (a._isNew && !b._isNew) return -1;
+  if (!a._isNew && b._isNew) return 1;
+  // Asset class order mirrors the dashboard
+  const ac = ASSET_CLASS_ORDER.indexOf(a.assetClass) - ASSET_CLASS_ORDER.indexOf(b.assetClass);
+  if (ac !== 0) return ac;
+  // Tier 1 before Tier 2 within each asset class
+  const tc = (a.tier || 1) - (b.tier || 1);
+  if (tc !== 0) return tc;
+  // Within Tier 1 Domestic Equities: sector ETFs (0) → stocks (1) → factor ETFs (2)
+  if (a.tier === 1) {
+    const isFactor = s => s.sector === "Factor";
+    const isStock  = s => s.assetClass === "Domestic Equities" && s.displayOrder >= 19 && s.displayOrder <= 27;
+    const subOrder = s => isStock(s) ? 2 : isFactor(s) ? 1 : 0;
+    const so = subOrder(a) - subOrder(b);
+    if (so !== 0) return so;
+  }
+  return (a.displayOrder || 999) - (b.displayOrder || 999);
+}
+
 const ASSET_CLASSES = [
   "Domestic Equities",
   "Domestic Fixed Income",
@@ -341,11 +371,7 @@ export default function AdminPanel() {
       if (filterSector !== "all" && r.sector !== filterSector) return false;
       return true;
     })
-    .sort((a, b) => {
-      if (a._isNew) return 1;
-      if (b._isNew) return -1;
-      return (a.displayOrder || 999) - (b.displayOrder || 999) || (a.ticker || "").localeCompare(b.ticker || "");
-    });
+    .sort(adminSort);
 
   if (!authed) return <PasswordGate onSuccess={() => setAuthed(true)} />;
 

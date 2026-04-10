@@ -214,10 +214,10 @@ function defaultSort(a, b) {
   // Within Domestic Equities: sector ETFs → stocks → factor ETFs
   const isFactor = s => s.sector === "Factor";
   const isStock  = s => s.assetClass === "Domestic Equities" && s.displayOrder >= 19 && s.displayOrder <= 27;
-  const subOrder = s => isFactor(s) ? 2 : isStock(s) ? 1 : 0;
+  const subOrder = s => isStock(s) ? 2 : isFactor(s) ? 1 : 0;
   const so = subOrder(a) - subOrder(b);
   if (so !== 0) return so;
-  return a.ticker.localeCompare(b.ticker);
+  return a.displayOrder - b.displayOrder;
 }
 
 // ── Color helpers ────────────────────────────────────────────────────────────
