@@ -439,7 +439,13 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
                     lrr_extended = True
 
         elif tf == "trend":
-            lrr, hrr = compute_trend_level(ma100, prices, direction)
+            # Trend Level = break pivot (B when d_extended, else C); no MA100 slope check.
+            if direction != "Neutral" and (b is not None or c is not None):
+                break_pivot = b if d_extended else c
+                lrr = round(break_pivot, 4) if break_pivot is not None else None
+            else:
+                lrr = None
+            hrr          = None
             warning      = False
             hrr_extended = False
             lrr_extended = False

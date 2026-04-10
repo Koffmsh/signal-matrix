@@ -192,8 +192,8 @@ function mergeSignalData(row, signalMap) {
 
 // ── Sort helpers ─────────────────────────────────────────────────────────────
 const ASSET_CLASS_ORDER = [
-  "Domestic Equities", "Domestic Fixed Income", "Commodities",
-  "Foreign Exchange", "International Equities", "Digital Assets",
+  "Foreign Exchange", "Indices", "Domestic Equities", "Domestic Fixed Income",
+  "Digital Assets", "Commodities", "International Equities",
 ];
 const SECTOR_ORDER = [
   "Index", "Broad Market", "Technology", "Communication Services",
@@ -204,8 +204,12 @@ const SECTOR_ORDER = [
 function defaultSort(a, b) {
   const ac = ASSET_CLASS_ORDER.indexOf(a.assetClass) - ASSET_CLASS_ORDER.indexOf(b.assetClass);
   if (ac !== 0) return ac;
-  const sc = SECTOR_ORDER.indexOf(a.sector) - SECTOR_ORDER.indexOf(b.sector);
-  if (sc !== 0) return sc;
+  // Within Domestic Equities: sector ETFs → stocks → factor ETFs
+  const isFactor = s => s.sector === "Factor";
+  const isStock  = s => s.assetClass === "Domestic Equities" && s.displayOrder >= 19 && s.displayOrder <= 27;
+  const subOrder = s => isFactor(s) ? 2 : isStock(s) ? 1 : 0;
+  const so = subOrder(a) - subOrder(b);
+  if (so !== 0) return so;
   return a.ticker.localeCompare(b.ticker);
 }
 
@@ -508,6 +512,16 @@ function Dashboard() {
   const aligned = DATA.filter(x => x.tradeDir === x.trendDir && x.tradeDir !== "Neutral").length;
   const entries = DATA.filter(x => x.entrySignal != null).length;
 
+  // Precompute which rows need an asset class separator (only in default sort, tier 1 only)
+  const rowsWithSeps = useMemo(() => {
+    let lastClass = null;
+    return filtered.map(row => {
+      const needsSep = sortKey === "default" && row.tier === 1 && row.assetClass !== lastClass;
+      if (row.tier === 1) lastClass = row.assetClass;
+      return { row, needsSep };
+    });
+  }, [filtered, sortKey]);
+
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => -d);
     else { setSortKey(key); setSortDir(1); }
@@ -601,17 +615,17 @@ function Dashboard() {
         </td>
         {/* Trade Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
-        {/* Trade LRR */}
-        <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
-          {row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
-          {row.tradeLrrExtended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↓</span>}
+        {/* Trade LRR — blank when Neutral */}
+        <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.tradeDir !== "Neutral" && row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
+          {row.tradeDir !== "Neutral" && row.tradeLrrWarn && <span title={warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeDir !== "Neutral" && row.tradeLrrExtended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↓</span>}
         </td>
-        {/* Trade HRR */}
-        <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
-          {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
-          {row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
-          {row.tradeHrrExtended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↑</span>}
+        {/* Trade HRR — blank when Neutral */}
+        <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeHrrWarn), fontVariantNumeric: "tabular-nums" }}>
+          {row.tradeDir !== "Neutral" && row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
+          {row.tradeDir !== "Neutral" && row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
+          {row.tradeDir !== "Neutral" && row.tradeHrrExtended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↑</span>}
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
@@ -818,7 +832,12 @@ function Dashboard() {
         </div>
         <button onClick={() => setAlignedOnly(x => !x)} style={{ background: alignedOnly ? "#001a2e" : "transparent", border: `1px solid ${alignedOnly ? "#0077ff" : "#1a2e45"}`, color: alignedOnly ? "#0099ff" : "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit" }}>ALIGNED ONLY</button>
         <button onClick={() => setAlertOnly(x => !x)} style={{ background: alertOnly ? "#1a1400" : "transparent", border: `1px solid ${alertOnly ? "#f0b429" : "#1a2e45"}`, color: alertOnly ? "#f0b429" : "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit" }}>⚡ ALERTS</button>
-        <div style={{ marginLeft: "auto", fontSize: "10px", color: "#667788" }}>{filtered.length} of {DATA.length} instruments</div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "10px" }}>
+          {sortKey !== "default" && (
+            <button onClick={() => { setSortKey("default"); setSortDir(1); }} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "2px 8px", fontSize: "9px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>↺ DEFAULT</button>
+          )}
+          <span style={{ fontSize: "10px", color: "#667788" }}>{filtered.length} of {DATA.length} instruments</span>
+        </div>
       </div>
 
       {/* Data status banner */}
@@ -862,14 +881,21 @@ function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {filtered.flatMap((row, i) => {
-              const children  = TIER2_BY_PARENT[row.ticker] || [];
+            {rowsWithSeps.flatMap(({ row, needsSep }, i) => {
+              const children   = TIER2_BY_PARENT[row.ticker] || [];
               const isExpanded = expandedTickers.has(row.ticker);
               const t1 = renderRow(row, i, false);
               const t2 = (isExpanded && children.length > 0)
                 ? children.map(child => renderRow(child, i, true))
                 : [];
-              return [t1, ...t2];
+              const sep = needsSep ? [
+                <tr key={`sep-${row.assetClass}`}>
+                  <td colSpan={16} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
+                    {row.assetClass.toUpperCase()}
+                  </td>
+                </tr>
+              ] : [];
+              return [...sep, t1, ...t2];
             })}
           </tbody>
         </table>
@@ -905,8 +931,8 @@ function Dashboard() {
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
-          ["Trade LRR",    `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}`,  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
-          ["Trade HRR",    `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}`,  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
+          ["Trade LRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
+          ["Trade HRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
           ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
           ["Trade B" + (tradeBreakIsB ? " *" : ""),  fmtPrice(row.tradeB), tradeBreakIsB  ? "#f0b429" : "#8899aa", false, tradeBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
           ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],

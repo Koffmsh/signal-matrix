@@ -301,7 +301,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 ### Trend Level and Tail Level — Single MA (v1.7, replaces dual LRR/HRR for Trend and LT)
 - **Supersedes:** Dual Trend LRR/HRR and LT LRR/HRR bands — only one level per timeframe now
-- **Trend Level:** MA100, shown only when Trend Dir ≠ Neutral AND 10-day slope confirms direction
+- **Trend Level:** Break pivot (C normally; B when `d_extended=True`), shown when Trend Dir ≠ Neutral. MA100 slope check removed — always shows the active invalidation level.
   - Uptrend: green floor (buy/add zone); Downtrend: red ceiling (sell/short zone)
 - **Tail Level:** MA200, shown only when LT Dir ≠ Neutral AND 20-day slope confirms direction
 - **Code/DB key unchanged:** still `"lt"` everywhere in models and DB; display label only is "Tail"
@@ -1423,7 +1423,7 @@ git checkout -- .   # roll back if needed
 5. **HRR = Higher Risk Range** — always the higher price value — do not rename
 6. **LRR = Lower Risk Range** — always the lower price value — do not rename
 7. **Neutral color is `#8899aa` grey** — amber `#f0b429` is for alerts, conviction 50-69%, BREAK_OF_TRADE/BREAK_OF_TREND state cells, and ⚠ per-cell pivot breach flags
-8. **Asset Class values must exactly match:** Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities
+8. **Asset Class values must exactly match:** Domestic Equities | Domestic Fixed Income | Digital Assets | Foreign Exchange | International Equities | Commodities | Indices
 9. **Keep components modular** — one component per file
 10. **Docker:** changes to `src/` reflect on save — no rebuild needed for frontend
 11. **Do not modify** `docker-compose.yml`, `Dockerfile`, or `package.json` without flagging first
