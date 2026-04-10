@@ -64,6 +64,26 @@ def get_yahoo_symbol(ticker: str) -> str:
     return YAHOO_SYMBOL_MAP.get(ticker, ticker)
 
 
+def fetch_ticker_close(ticker: str) -> tuple | None:
+    """
+    Lightweight fetch — returns (close, volume) using only the last 5 days of data.
+    Used for daily append on Yahoo-only tickers — avoids full 5-year history pull.
+    Returns None on failure.
+    """
+    yahoo_symbol = get_yahoo_symbol(ticker)
+    try:
+        hist = yf.Ticker(yahoo_symbol).history(period="5d")
+        if hist.empty:
+            logger.warning(f"fetch_ticker_close: no data for {ticker} ({yahoo_symbol})")
+            return None
+        close  = round(float(hist["Close"].iloc[-1]), 2)
+        volume = int(hist["Volume"].iloc[-1]) if not hist["Volume"].empty else 0
+        return close, volume
+    except Exception as e:
+        logger.warning(f"fetch_ticker_close failed for {ticker}: {e}")
+        return None
+
+
 def fetch_ticker_data(ticker: str) -> dict | None:
     """
     Fetch 5 years of history for a ticker.

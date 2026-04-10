@@ -28,6 +28,7 @@ from models.ticker import Ticker
 import services.schwab_client as schwab_client_svc
 from services.yahoo_finance import (
     fetch_ticker_data,
+    fetch_ticker_close,
     RateLimitError,
     compute_realized_vol_percentile,
     compute_ma20_regime,
@@ -443,14 +444,50 @@ def _yahoo_fallback(db: Session, tickers: list) -> dict:
 
 
 def _yahoo_fetch_subset(db: Session, tickers: list, data_source: str) -> dict:
-    """Fetch a subset of tickers via Yahoo Finance and write to price_cache."""
-    fetched      = 0
-    errors       = 0
+    """Fetch a subset of tickers via Yahoo Finance and write to price_cache.
+
+    Gap detection applied — same four modes as Schwab path:
+      skip:      already fetched today → no-op
+      append:    gap 1-5 days → lightweight 5-day fetch, append bar only
+      short:     gap 6-45 days → full fetch + upsert (merge handles history)
+      bootstrap: no history / < 252 bars / gap > 45 days → full 5-year fetch
+    """
+    today    = datetime.now(_ET).strftime("%Y-%m-%d")
+    fetched  = 0
+    errors   = 0
     rate_limited = False
+
+    # Pre-load all existing rows — one query instead of N
+    existing_map = {
+        r.ticker: r
+        for r in db.query(PriceCache).filter(PriceCache.ticker.in_(tickers)).all()
+    }
 
     for ticker in tickers:
         if rate_limited:
             break
+
+        existing = existing_map.get(ticker)
+        mode     = _history_fetch_mode(existing, today)
+
+        # ── Skip — already fresh ─────────────────────────────────────────────
+        if mode == "skip":
+            logger.debug(f"Yahoo: cache fresh for {ticker} — skipping")
+            fetched += 1
+            continue
+
+        # ── Append — lightweight close fetch, no full history pull ───────────
+        if mode == "append":
+            result = fetch_ticker_close(ticker)
+            if result:
+                close, volume = result
+                _append_bar(existing, close, volume, today, data_source)
+                fetched += 1
+            else:
+                errors += 1
+            continue
+
+        # ── Short gap or bootstrap — full fetch needed ───────────────────────
         try:
             data = fetch_ticker_data(ticker)
             if data:
