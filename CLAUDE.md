@@ -907,7 +907,7 @@ def dfa(prices, window):
     # H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk
 ```
 
-### Conviction Score Formula — v1.7 (Equal Weight + Proximity Boost)
+### Conviction Score Formula — Phase 6 (H_eff + Proximity + OBV + VIX Regime)
 ```
 H_eff (directionally-appropriate Hurst):
   Commodities / FX (excl. /ZN): H_trend_up (Bullish) or H_trend_down (Bearish)
