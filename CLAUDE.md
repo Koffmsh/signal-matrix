@@ -266,14 +266,19 @@ Critical issues already resolved — do not reintroduce these bugs:
 ### Conviction Score — H_trend only + Proximity Boost
 - Old weights (v1.6): Trade H × 0.65 + Trend H × 0.35
 - v1.7 interim: (H_trade × 0.50 + H_trend × 0.50) × 100 — superseded
-- **Current formula:** H_trend only (H_trade removed — noisy 63-bar DFA; already embedded in k_lrr)
+- **Current formula:** H_eff × proximity boost × OBV multiplier × VIX regime multiplier (Phase 6)
   ```
-  base = H_trend × 100
-  conviction_raw = base × (0.70 + 0.30 × prox)
+  base             = H_eff × 100
+  conviction_raw   = base × (0.70 + 0.30 × prox)
+  conviction_obv   = conviction_raw × obv_multiplier    (1.15 / 1.00 / 0.80)
+  conviction_final = conviction_obv × vix_mult          (1.10 / 1.00 / 0.90 / 0.80)
+                   = min(conviction_final, 100.0)
   ```
+  where `H_eff` = `H_trend_up` (Bullish) or `H_trend_down` (Bearish) for Commodities/FX; `H_trend` for all others
   where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
 - Rel IV **removed from conviction formula entirely** — informational display in popup only; NOT in LRR/HRR formula (v1.7)
-- Volume multiplier unchanged: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (OBV-driven)
+- Volume multiplier: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (OBV-driven)
+- VIX regime multiplier (applied last): Investable(<20) × 1.10, Edgy(20–23) × 1.00, Choppy(24–29) × 0.90, Danger(≥30) × 0.80
 
 ### Bollinger Band LRR/HRR — v1.7 Formula Replaces sigma/anchor/bc_range (`conviction_engine.py`)
 - **Supersedes:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas — do not use v1.6 or earlier
@@ -902,9 +907,13 @@ def dfa(prices, window):
 
 ### Conviction Score Formula — v1.7 (Equal Weight + Proximity Boost)
 ```
-Base Score = equal-weight Hurst:
-  Trade H (DFA, 63-day)   → 50%
-  Trend H (DFA, 252-day)  → 50%
+H_eff (directionally-appropriate Hurst):
+  Commodities / FX (excl. /ZN): H_trend_up (Bullish) or H_trend_down (Bearish)
+  All others:                    H_trend (symmetric 252-day DFA)
+  Fallback:                      H_trend if asymmetric values unavailable
+
+Base score:
+  base = H_eff × 100
 
 Proximity boost (direction-aware — peaks at entry zone):
   Bullish: prox = 1 - (close - trade_lrr) / (trade_hrr - trade_lrr)   # 1.0 at LRR, 0.0 at HRR
@@ -917,12 +926,21 @@ Proximity boost (direction-aware — peaks at entry zone):
 
 Rel IV removed from conviction formula entirely (v1.7) — informational popup only.
 
-Volume Multiplier (OBV pivot direction vs Trade Dir — applied after base score):
+Volume Multiplier (OBV pivot direction vs Trade Dir):
   Confirming  → × 1.15   Vol Direction matches Trade Dir
   Neutral     → × 1.00   Vol Direction Neutral or mixed
   Diverging   → × 0.80   Vol Direction opposes Trade Dir
 
-Final Conviction = conviction_raw × Volume Multiplier
+  conviction_obv = conviction_raw × obv_multiplier
+
+VIX Regime Multiplier (applied last — Phase 6):
+  Investable (VIX < 20)  → × 1.10
+  Edgy       (20–23)     → × 1.00
+  Choppy     (24–29)     → × 0.90
+  Danger     (≥ 30)      → × 0.80
+
+  conviction_final = conviction_obv × vix_mult
+                   = min(conviction_final, 100.0)   # hard cap
 
 CRITICAL: Conviction is BLANK (not calculated) when Viewpoint = Neutral
 ```
@@ -991,9 +1009,9 @@ Each LRR/HRR cell uses its own timeframe's direction for color — not the overa
 **No Diverging state.** Three states only: Bullish, Bearish, Neutral.
 
 ### Alert Flag ⚡ Trigger (ALL THREE must be true)
-1. Trend H > 0.55
+1. H_eff > 0.55 (effective H — asymmetric for Commodities/FX, symmetric H_trend for all others)
 2. Viewpoint = Bullish OR Bearish (never fires on Neutral)
-3. Final Conviction ≥ 70%
+3. Final Conviction ≥ 70% (after all multipliers including VIX regime)
 
 ### The Four Trading Scenarios
 

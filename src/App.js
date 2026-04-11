@@ -871,7 +871,7 @@ function Dashboard() {
               <th style={{ width: "24px", padding: "10px 4px 10px 8px", borderBottom: "1px solid #1a2535" }} />
               {/* Change 2 — tooltip on alert header */}
               <SortHdr label="⚡" k="isAlert"
-                title="High conviction alert — Trend H>0.55, conviction ≥70%, viewpoint Bullish or Bearish" />
+                title="High conviction alert — Trend H (effective) >0.55, conviction ≥70%, viewpoint Bullish or Bearish" />
               <SortHdr label="TICKER"      k="ticker" />
               <SortHdr label="DESCRIPTION" k="description" />
               {/* Change 1 — CLOSE / TREND before signal columns; ASSET CLASS / SECTOR at far right */}
@@ -879,7 +879,7 @@ function Dashboard() {
               <th style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Components: Trend H · Proximity · OBV" />
+                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Formula: H_eff × (0.70 + 0.30 × prox) × OBV mult × VIX regime mult · capped at 100" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -1008,7 +1008,7 @@ function Dashboard() {
             </div>
             {row.isAlert && (
               <div style={{ marginTop: "10px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
-                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned with {fmtConv(row.conviction)} conviction
+                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction · H_eff &gt; 0.55
               </div>
             )}
           </div>
