@@ -977,7 +977,12 @@ function Dashboard() {
                          : row.vixRegime === "Danger"     ? "#ff4d6d" : "#8899aa",
                            false],
           ...(realDataMap.get("VIX")?.vov_30d != null ? [
-            ["VIX VoV (30d)", `${(realDataMap.get("VIX").vov_30d * 100).toFixed(1)}%`, "#8899aa", false],
+            ["VIX VoV (30d)", (() => {
+              const vov  = realDataMap.get("VIX").vov_30d;
+              const rank = realDataMap.get("VIX").vov_rank;
+              const pct  = `${(vov * 100).toFixed(1)}%`;
+              return rank != null ? `${pct} (${rank.toFixed(0)}th pct)` : pct;
+            })(), "#8899aa", false],
           ] : []),
           ["Updated",      row.updated,                                                                    "#667788",                              false],
         ];
@@ -994,8 +999,8 @@ function Dashboard() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
               {fields.map(([label, val, color, isState, tip]) => (
                 <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
-                  <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.1em", marginBottom: "2px" }}>{label}</div>
-                  <div style={{ fontSize: "12px", fontWeight: "600", color, letterSpacing: isState ? "0.05em" : "0" }}>
+                  <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.08em", marginBottom: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+                  <div style={{ fontSize: "11px", fontWeight: "600", color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {tip ? <span title={tip} style={{ cursor: "help" }}>{val}</span> : val}
                   </div>
                 </div>

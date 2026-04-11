@@ -21,17 +21,40 @@ def get_active_tickers(db: Session) -> list:
     return [r.ticker for r in rows]
 
 
-def compute_vov(vix_history_json: str) -> float | None:
+def compute_vov_with_rank(vix_history_json: str) -> tuple:
     """
-    30-day realized vol of VIX log returns, annualized.
-    Returns None if fewer than 31 bars available.
+    Returns (vov_30d, vov_rank) from VIX price history.
+
+    vov_30d:   30-day realized vol of VIX log returns, annualized.
+    vov_rank:  percentile of vov_30d within its own trailing 252-day VoV history (0-100).
+               Requires 252 + 30 bars (~282 total log returns). With 5 years of history
+               (~1,260 bars) this is always available.
+
+    Returns (None, None) if insufficient data.
+    Returns (vov_30d, None) if enough for current VoV but not rank (< 282 log returns).
     """
-    prices = json.loads(vix_history_json)
-    if len(prices) < 31:
-        return None
-    recent = prices[-31:]
-    log_returns = np.diff(np.log(recent))
-    return float(np.std(log_returns, ddof=0) * np.sqrt(252))
+    prices = np.array(json.loads(vix_history_json))
+    if len(prices) < 32:
+        return None, None
+
+    log_returns = np.diff(np.log(prices))
+
+    if len(log_returns) < 30:
+        return None, None
+
+    vov_current = float(np.std(log_returns[-30:], ddof=0) * np.sqrt(252))
+
+    # Rolling 252-day history of 30d VoV values — computable from stored price history
+    if len(log_returns) < 30 + 251:
+        return vov_current, None
+
+    vov_history = np.array([
+        float(np.std(log_returns[i:i+30], ddof=0) * np.sqrt(252))
+        for i in range(len(log_returns) - 30 - 251, len(log_returns) - 30 + 1)
+    ])
+
+    rank = float(np.sum(vov_history <= vov_current) / len(vov_history) * 100)
+    return vov_current, round(rank, 1)
 
 
 def serialize_cache_row(row: PriceCache) -> dict:
@@ -47,6 +70,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "data_source":  row.data_source or "yahoo",
         "iv_source":    row.iv_source,
         "vov_30d":      row.vov_30d,
+        "vov_rank":     row.vov_rank,
         "updated":      row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
@@ -165,7 +189,9 @@ def refresh_data(db: Session) -> dict:
     try:
         vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
         if vix_row and vix_row.history_json:
-            vix_row.vov_30d = compute_vov(vix_row.history_json)
+            vov_30d, vov_rank = compute_vov_with_rank(vix_row.history_json)
+            vix_row.vov_30d = vov_30d
+            vix_row.vov_rank = vov_rank
             db.commit()
     except Exception as e:
         logger.warning(f"VoV computation skipped: {e}")
@@ -179,7 +205,7 @@ def refresh_data(db: Session) -> dict:
         .options(load_only(
             PriceCache.ticker, PriceCache.close, PriceCache.volume,
             PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
-            PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d,
+            PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d, PriceCache.vov_rank,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()
@@ -217,7 +243,7 @@ def get_cached(db: Session = Depends(get_db)):
         .options(load_only(
             PriceCache.ticker, PriceCache.close, PriceCache.volume,
             PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
-            PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d,
+            PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d, PriceCache.vov_rank,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()

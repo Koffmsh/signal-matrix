@@ -26,3 +26,4 @@ class PriceCache(Base):
     data_source        = Column(String, default="yahoo")  # 'schwab' | 'yahoo' | 'yahoo_fallback'
     iv_source          = Column(String, nullable=True)    # 'schwab' | 'proxy' — populated by IV task
     vov_30d            = Column(Float,  nullable=True)    # 30-day realized vol of VIX log returns, annualized — VIX row only
+    vov_rank           = Column(Float,  nullable=True)    # percentile of vov_30d within its own 252-day rolling history — VIX row only
