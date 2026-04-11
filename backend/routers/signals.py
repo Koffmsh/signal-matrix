@@ -6,7 +6,7 @@ from models.signal_pivots import SignalPivots
 from models.signal_output import SignalOutput
 from models.signal_history import SignalHistory
 from models.ticker import Ticker
-from services.signal_engine import compute_hurst
+from services.signal_engine import compute_hurst, compute_h_trade_delta
 from services.pivot_engine import compute_pivots
 from services.conviction_engine import compute_output
 from datetime import datetime
@@ -142,6 +142,12 @@ def run_output(db: Session) -> dict:
             data = compute_output(ticker, db, prior_ranges=prior_ranges)
             now  = datetime.utcnow()
 
+            # Task 6.1 — h_trade_delta: change in H_trade over ~20 trading days
+            h_trade_val   = data["trade"].get("h_value") if data.get("trade") else None
+            h_trade_delta = None
+            if h_trade_val is not None:
+                h_trade_delta = compute_h_trade_delta(db, ticker, h_trade_val)
+
             # ── viewpoint_since — track when current aligned viewpoint began ──
             new_viewpoint = data["viewpoint"]
             now_et        = datetime.now(ZoneInfo("America/New_York")).isoformat()
@@ -187,6 +193,7 @@ def run_output(db: Session) -> dict:
                     d_extended       = bool(tf_data.get("d_extended") or False),
                     obv_direction    = data.get("obv_direction"),
                     obv_confirming   = data.get("obv_confirming"),
+                    h_trade_delta    = h_trade_delta if tf == "trade" else None,
                     calculated_at    = now,
                 )
 
@@ -365,6 +372,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
             "d_extended":       bool(row.d_extended)    if row.d_extended    is not None else False,
             "pivot_b":          row.pivot_b,
             "pivot_c":          row.pivot_c,
+            "h_trade_delta":    row.h_trade_delta if row.timeframe == "trade" else None,
         }
         if row.conviction is not None:
             by_ticker[t]["conviction"] = row.conviction

@@ -30,6 +30,7 @@ class SignalOutput(Base):
     lrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close < prior LRR (bearish)
     hrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close > prior HRR (bullish)
     d_extended       = Column(Boolean, nullable=True)   # True when D > B + abs(B-C); B becomes break level
+    h_trade_delta    = Column(Float,   nullable=True)   # H_trade change over ~20 trading days; NULL if insufficient history
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

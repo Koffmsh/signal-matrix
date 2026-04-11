@@ -9,6 +9,7 @@ import json
 import logging
 import numpy as np
 from models.price_cache import PriceCache
+from models.signal_history import SignalHistory
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,30 @@ def dfa(prices: list, window: int) -> float | None:
     coeffs = np.polyfit(log_scales, log_f_vals, 1)
     H = float(np.clip(coeffs[0], 0.0, 1.0))
     return H
+
+
+def compute_h_trade_delta(db, ticker: str, current_h_trade: float) -> float | None:
+    """
+    Returns current_h_trade minus h_value from the trade-timeframe snapshot ~20 trading days ago.
+    Positive = H improving (trend strengthening).
+    Negative = H deteriorating (trend weakening — early warning).
+    Returns None if insufficient history.
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+    cutoff = (datetime.now(_ET) - timedelta(days=28)).strftime("%Y-%m-%d")  # ~20 trading days
+
+    row = db.query(SignalHistory)\
+        .filter(SignalHistory.ticker == ticker,
+                SignalHistory.timeframe == "trade",
+                SignalHistory.snapshot_date >= cutoff)\
+        .order_by(SignalHistory.snapshot_date.asc())\
+        .first()
+
+    if row is None or row.h_value is None:
+        return None
+    return round(current_h_trade - row.h_value, 4)
 
 
 def compute_hurst(ticker: str, db) -> dict:
