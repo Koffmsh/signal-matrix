@@ -200,9 +200,14 @@ def compute_realized_vol_percentile(closes: pd.Series) -> int:
 
         current_vol  = rolling_vol.iloc[-1]
         hist_vol     = rolling_vol.tail(252)
-        percentile   = int((hist_vol < current_vol).sum() / len(hist_vol) * 100)
+        min_vol      = hist_vol.min()
+        max_vol      = hist_vol.max()
 
-        return max(0, min(100, percentile))
+        if max_vol <= min_vol:
+            return 50  # degenerate range — default to midpoint
+
+        rank = (current_vol - min_vol) / (max_vol - min_vol) * 100
+        return max(0, min(100, int(rank)))
 
     except Exception:
         return 50  # Safe default
