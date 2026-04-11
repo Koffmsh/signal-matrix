@@ -7,10 +7,10 @@ from services.yahoo_finance import fetch_ticker_data, RateLimitError, compute_ma
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 import numpy as np
-
-_ET = ZoneInfo("America/New_York")
 import json
 import logging
+
+_ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/market-data", tags=["market-data"])
@@ -19,6 +19,19 @@ router = APIRouter(prefix="/api/market-data", tags=["market-data"])
 def get_active_tickers(db: Session) -> list:
     rows = db.query(Ticker).filter(Ticker.active == True).order_by(Ticker.tier, Ticker.display_order).all()
     return [r.ticker for r in rows]
+
+
+def compute_vov(vix_history_json: str) -> float | None:
+    """
+    30-day realized vol of VIX log returns, annualized.
+    Returns None if fewer than 31 bars available.
+    """
+    prices = json.loads(vix_history_json)
+    if len(prices) < 31:
+        return None
+    recent = prices[-31:]
+    log_returns = np.diff(np.log(recent))
+    return float(np.std(log_returns, ddof=0) * np.sqrt(252))
 
 
 def serialize_cache_row(row: PriceCache) -> dict:
@@ -33,6 +46,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "spark_prices": json.loads(row.spark_json),
         "data_source":  row.data_source or "yahoo",
         "iv_source":    row.iv_source,
+        "vov_30d":      row.vov_30d,
         "updated":      row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
@@ -147,6 +161,15 @@ def refresh_data(db: Session) -> dict:
     except Exception as e:
         logger.warning(f"IV fetch skipped during refresh: {e}")
 
+    # Task 6.2a — VoV: compute 30-day realized vol of VIX log returns after price fetch.
+    try:
+        vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
+        if vix_row and vix_row.history_json:
+            vix_row.vov_30d = compute_vov(vix_row.history_json)
+            db.commit()
+    except Exception as e:
+        logger.warning(f"VoV computation skipped: {e}")
+
     # Read all active tickers from cache in one query — avoids N+1 round trips to Supabase.
     # load_only skips history_json / volume_history_json blobs (not needed for page load).
     tickers = get_active_tickers(db)
@@ -156,7 +179,7 @@ def refresh_data(db: Session) -> dict:
         .options(load_only(
             PriceCache.ticker, PriceCache.close, PriceCache.volume,
             PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
-            PriceCache.rel_iv, PriceCache.iv_source,
+            PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()
@@ -194,7 +217,7 @@ def get_cached(db: Session = Depends(get_db)):
         .options(load_only(
             PriceCache.ticker, PriceCache.close, PriceCache.volume,
             PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
-            PriceCache.rel_iv, PriceCache.iv_source,
+            PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()

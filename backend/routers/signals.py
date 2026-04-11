@@ -194,6 +194,7 @@ def run_output(db: Session) -> dict:
                     obv_direction    = data.get("obv_direction"),
                     obv_confirming   = data.get("obv_confirming"),
                     h_trade_delta    = h_trade_delta if tf == "trade" else None,
+                    vix_regime       = data.get("vix_regime"),
                     calculated_at    = now,
                 )
 
@@ -356,6 +357,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "obv_direction":   row.obv_direction,
                 "obv_confirming":  bool(row.obv_confirming) if row.obv_confirming is not None else False,
                 "alert":           bool(row.alert) if row.alert is not None else False,
+                "vix_regime":      row.vix_regime,
                 "trade": None, "trend": None, "lt": None,
             }
         by_ticker[t][row.timeframe] = {

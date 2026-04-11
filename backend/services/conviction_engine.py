@@ -77,6 +77,31 @@ def _volume_multiplier(vol_signal: str) -> float:
     return {"Confirming": 1.15, "Diverging": 0.80}.get(vol_signal, 1.00)
 
 
+def get_vix_regime_multiplier(db) -> tuple:
+    """
+    Returns (multiplier, zone_label) based on current VIX close.
+    Falls back to 1.00 / 'Unknown' if VIX not in cache.
+
+    Multiplier table (locked):
+      Investable  VIX < 19   × 1.10 — VCFs mechanically adding, trend signals reliable
+      Edgy        19–23      × 1.00 — elevated but tradeable
+      Choppy      24–29      × 0.90 — signal degradation, whipsaws likely
+      Danger      ≥ 30       × 0.80 — sit on hands
+    """
+    vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
+    if vix_row is None or vix_row.close is None:
+        return 1.00, "Unknown"
+    vix = vix_row.close
+    if vix < 19:
+        return 1.10, "Investable"
+    elif vix < 24:
+        return 1.00, "Edgy"
+    elif vix < 30:
+        return 0.90, "Choppy"
+    else:
+        return 0.80, "Danger"
+
+
 # ── Direction inference from pivot row ────────────────────────────────────────
 
 def _infer_pivot_direction(pivot_row) -> str | None:
@@ -297,21 +322,22 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
 def compute_conviction(h_trend: float | None,
                        vol_signal: str, close: float,
                        trade_lrr: float | None, trade_hrr: float | None,
-                       trade_dir: str) -> float | None:
+                       trade_dir: str,
+                       db=None) -> tuple:
     """
     Conviction formula (H_trend only — single reliable H source):
-      Base = H_trend × 100
-      Proximity boost — direction-aware, peaks at entry zone:
-        Bullish: prox = 1 - (close - LRR) / (HRR - LRR)  (1.0 at LRR)
-        Bearish: prox = (close - LRR) / (HRR - LRR)       (1.0 at HRR)
-      conviction_raw = Base × (0.70 + 0.30 × prox)
-      Final = conviction_raw × OBV_multiplier
+      base             = H_trend × 100
+      prox_boost       = 0.70 + 0.30 × prox   (direction-aware proximity)
+      conviction_raw   = base × prox_boost
+      conviction_obv   = conviction_raw × obv_multiplier   (1.15 / 1.00 / 0.80)
+      conviction_final = conviction_obv × vix_mult          (1.10 / 1.00 / 0.90 / 0.80)
+                       = min(conviction_final, 100.0)
 
-    Returns 0–100 float, or None if H_trend is unavailable.
-    CRITICAL: caller must blank this when Viewpoint = Neutral.
+    Returns (conviction_final: float | None, vix_zone: str).
+    CRITICAL: caller must blank conviction when Viewpoint = Neutral.
     """
     if h_trend is None:
-        return None
+        return None, "Unknown"
 
     base = h_trend * 100.0
 
@@ -326,8 +352,14 @@ def compute_conviction(h_trend: float | None,
         prox = max(0.0, min(1.0, prox))
 
     conviction_raw = base * (0.70 + 0.30 * prox)
-    final = conviction_raw * _volume_multiplier(vol_signal)
-    return round(min(max(final, 0.0), 100.0), 2)
+    conviction_obv = conviction_raw * _volume_multiplier(vol_signal)
+
+    # Task 6.2b — VIX regime multiplier applied last
+    vix_mult, vix_zone = get_vix_regime_multiplier(db) if db is not None else (1.00, "Unknown")
+    conviction_final = conviction_obv * vix_mult
+    conviction_final = min(max(conviction_final, 0.0), 100.0)
+
+    return round(conviction_final, 2), vix_zone
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -495,14 +527,18 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
 
     obv_confirming = vol_signal == "Confirming"
 
+    # ── VIX regime — always fetched regardless of viewpoint ─────────────────
+    _, vix_zone = get_vix_regime_multiplier(db) if db is not None else (1.00, "Unknown")
+
     # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
     conviction = None
     if viewpoint != "Neutral":
         trade_lrr = timeframe_results["trade"]["lrr"]
         trade_hrr = timeframe_results["trade"]["hrr"]
-        conviction = compute_conviction(
+        conviction, _ = compute_conviction(
             h_trend, vol_signal,
             price, trade_lrr, trade_hrr, trade_dir,
+            db=db,
         )
 
     # ── Alert flag ⚡ ────────────────────────────────────────────────────────
@@ -521,6 +557,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
         "ticker":         ticker,
         "viewpoint":      viewpoint,
         "conviction":     conviction,
+        "vix_regime":     vix_zone,
         "vol_signal":     vol_signal,
         "obv_direction":  obv_dir,
         "obv_confirming": obv_confirming,

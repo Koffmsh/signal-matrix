@@ -195,6 +195,7 @@ function mergeSignalData(row, signalMap) {
     viewpointSince: sig.viewpoint_since         ?? null,
     obvDirection:   sig.obv_direction           ?? "Neutral",
     obvConfirming:  sig.obv_confirming          ?? false,
+    vixRegime:      sig.vix_regime              ?? null,
   };
 }
 
@@ -963,6 +964,15 @@ function Dashboard() {
           ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
           [row.ivSource === "schwab" ? "IV% \u2014 schwab" : "IV% \u2014 proxy",
                            `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
+          ["VIX Regime",   row.vixRegime || "—",
+                           row.vixRegime === "Investable" ? "#00e5a0"
+                         : row.vixRegime === "Edgy"       ? "#f0b429"
+                         : row.vixRegime === "Choppy"     ? "#f0b429"
+                         : row.vixRegime === "Danger"     ? "#ff4d6d" : "#8899aa",
+                           false],
+          ...(realDataMap.get("VIX")?.vov_30d != null ? [
+            ["VIX VoV (30d)", `${(realDataMap.get("VIX").vov_30d * 100).toFixed(1)}%`, "#8899aa", false],
+          ] : []),
           ["Updated",      row.updated,                                                                    "#667788",                              false],
         ];
 

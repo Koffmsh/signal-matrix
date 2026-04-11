@@ -25,3 +25,4 @@ class PriceCache(Base):
     cache_date         = Column(String)    # YYYY-MM-DD — cache invalidation key
     data_source        = Column(String, default="yahoo")  # 'schwab' | 'yahoo' | 'yahoo_fallback'
     iv_source          = Column(String, nullable=True)    # 'schwab' | 'proxy' — populated by IV task
+    vov_30d            = Column(Float,  nullable=True)    # 30-day realized vol of VIX log returns, annualized — VIX row only
