@@ -1245,9 +1245,12 @@ When uptrend breaks (BREAK_OF_TREND):
 ```
 No new downtrend can print until bearish B confirms (bar_window × 2 bars minimum after the break).
 
-### Database Tables (Phase 3)
+### Database Tables (Phase 3 + Phase 6)
 ```sql
-signal_hurst:   ticker, h_trade, h_trend, h_lt, d_trade, d_trend, d_lt, calculated_at
+signal_hurst:   ticker, h_trade, h_trend, h_lt, d_trade, d_trend, d_lt,
+                h_trend_up,                 ← Phase 6: asymmetric H — uptrend DFA (Commodities/FX only)
+                h_trend_down,               ← Phase 6: asymmetric H — downtrend DFA (Commodities/FX only)
+                calculated_at
                 UNIQUE(ticker)
 
 signal_pivots:  ticker, timeframe, bar_window,
@@ -1269,8 +1272,18 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 lrr_extended, hrr_extended, ← daily overshoot flags (close vs prior LRR/HRR) — SEPARATE from d_extended
                 obv_direction,              ← Vol Direction: OBV pivot trend: Bullish | Bearish | Neutral
                 obv_confirming,             ← True when Vol Direction aligns with Trade Dir (not Viewpoint)
+                h_trade_delta,              ← Phase 6: change in H_trade over ~20 trading days (display only)
+                vix_regime,                 ← Phase 6: 'Investable' | 'Edgy' | 'Choppy' | 'Danger' (from VIX at calc time)
                 calculated_at
                 UNIQUE(ticker, timeframe)
+
+price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_regime,
+                rel_iv, iv_source, data_source, cache_date,
+                history_json, volume_history_json,
+                spark_json, updated_at,
+                vov_30d,                    ← Phase 6: 30-day VIX volatility-of-volatility (decimal, e.g. 0.15)
+                vov_rank,                   ← Phase 6: VoV rank within its own 252-day rolling history (0–100)
+                UNIQUE(ticker)
 ```
 
 ### FastAPI Endpoints (Phase 3)
@@ -1348,7 +1361,7 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 | Fractal Dimension | **Frequentist** | Derived from H: D = 2 − H |
 | Bollinger Band LRR/HRR | **Frequentist** | MA20 ± k×STD20; k modulated by H (v1.7) |
 | Relative IV Percentile | **Frequentist** | Rank within own 52-week history — informational only (v1.7) |
-| Conviction Score | **Frequentist** | Equal-weight H + proximity boost to entry zone (v1.7) |
+| Conviction Score | **Frequentist** | H_eff × proximity boost × OBV mult × VIX regime mult (Phase 6) |
 | Trend / Tail Level | **Frequentist** | MA100 / MA200 slope-confirmed floor or ceiling (v1.7) |
 | OBV Pivot Direction | **Frequentist** | Structural pivot logic applied to OBV series |
 | Quad Probability Distribution | **Bayesian** | Continuously updated belief across 4 quads |
@@ -1408,13 +1421,16 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Asset Class | Classification — tightened badge, far right |
 | Sector | GICS sector / type — tightened badge, far right |
 
-## Popup Fields (click any row) — v1.7
+## Popup Fields (click any row) — Phase 6
 | Field | Notes |
 |---|---|
 | Close | Live price |
 | Viewpoint | Bullish / Bearish / Neutral |
 | Aligned Since | ET timestamp — when current Bullish/Bearish viewpoint began. Hidden when Neutral |
 | Conviction | % or — when Neutral |
+| ΔH (20d) | Change in H_trade over ~20 trading days — green when rising (momentum improving), red when falling; from `h_trade_delta` in `signal_output` |
+| VIX Regime | Investable / Edgy / Choppy / Danger — regime at time of signal calculation; from `vix_regime` in `signal_output` |
+| VIX VoV (30d) | 30-day VIX volatility-of-volatility + percentile rank within its 252-day history, e.g. "15.3% (72nd pct)"; from `vov_30d` + `vov_rank` in `price_cache` |
 | Vol Direction | Bullish / Bearish / Neutral — OBV pivot trend direction (`obv_direction`) |
 | Vol Signal vs Trade | Confirming ✓ / Diverging ✗ / Neutral — compared against Trade Dir (`obv_confirming`) |
 | Trade Dir | Direction + icon |
@@ -1430,7 +1446,9 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Tail Dir | Direction + icon (code/DB key: "lt") |
 | Tail Level | MA200 floor/ceiling — hidden when Neutral |
 | Hurst (T) | Trade timeframe H value |
-| Hurst (Tr) | Trend timeframe H value |
+| H↑ Trend | Uptrend asymmetric Hurst — Commodities/FX only; from `h_trend_up` in `signal_hurst` |
+| H↓ Trend | Downtrend asymmetric Hurst — Commodities/FX only; from `h_trend_down` in `signal_hurst` |
+| Hurst (Tr) | Trend timeframe H value (symmetric 252-day DFA — all tickers) |
 | Hurst (Tail) | Tail/LT timeframe H value |
 | Rel IV% | IV Rank — schwab or proxy source tagged; informational only (not in conviction formula) |
 | Updated | Last data fetch timestamp |
@@ -1560,6 +1578,11 @@ git checkout -- .   # roll back if needed
 58. **BREAK_OF_TRADE / BREAK_OF_TREND do NOT change direction to Neutral** — direction holds (Bullish/Bearish) during provisional break; only BREAK_CONFIRMED flips direction to Neutral
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
+61. **VIX regime multiplier tiers are locked (Phase 6)** — Investable (VIX < 20) × 1.10 · Edgy (20–23) × 1.00 · Choppy (24–29) × 0.90 · Danger (≥ 30) × 0.80. Applied last in conviction chain after OBV multiplier. Final conviction capped at 100. Do not change these thresholds without explicit instruction.
+62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
+63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
+64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched.
+65. **Proactive spec review** — when reading a spec or reviewing methodology, flag any inconsistencies with existing code or other parts of the spec before implementing. Do not implement silently when something looks wrong or contradictory.
 
 ---
 
@@ -1678,7 +1701,16 @@ Only commit after production is confirmed healthy.
 | Phase 3 | Signal Engine | ✅ Complete |
 | Phase 4 | Backend & Database | ✅ Complete — all tasks 4.1–4.13 done |
 | Phase 5 | Schwab API + Cloud Deployment | ✅ Complete — all tasks 5.1–5.6 done |
-| Phase 6 | Production Hardening | ⬜ Volume surge, positions display, Supabase hardening |
+| Phase 6 | Conviction Engine Enhancements | ✅ Complete — tasks 6.1–6.3 done |
+
+### Phase 6 Build Sequence
+
+| Task | Deliverable | Status |
+|---|---|---|
+| 6.1 | Delta-H (ΔH) — 20-day change in H_trade; display in popup | ✅ Complete |
+| 6.2a | VoV percentile rank — 30-day VIX volatility-of-volatility + 252-day rank | ✅ Complete |
+| 6.2b | VIX regime multiplier — Investable/Edgy/Choppy/Danger tiers applied to conviction | ✅ Complete |
+| 6.3 | Asymmetric H (H_eff) — directional Hurst for Commodities/FX; symmetric for all others | ✅ Complete |
 
 ---
 
