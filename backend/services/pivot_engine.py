@@ -275,8 +275,12 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     down_intact   = _price_on_correct_side(downtrend, current_price)
 
     if up_intact and not down_intact:
+        if _has_prior_break_confirmed(uptrend, pivot_highs, pivot_lows, prices):
+            return downtrend
         return uptrend
     if down_intact and not up_intact:
+        if _has_prior_break_confirmed(downtrend, pivot_highs, pivot_lows, prices):
+            return uptrend
         return downtrend
 
     # Both intact or both broken — use most recent C as tiebreak
