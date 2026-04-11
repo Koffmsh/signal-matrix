@@ -165,9 +165,11 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Problem 2 — BREAK_CONFIRMED beating intact structure:** GLD, AAPL, NVDA, TLT all had a broken structure in one direction winning over an intact structure in the other direction, causing them to show BREAK_CONFIRMED when a valid directional structure existed.
 - **Fixed:** `_has_prior_break_confirmed()` — scans intermediate pivots between A and C of the candidate ABC for any historical BREAK_CONFIRMED; if found, the ABC is rejected and the other direction is used.
 - **Fixed:** `_price_on_correct_side()` — before applying the most-recent-C tiebreak, prefer the structure where current price is still on the valid side of C (structure intact). A broken structure only wins if both structures are broken or both are intact.
+- **Problem 3 — Prior break check skipped on intact-only early return:** When one structure was intact and the other broken, the intact one was returned immediately (lines 277-280) without calling `_has_prior_break_confirmed`. The check only fired on the tiebreak path (both intact or both broken). FXB example: intact uptrend (A=Nov19, C=Mar30) was returned over a valid downtrend (A=Feb25, B=Mar13, C=Mar23) because the uptrend was price-intact. The uptrend spans the Feb 18-19 BREAK_CONFIRMED — should have been rejected.
+- **Fixed (2026-04-11):** Both early-return cases (lines 277-280) now call `_has_prior_break_confirmed` on the intact winner before returning. If a prior break is found, the other (broken) structure is returned instead.
 - **Selection priority in `find_abc_structure()`:**
   1. Only one direction found → use it
-  2. Both found, only one intact (price on correct side of C) → use intact
+  2. Both found, only one intact (price on correct side of C) → use intact, UNLESS it spans a prior BREAK_CONFIRMED → use broken structure instead
   3. Both intact or both broken → most recent C wins, UNLESS:
      a. The newer structure has never established D (price never closed through B) → older structure governs. D is the confirmation event: a geometric ABC without D is not a confirmed reversal and cannot override an unbroken prior structure.
      b. The winner spans a prior BREAK_CONFIRMED of a same-direction structure → use other.
