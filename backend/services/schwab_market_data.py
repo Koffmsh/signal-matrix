@@ -50,7 +50,7 @@ SCHWAB_SYMBOL_MAP = {
 #   FX (USD, JPY): non-equity instruments not available in Schwab equity quotes
 #   Futures (/CL, /ZN, /GC): continuous front-month symbols Schwab doesn't serve
 # Without this routing, Schwab errors leave updated_at stale → REFRESH DATA stays amber
-SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT"}
+SCHWAB_UNSUPPORTED = {"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX"}
 
 
 def get_schwab_symbol(ticker: str) -> str:

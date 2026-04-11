@@ -382,9 +382,10 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - Schwab batch quotes API silently drops index symbols (SPX, NDX, $DJI, VIX) when mixed with equity symbols — no error, just missing keys in the response
 - Without this fix, these tickers never get `updated_at` stamped, causing REFRESH DATA to stay amber even after a successful refresh (SPX is `display_order=1` and its timestamp drives the header)
 - **Fix:** Added `"SPX"`, `"NDX"`, `"$DJI"`, `"VIX"` to `SCHWAB_UNSUPPORTED` set — they always route to Yahoo Finance
-- Full set: `{"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT"}`
+- Full set: `{"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX"}`
 - **Idempotency fix:** When Schwab cache is fresh and early return fires, the code now still runs `_yahoo_fetch_subset` for the unsupported tickers — without this, SPX/VIX/etc. would never get their `updated_at` stamped on subsequent manual refreshes
 - **RUT added 2026-04-10:** Russell 2000 Index — `YAHOO_SYMBOL_MAP["RUT"] = "^RUT"`, added to `SCHWAB_UNSUPPORTED` and `IV_INELIGIBLE`
+- **VVIX added 2026-04-11:** CBOE VIX of VIX Index — `YAHOO_SYMBOL_MAP["VVIX"] = "^VVIX"`, added to `SCHWAB_UNSUPPORTED` and `IV_INELIGIBLE`
 
 ### Initial Page Load Indicator — `isInitialLoading` (`App.js`)
 - On fresh page load, 4 parallel fetches fire; tickers resolve first, causing `ALL_DATA` to recompute with `generateMockData()` — shows fake sparklines, prices, and signal values

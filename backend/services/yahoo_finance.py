@@ -52,6 +52,7 @@ YAHOO_SYMBOL_MAP = {
     "NDX":  "^NDX",
     "$DJI": "^DJI",
     "VIX":  "^VIX",
+    "VVIX": "^VVIX",  # CBOE VIX of VIX Index
     "RUT":  "^RUT",    # Russell 2000 Index
     "USD":  "DX-Y.NYB",
     "JPY":  "JPY=X",
