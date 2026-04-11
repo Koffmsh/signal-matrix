@@ -110,6 +110,90 @@ def dfa(prices: list, window: int) -> float | None:
     return H
 
 
+def _dfa_from_returns(returns: np.ndarray, min_scale: int = 10) -> float | None:
+    """
+    DFA applied directly to a pre-computed returns array.
+    Used for asymmetric H — up/down filtered return subsets passed in directly.
+
+    Skips the log-return step (returns are already log returns).
+    Integrates and runs DFA from that point forward.
+    Returns H in [0, 1], or None if insufficient data (< 4 valid scales).
+    """
+    N = len(returns)
+    if N < min_scale * 2:
+        return None
+
+    # Integrate: cumulative sum of mean-centred returns
+    cumsum = np.cumsum(returns - np.mean(returns))
+    N_cs = len(cumsum)
+
+    max_scale = N_cs // 2
+    if max_scale < min_scale:
+        return None
+
+    scales = np.unique(
+        np.round(np.geomspace(min_scale, max_scale, 20)).astype(int)
+    )
+
+    log_scales = []
+    log_f_vals = []
+
+    for n in scales:
+        if n < 4:
+            continue
+        n_segments = N_cs // n
+        if n_segments < 2:
+            continue
+
+        rms_sum = 0.0
+        x = np.arange(n, dtype=float)
+        for seg in range(n_segments):
+            segment = cumsum[seg * n:(seg + 1) * n]
+            coeffs  = np.polyfit(x, segment, 1)
+            trend   = np.polyval(coeffs, x)
+            rms_sum += np.mean((segment - trend) ** 2)
+
+        F_n = np.sqrt(rms_sum / n_segments)
+        if F_n > 0:
+            log_scales.append(np.log(float(n)))
+            log_f_vals.append(np.log(F_n))
+
+    if len(log_scales) < 4:
+        return None
+
+    coeffs = np.polyfit(log_scales, log_f_vals, 1)
+    H = float(np.clip(coeffs[0], 0.0, 1.0))
+    return H
+
+
+def compute_asymmetric_h(prices: list, window: int = 252) -> tuple:
+    """
+    Compute H separately for up-move days and down-move days over the Trend lookback.
+    Returns (h_up, h_down). Either may be None if fewer than 30 observations.
+
+    h_up:   persistence on positive-return days
+    h_down: persistence on negative-return days
+
+    Used in conviction for Commodities and FX only.
+    Requires at least 30 observations per direction — returns None otherwise.
+    """
+    if len(prices) < window + 1:
+        return None, None
+
+    log_returns = np.diff(np.log(np.array(prices[-window:], dtype=float)))
+
+    up_returns   = log_returns[log_returns > 0]
+    down_returns = log_returns[log_returns < 0]
+
+    h_up   = _dfa_from_returns(up_returns,   min_scale=10) if len(up_returns)   >= 30 else None
+    h_down = _dfa_from_returns(down_returns, min_scale=10) if len(down_returns) >= 30 else None
+
+    h_up   = round(h_up,   4) if h_up   is not None else None
+    h_down = round(h_down, 4) if h_down is not None else None
+
+    return h_up, h_down
+
+
 def compute_h_trade_delta(db, ticker: str, current_h_trade: float) -> float | None:
     """
     Returns current_h_trade minus h_value from the trade-timeframe snapshot ~20 trading days ago.

@@ -196,6 +196,8 @@ function mergeSignalData(row, signalMap) {
     obvDirection:   sig.obv_direction           ?? "Neutral",
     obvConfirming:  sig.obv_confirming          ?? false,
     vixRegime:      sig.vix_regime              ?? null,
+    hTrendUp:       sig.h_trend_up              ?? null,
+    hTrendDown:     sig.h_trend_down            ?? null,
   };
 }
 
@@ -961,6 +963,10 @@ function Dashboard() {
                            row.hTradeDelta == null ? "#8899aa" : row.hTradeDelta >= 0 ? "#00e5a0" : row.hTradeDelta < -0.05 ? "#ff4d6d" : "#f0b429",
                            false],
           ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false],
+          ...(['Commodities', 'Foreign Exchange'].includes(row.assetClass) ? [
+            ["H↑ Trend",   row.hTrendUp   != null ? row.hTrendUp.toFixed(3)   : "—",                      hurstColor(row.hTrendUp),               false],
+            ["H↓ Trend",   row.hTrendDown != null ? row.hTrendDown.toFixed(3) : "—",                      hurstColor(row.hTrendDown),              false],
+          ] : []),
           ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false],
           [row.ivSource === "schwab" ? "IV% \u2014 schwab" : "IV% \u2014 proxy",
                            `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],

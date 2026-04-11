@@ -6,7 +6,9 @@ from models.signal_pivots import SignalPivots
 from models.signal_output import SignalOutput
 from models.signal_history import SignalHistory
 from models.ticker import Ticker
-from services.signal_engine import compute_hurst, compute_h_trade_delta
+from services.signal_engine import (compute_hurst, compute_h_trade_delta,
+                                    compute_asymmetric_h, get_prices_from_cache,
+                                    WINDOW_TREND)
 from services.pivot_engine import compute_pivots
 from services.conviction_engine import compute_output
 from datetime import datetime
@@ -25,14 +27,31 @@ def get_active_tickers(db: Session) -> list:
 
 # ── Callable functions (used by scheduler and HTTP endpoints) ─────────────────
 
+ASYMMETRIC_H_ASSET_CLASSES = {"Commodities", "Foreign Exchange"}
+ASYMMETRIC_H_EXCLUDED      = {"/ZN"}   # Fixed Income behavior despite Commodities classification
+
+
 def run_hurst(db: Session) -> dict:
     """Compute Hurst Exponent + Fractal Dimension for all active tickers."""
     results = []
     errors  = []
 
+    # Fetch asset_class for all active tickers in one query — needed for asymmetric H eligibility
+    ticker_rows = db.query(Ticker).filter(Ticker.active == True).all()
+    asset_class_map = {t.ticker: (t.asset_class or "") for t in ticker_rows}
+
     for ticker in get_active_tickers(db):
         try:
             data = compute_hurst(ticker, db)
+
+            # Task 6.3 — Asymmetric H for Commodities and FX
+            h_trend_up   = None
+            h_trend_down = None
+            ac = asset_class_map.get(ticker, "")
+            if ac in ASYMMETRIC_H_ASSET_CLASSES and ticker not in ASYMMETRIC_H_EXCLUDED:
+                prices = get_prices_from_cache(ticker, db)
+                if prices:
+                    h_trend_up, h_trend_down = compute_asymmetric_h(prices, window=WINDOW_TREND)
 
             existing = db.query(SignalHurst).filter(
                 SignalHurst.ticker == ticker
@@ -47,6 +66,8 @@ def run_hurst(db: Session) -> dict:
                 existing.d_trade       = data["d_trade"]
                 existing.d_trend       = data["d_trend"]
                 existing.d_lt          = data["d_lt"]
+                existing.h_trend_up    = h_trend_up
+                existing.h_trend_down  = h_trend_down
                 existing.calculated_at = now
             else:
                 db.add(SignalHurst(
@@ -57,6 +78,8 @@ def run_hurst(db: Session) -> dict:
                     d_trade       = data["d_trade"],
                     d_trend       = data["d_trend"],
                     d_lt          = data["d_lt"],
+                    h_trend_up    = h_trend_up,
+                    h_trend_down  = h_trend_down,
                     calculated_at = now,
                 ))
 
@@ -124,6 +147,10 @@ def run_output(db: Session) -> dict:
     results = []
     errors  = []
 
+    # Fetch asset_class for all active tickers — needed for asymmetric H in compute_output
+    ticker_rows_out  = db.query(Ticker).filter(Ticker.active == True).all()
+    asset_class_map_out = {t.ticker: (t.asset_class or "") for t in ticker_rows_out}
+
     for ticker in get_active_tickers(db):
         try:
             # Read yesterday's HRR/LRR before they get overwritten.
@@ -139,7 +166,8 @@ def run_output(db: Session) -> dict:
                     "prior_lrr": row.lrr if row else None,
                 }
 
-            data = compute_output(ticker, db, prior_ranges=prior_ranges)
+            data = compute_output(ticker, db, prior_ranges=prior_ranges,
+                                  asset_class=asset_class_map_out.get(ticker, ""))
             now  = datetime.utcnow()
 
             # Task 6.1 — h_trade_delta: change in H_trade over ~20 trading days
@@ -341,6 +369,10 @@ def get_stored_signals(db: Session = Depends(get_db)):
     """
     rows = db.query(SignalOutput).all()
 
+    # Fetch asymmetric H values from signal_hurst for Commodities/FX popup display
+    hurst_rows = db.query(SignalHurst).all()
+    hurst_map  = {r.ticker: r for r in hurst_rows}
+
     # Check whether any lt rows exist — if not, only require trade + trend
     has_lt = any(r.timeframe == "lt" for r in rows)
 
@@ -348,6 +380,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
     for row in rows:
         t = row.ticker
         if t not in by_ticker:
+            h_row = hurst_map.get(t)
             by_ticker[t] = {
                 "ticker":          t,
                 "viewpoint":       row.viewpoint,
@@ -358,6 +391,8 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "obv_confirming":  bool(row.obv_confirming) if row.obv_confirming is not None else False,
                 "alert":           bool(row.alert) if row.alert is not None else False,
                 "vix_regime":      row.vix_regime,
+                "h_trend_up":      getattr(h_row, "h_trend_up",   None) if h_row else None,
+                "h_trend_down":    getattr(h_row, "h_trend_down",  None) if h_row else None,
                 "trade": None, "trend": None, "lt": None,
             }
         by_ticker[t][row.timeframe] = {

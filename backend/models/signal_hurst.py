@@ -13,4 +13,6 @@ class SignalHurst(Base):
     d_trade       = Column(Float, nullable=True)   # Fractal Dimension: 2 - H
     d_trend       = Column(Float, nullable=True)
     d_lt          = Column(Float, nullable=True)
+    h_trend_up    = Column(Float, nullable=True)   # DFA H on positive-return days (252-bar) — Commodities/FX only
+    h_trend_down  = Column(Float, nullable=True)   # DFA H on negative-return days (252-bar) — Commodities/FX only
     calculated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

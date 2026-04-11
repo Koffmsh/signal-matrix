@@ -77,6 +77,27 @@ def _volume_multiplier(vol_signal: str) -> float:
     return {"Confirming": 1.15, "Diverging": 0.80}.get(vol_signal, 1.00)
 
 
+ASYMMETRIC_H_ASSET_CLASSES = {"Commodities", "Foreign Exchange"}
+ASYMMETRIC_H_EXCLUDED      = {"/ZN"}   # Fixed Income behavior despite Commodities classification
+
+
+def get_effective_h_trend(asset_class: str, ticker: str, viewpoint: str,
+                          h_trend: float | None,
+                          h_trend_up: float | None,
+                          h_trend_down: float | None) -> float | None:
+    """
+    Returns the H value to use as the conviction base score.
+    Asymmetric H applied for Commodities and FX only; falls back to symmetric h_trend.
+    """
+    if asset_class not in ASYMMETRIC_H_ASSET_CLASSES or ticker in ASYMMETRIC_H_EXCLUDED:
+        return h_trend
+    if viewpoint == "Bullish" and h_trend_up is not None:
+        return h_trend_up
+    if viewpoint == "Bearish" and h_trend_down is not None:
+        return h_trend_down
+    return h_trend  # fallback — insufficient directional history
+
+
 def get_vix_regime_multiplier(db) -> tuple:
     """
     Returns (multiplier, zone_label) based on current VIX close.
@@ -364,7 +385,8 @@ def compute_conviction(h_trend: float | None,
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
+def compute_output(ticker: str, db, prior_ranges: dict = None,
+                   asset_class: str = "") -> dict:
     """
     Compute full signal output for all three timeframes for one ticker.
 
@@ -416,7 +438,9 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
         "lt":    getattr(hurst_row, "h_lt",    None) if hurst_row else None,
     }
 
-    h_trend = h_map["trend"]
+    h_trend      = h_map["trend"]
+    h_trend_up   = getattr(hurst_row, "h_trend_up",   None) if hurst_row else None
+    h_trend_down = getattr(hurst_row, "h_trend_down", None) if hurst_row else None
 
     timeframe_results = {}
 
@@ -530,20 +554,26 @@ def compute_output(ticker: str, db, prior_ranges: dict = None) -> dict:
     # ── VIX regime — always fetched regardless of viewpoint ─────────────────
     _, vix_zone = get_vix_regime_multiplier(db) if db is not None else (1.00, "Unknown")
 
+    # Task 6.3 — effective H: directionally-appropriate for Commodities/FX
+    h_eff = get_effective_h_trend(
+        asset_class, ticker, viewpoint,
+        h_trend, h_trend_up, h_trend_down,
+    )
+
     # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
     conviction = None
     if viewpoint != "Neutral":
         trade_lrr = timeframe_results["trade"]["lrr"]
         trade_hrr = timeframe_results["trade"]["hrr"]
         conviction, _ = compute_conviction(
-            h_trend, vol_signal,
+            h_eff, vol_signal,
             price, trade_lrr, trade_hrr, trade_dir,
             db=db,
         )
 
     # ── Alert flag ⚡ ────────────────────────────────────────────────────────
     alert = bool(
-        h_trend is not None and h_trend > 0.55 and
+        h_eff is not None and h_eff > 0.55 and
         viewpoint != "Neutral" and
         conviction is not None and conviction >= 70.0
     )
