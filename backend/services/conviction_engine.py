@@ -113,7 +113,7 @@ def get_vix_regime_multiplier(db) -> tuple:
     if vix_row is None or vix_row.close is None:
         return 1.00, "Unknown"
     vix = vix_row.close
-    if vix < 20:
+    if vix < 19:
         return 1.10, "Investable"
     elif vix < 24:
         return 1.00, "Edgy"

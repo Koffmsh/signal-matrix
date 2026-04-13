@@ -673,8 +673,8 @@ function Dashboard() {
         {(() => {
           const vix = realDataMap.get("VIX")?.close;
           if (vix == null) return null;
-          const color = vix < 20 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
-          const label = vix < 20 ? "INVESTABLE" : vix < 30 ? "CHOPPY" : "DANGER";
+          const color = vix < 19 ? "#00e5a0" : vix < 30 ? "#f0b429" : "#ff4d6d";
+          const label = vix < 19 ? "INVESTABLE" : vix < 30 ? "CHOPPY" : "DANGER";
           return (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
               <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>VIX REGIME</div>

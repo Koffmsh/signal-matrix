@@ -199,11 +199,10 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `obv_direction` (Vol Direction) + `obv_confirming` (Vol Signal) stored in `signal_output`, served via `/api/signals/stored`
 - Phase 5 swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py` — OBV engine is source-agnostic
 
-### VIX Regime Threshold — Green Cutoff is 20, Not 19 (`App.js`)
-- Correct thresholds: `VIX < 20` → Green, `20 ≤ VIX < 30` → Amber, `VIX ≥ 30` → Red
-- Bug: `App.js` line 568 was originally implemented with `vix < 19` — off by one on the green/amber boundary
-- **Fixed:** Both ternary expressions on line 568 updated to `vix < 20` (color and label)
-- **Do not** use 19 as the cutoff — VIX = 19 is investable territory, not choppy
+### VIX Regime Threshold — Green Cutoff is 19 (`App.js`, `conviction_engine.py`)
+- Correct thresholds: `VIX < 19` → Green (Investable), `19 ≤ VIX < 30` → Amber (Choppy/Edgy), `VIX ≥ 30` → Red (Danger)
+- VIX = 19 is choppy territory — Investable requires VIX strictly below 19
+- **Do not** use 20 as the cutoff
 
 ### Vol Signal / Vol Direction — Popup Field Naming (`App.js`)
 - Backend field `vol_signal` (Confirming/Diverging/Neutral) is the OBV-based conviction multiplier tier — "Vol" is the right label because it communicates meaning to the trader; OBV is the calculation method detail
@@ -936,8 +935,8 @@ Volume Multiplier (OBV pivot direction vs Trade Dir):
   conviction_obv = conviction_raw × obv_multiplier
 
 VIX Regime Multiplier (applied last — Phase 6):
-  Investable (VIX < 20)  → × 1.10
-  Edgy       (20–23)     → × 1.00
+  Investable (VIX < 19)  → × 1.10
+  Edgy       (19–23)     → × 1.00
   Choppy     (24–29)     → × 0.90
   Danger     (≥ 30)      → × 0.80
 
@@ -1385,8 +1384,8 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 ### VIX Regime Indicator — Dashboard Header
 Reads from existing `VIX` row in `price_cache` — no new data fetch needed:
 ```
-VIX < 20   → Green  — INVESTABLE
-VIX 20–29  → Amber  — CHOPPY
+VIX < 19   → Green  — INVESTABLE
+VIX 19–29  → Amber  — CHOPPY
 VIX ≥ 30   → Red    — DANGER
 ```
 The old `● VIX X.XX` text indicator has been superseded by the VIX Gauge (see below). Regime logic unchanged.
@@ -1578,7 +1577,7 @@ git checkout -- .   # roll back if needed
 58. **BREAK_OF_TRADE / BREAK_OF_TREND do NOT change direction to Neutral** — direction holds (Bullish/Bearish) during provisional break; only BREAK_CONFIRMED flips direction to Neutral
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
-61. **VIX regime multiplier tiers are locked (Phase 6)** — Investable (VIX < 20) × 1.10 · Edgy (20–23) × 1.00 · Choppy (24–29) × 0.90 · Danger (≥ 30) × 0.80. Applied last in conviction chain after OBV multiplier. Final conviction capped at 100. Do not change these thresholds without explicit instruction.
+61. **VIX regime multiplier tiers are locked (Phase 6)** — Investable (VIX < 19) × 1.10 · Edgy (19–23) × 1.00 · Choppy (24–29) × 0.90 · Danger (≥ 30) × 0.80. Applied last in conviction chain after OBV multiplier. Final conviction capped at 100. Do not change these thresholds without explicit instruction.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
 64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched.
