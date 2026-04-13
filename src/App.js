@@ -416,13 +416,18 @@ function Dashboard() {
     setCalcStatus(null);
     fetch(`${API_BASE}/api/signals/calculate`)
       .then(r => r.json())
-      .then(outputData => {
-        const m = new Map();
-        (outputData.results || []).forEach(r => m.set(r.ticker, r));
-        setSignalMap(m);
-        setSignalsCalculatedAt(outputData.calculated_at || new Date().toISOString());
-        setIsCalculating(false);
-        setCalcStatus("ok");
+      .then(calcData => {
+        // Fetch /stored after calculate to get complete data including h_trade_delta, vix_regime, etc.
+        return fetch(`${API_BASE}/api/signals/stored`)
+          .then(r => r.json())
+          .then(storedData => {
+            const m = new Map();
+            (storedData.results || []).forEach(r => m.set(r.ticker, r));
+            setSignalMap(m);
+            setSignalsCalculatedAt(storedData.calculated_at || calcData.calculated_at || new Date().toISOString());
+            setIsCalculating(false);
+            setCalcStatus("ok");
+          });
       })
       .catch(() => {
         setIsCalculating(false);
@@ -696,6 +701,14 @@ function Dashboard() {
                 <span style={{ position: "absolute", left: "58.3%", fontSize: "11px", color: "#8899aa", transform: "translateX(-50%)" }}>30</span>
                 <span style={{ position: "absolute", right: 0, fontSize: "11px", color: "#8899aa" }}>45+</span>
               </div>
+              {(() => {
+                const vov  = realDataMap.get("VIX")?.vov_30d;
+                const rank = realDataMap.get("VIX")?.vov_rank;
+                if (vov == null) return null;
+                const pct = `${(vov * 100).toFixed(1)}%`;
+                const txt = rank != null ? `VoV ${pct} · ${rank.toFixed(0)}th pct` : `VoV ${pct}`;
+                return <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.05em", marginTop: "4px" }}>{txt}</div>;
+              })()}
             </div>
           );
         })()}
@@ -976,14 +989,6 @@ function Dashboard() {
                          : row.vixRegime === "Choppy"     ? "#f0b429"
                          : row.vixRegime === "Danger"     ? "#ff4d6d" : "#8899aa",
                            false],
-          ...(realDataMap.get("VIX")?.vov_30d != null ? [
-            ["VIX VoV (30d)", (() => {
-              const vov  = realDataMap.get("VIX").vov_30d;
-              const rank = realDataMap.get("VIX").vov_rank;
-              const pct  = `${(vov * 100).toFixed(1)}%`;
-              return rank != null ? `${pct} (${rank.toFixed(0)}th pct)` : pct;
-            })(), "#8899aa", false],
-          ] : []),
           ["Updated",      row.updated,                                                                    "#667788",                              false],
         ];
 
