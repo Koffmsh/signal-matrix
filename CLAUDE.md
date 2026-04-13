@@ -1400,6 +1400,7 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 - **Scale labels:** 9 · 20 · 30 · 45+ at zone boundaries, 11px, `#8899aa`
 - **Needle position formula:** `Math.min(Math.max((vix - 9) / 36, 0), 1) * 100` percent
 - Labels: INVESTABLE (green) · CHOPPY (amber) · DANGER (red) shown inline next to numeric VIX value
+- **VoV line** — `VoV 15.3% · 72nd pct` displayed in grey below scale labels; from `price_cache.vov_30d` + `vov_rank`; hidden when null
 
 ## Dashboard Columns (current, in order) — v1.7
 | Column | Description |
@@ -1428,9 +1429,8 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Viewpoint | Bullish / Bearish / Neutral |
 | Aligned Since | ET timestamp — when current Bullish/Bearish viewpoint began. Hidden when Neutral |
 | Conviction | % or — when Neutral |
-| ΔH (20d) | Change in H_trade over ~20 trading days — green when rising (momentum improving), red when falling; from `h_trade_delta` in `signal_output` |
+| ΔH (20d) | Change in H_trade (63-day DFA, Trade timeframe) over ~20 trading days — green when rising, red when falling; from `h_trade_delta` in `signal_output` |
 | VIX Regime | Investable / Edgy / Choppy / Danger — regime at time of signal calculation; from `vix_regime` in `signal_output` |
-| VIX VoV (30d) | 30-day VIX volatility-of-volatility + percentile rank within its 252-day history, e.g. "15.3% (72nd pct)"; from `vov_30d` + `vov_rank` in `price_cache` |
 | Vol Direction | Bullish / Bearish / Neutral — OBV pivot trend direction (`obv_direction`) |
 | Vol Signal vs Trade | Confirming ✓ / Diverging ✗ / Neutral — compared against Trade Dir (`obv_confirming`) |
 | Trade Dir | Direction + icon |
@@ -1445,11 +1445,11 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Trend State | Structural state string |
 | Tail Dir | Direction + icon (code/DB key: "lt") |
 | Tail Level | MA200 floor/ceiling — hidden when Neutral |
-| Hurst (T) | Trade timeframe H value |
-| H↑ Trend | Uptrend asymmetric Hurst — Commodities/FX only; from `h_trend_up` in `signal_hurst` |
-| H↓ Trend | Downtrend asymmetric Hurst — Commodities/FX only; from `h_trend_down` in `signal_hurst` |
-| Hurst (Tr) | Trend timeframe H value (symmetric 252-day DFA — all tickers) |
-| Hurst (Tail) | Tail/LT timeframe H value |
+| Hurst (T) | Trade timeframe H value; hover tooltip shows color thresholds |
+| Hurst (Tr) | Trend timeframe H value (symmetric 252-day DFA — all tickers); hover tooltip shows color thresholds |
+| H↑ Trend | Uptrend asymmetric Hurst — Commodities/FX only; from `h_trend_up` in `signal_hurst`; arrow rendered at 13px in label |
+| H↓ Trend | Downtrend asymmetric Hurst — Commodities/FX only; from `h_trend_down` in `signal_hurst`; arrow rendered at 13px in label |
+| Hurst (Tail) | Tail/LT timeframe H value; hover tooltip shows color thresholds; context only — not in conviction |
 | Rel IV% | IV Rank — schwab or proxy source tagged; informational only (not in conviction formula) |
 | Updated | Last data fetch timestamp |
 
