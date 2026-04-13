@@ -708,7 +708,8 @@ No UNIQUE constraint — idempotency enforced in Python, not DB
 
 ### CALCULATE SIGNALS Button
 - Frontend calls `GET /api/signals/calculate` — runs full pipeline + snapshot in one call
-- `/calculate` returns output results in same shape as `/output` — no frontend shape change needed
+- After `/calculate` completes, frontend immediately fetches `GET /api/signals/stored` to populate React state
+- **Critical:** `/calculate` response only contains raw `compute_output` data — it does NOT include `h_trade_delta`, `vix_regime`, or other fields written separately during the signal loop. Always use `/stored` as the source of truth for React state after calculation.
 
 ---
 
