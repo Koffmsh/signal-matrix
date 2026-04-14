@@ -417,98 +417,85 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     current_price = prices[-1]
     break_state   = "BREAK_OF_TRADE" if timeframe == "trade" else "BREAK_OF_TREND"
 
+    # Scan for D establishment BEFORE any early returns.
+    # d_extended shifts the break level from C to B, so we must compute it
+    # before checking current_price against any threshold.  The old code did
+    # the D scan after an early-return on current_price vs C, which caused
+    # d_extended to always be False when price had already crossed C.
+    b_idx        = abc["b_idx"]
+    first_breach = None
     if direction == "uptrend":
-        # C is the line in the sand — break fires when price closes below current C
-        if current_price < c_price:
-            if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "uptrend"):
-                return None, None, "BREAK_CONFIRMED", False
-            return None, None, break_state, False
-
-        # Price above C — check if an unresolved confirmed break still applies
-        # (recovered above C but never cleared B)
-        if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "uptrend"):
-            return None, None, "BREAK_CONFIRMED", False
-
-        # D is established the moment price closes above B.
-        # Scan from b_idx+1 (not c_idx+1) so a breach that occurred before a
-        # dynamic C update is never missed.
-        b_idx        = abc["b_idx"]
-        first_breach = None
         for i in range(b_idx + 1, len(prices)):
             if prices[i] > b_price:
                 first_breach = i
                 break
-
-        if first_breach is None:
-            # B never breached — ABC valid, awaiting D
-            return None, None, "UPTREND_VALID", False
-
-        # D = running high from first breach to end (inclusive)
-        d_slice     = prices[first_breach:]
-        d_price     = max(d_slice)
-        d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
-        d_idx       = first_breach + d_local_idx
-
-        # d_extended: D has pushed more than one full BC range beyond B.
-        # Break level shifts from C to B when d_extended is True.
-        # State remains UPTREND_VALID — EXTENDED is no longer a state value.
-        d_extended = d_price > b_price + abs(b_price - c_price)
-
-        if d_extended:
-            if current_price < b_price:
-                # price below B — break level (B) breached; check if confirmed
-                if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
-                    return d_price, d_idx, "BREAK_CONFIRMED", True
-                return d_price, d_idx, break_state, True
-            # price at or above B — check for unresolved confirmed break below B
-            if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
-                return d_price, d_idx, "BREAK_CONFIRMED", True
-
-        return round(d_price, 4), d_idx, "UPTREND_VALID", d_extended
-
-    else:  # downtrend
-        # C is the line in the sand — break fires when price closes above current C
-        if current_price > c_price:
-            if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "downtrend"):
-                return None, None, "BREAK_CONFIRMED", False
-            return None, None, break_state, False
-
-        # Price below C — check if an unresolved confirmed break still applies
-        if _check_break_confirmed(prices, abc["c_idx"], c_price, b_price, "downtrend"):
-            return None, None, "BREAK_CONFIRMED", False
-
-        # Scan from b_idx+1 so a breach before a dynamic C update is not missed
-        b_idx        = abc["b_idx"]
-        first_breach = None
+    else:
         for i in range(b_idx + 1, len(prices)):
             if prices[i] < b_price:
                 first_breach = i
                 break
 
+    d_price    = None
+    d_idx      = None
+    d_extended = False
+    if first_breach is not None:
+        d_slice = prices[first_breach:]
+        if direction == "uptrend":
+            d_price     = max(d_slice)
+            d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
+            d_extended  = d_price > b_price + abs(b_price - c_price)
+        else:
+            d_price     = min(d_slice)
+            d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
+            d_extended  = d_price < b_price - abs(b_price - c_price)
+        d_idx = first_breach + d_local_idx
+
+    if direction == "uptrend":
+        if d_extended:
+            # Break level is B (not C) — price below B triggers break
+            if current_price < b_price:
+                if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
+                    return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
+                return round(d_price, 4), d_idx, break_state, True
+            # Price at or above B — check for unresolved confirmed break below B
+            if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
+                return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
+        else:
+            # Break level is C
+            if current_price < c_price:
+                if _check_break_confirmed(prices, c_idx, c_price, b_price, "uptrend"):
+                    return None, None, "BREAK_CONFIRMED", False
+                return None, None, break_state, False
+            # Price above C — check for unresolved confirmed break below C
+            if _check_break_confirmed(prices, c_idx, c_price, b_price, "uptrend"):
+                return None, None, "BREAK_CONFIRMED", False
+
+        if first_breach is None:
+            return None, None, "UPTREND_VALID", False
+        return round(d_price, 4), d_idx, "UPTREND_VALID", d_extended
+
+    else:  # downtrend
+        if d_extended:
+            # Break level is B (not C) — price above B triggers break
+            if current_price > b_price:
+                if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
+                    return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
+                return round(d_price, 4), d_idx, break_state, True
+            # Price at or below B — check for unresolved confirmed break above B
+            if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
+                return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
+        else:
+            # Break level is C
+            if current_price > c_price:
+                if _check_break_confirmed(prices, c_idx, c_price, b_price, "downtrend"):
+                    return None, None, "BREAK_CONFIRMED", False
+                return None, None, break_state, False
+            # Price below C — check for unresolved confirmed break above C
+            if _check_break_confirmed(prices, c_idx, c_price, b_price, "downtrend"):
+                return None, None, "BREAK_CONFIRMED", False
+
         if first_breach is None:
             return None, None, "DOWNTREND_VALID", False
-
-        # D = running low from first breach to end (inclusive)
-        d_slice     = prices[first_breach:]
-        d_price     = min(d_slice)
-        d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
-        d_idx       = first_breach + d_local_idx
-
-        # d_extended: D has pushed more than one full BC range beyond B.
-        # Break level shifts from C to B when d_extended is True.
-        # State remains DOWNTREND_VALID — EXTENDED is no longer a state value.
-        d_extended = d_price < b_price - abs(b_price - c_price)
-
-        if d_extended:
-            if current_price > b_price:
-                # price above B — break level (B) breached; check if confirmed
-                if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
-                    return d_price, d_idx, "BREAK_CONFIRMED", True
-                return d_price, d_idx, break_state, True
-            # price at or below B — check for unresolved confirmed break above B
-            if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
-                return d_price, d_idx, "BREAK_CONFIRMED", True
-
         return round(d_price, 4), d_idx, "DOWNTREND_VALID", d_extended
 
 
