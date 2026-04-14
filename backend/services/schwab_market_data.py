@@ -74,12 +74,34 @@ def _compute_std20(prices: list, close: float = None) -> float | None:
     return round(float(np.std(prices[-20:], ddof=0)), 4)
 
 
+def _compute_tp_metrics(highs: list, lows: list, closes: list) -> tuple:
+    """
+    Compute MA20 and STD20 of typical price (H+L+C)/3.
+    Returns (ma20_tp, std20_tp) or (None, None) if fewer than 20 bars available.
+
+    Typical price dampens band movement in both directions:
+      - Close-on-lows day (selloff):  TP > close → MA20_TP holds above MA20_close → LRR resists slicing down
+      - Close-on-highs day (recovery): TP < close → MA20_TP stays below MA20_close → LRR stays low
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if n < 20:
+        return None, None
+    tp = [
+        (h + l + c) / 3.0
+        for h, l, c in zip(highs[-20:], lows[-20:], closes[-20:])
+    ]
+    ma20_tp  = round(float(np.mean(tp)), 4)
+    std20_tp = round(float(np.std(tp, ddof=0)), 4)
+    return ma20_tp, std20_tp
+
+
 def _history_fetch_mode(existing_row, today_str: str) -> str:
     """
     Determine what history fetch is needed for this ticker.
 
       "bootstrap" — no history, < 252 bars, or gap > 45 days → full 5-year fetch
       "short"     — gap 6–45 calendar days → 1-month fetch to fill gap
+                    also triggered on first run after OHLC deployment (history_high_json NULL)
       "append"    — gap 1–5 calendar days (normal day / weekend / holiday) → append from quote
       "skip"      — last stored date is today → update quote fields only, no history change
     """
@@ -88,6 +110,13 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
     dates = json.loads(existing_row.history_dates_json)
     if len(dates) < 252:
         return "bootstrap"
+
+    # First run after OHLC deployment — need at least 20 bars of high/low history
+    # for MA20(TP). Force a short fetch once per ticker; normal gap detection resumes
+    # on all subsequent runs once history_high_json is populated.
+    if not existing_row.history_high_json:
+        return "short"
+
     last_date    = date_cls.fromisoformat(dates[-1])
     today        = date_cls.fromisoformat(today_str)
     calendar_gap = (today - last_date).days
@@ -102,13 +131,16 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
 
 
 def _update_quote_only(existing: PriceCache, close: float, volume: int,
-                       today: str, data_source: str) -> None:
+                       today: str, data_source: str,
+                       high: float = None, low: float = None) -> None:
     """Update close/volume/timestamp only — history unchanged (today already stored)."""
     import pandas as pd
     prices   = json.loads(existing.history_json) if existing.history_json else []
     closes_s = pd.Series(prices)
     existing.close       = close
     existing.volume      = volume
+    existing.daily_high  = high
+    existing.daily_low   = low
     existing.ma20        = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
     existing.ma50        = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
     existing.ma100       = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
@@ -118,21 +150,32 @@ def _update_quote_only(existing: PriceCache, close: float, volume: int,
 
 
 def _append_bar(existing: PriceCache, close: float, volume: int,
-                today: str, data_source: str) -> None:
+                today: str, data_source: str,
+                high: float = None, low: float = None) -> None:
     """Append today's bar to existing history — no Schwab history API call needed."""
     import pandas as pd
     prices = json.loads(existing.history_json)        if existing.history_json        else []
     dates  = json.loads(existing.history_dates_json)  if existing.history_dates_json  else []
     vols   = json.loads(existing.volume_history_json) if existing.volume_history_json else []
+    highs  = json.loads(existing.history_high_json)   if existing.history_high_json   else []
+    lows   = json.loads(existing.history_low_json)    if existing.history_low_json    else []
+
+    # Use close as fallback when H/L not provided
+    h = high if high is not None else close
+    l = low  if low  is not None else close
 
     if dates and dates[-1] == today:
         # Already present — update in place (re-run same day after market close)
         prices[-1] = close
         vols[-1]   = volume
+        if highs: highs[-1] = h
+        if lows:  lows[-1]  = l
     else:
         prices.append(close)
         dates.append(today)
         vols.append(volume)
+        highs.append(h)
+        lows.append(l)
 
     closes_s     = pd.Series(prices)
     spark_raw    = prices[-60:] if len(prices) >= 60 else prices
@@ -140,21 +183,28 @@ def _append_bar(existing: PriceCache, close: float, volume: int,
     if spark_prices:
         spark_prices[-1] = close
 
-    std20       = _compute_std20(prices)
-    ma200       = round(float(np.mean(prices[-200:])), 2) if len(prices) >= 200 else None
-    ma20_regime = compute_ma20_regime(prices)
+    std20          = _compute_std20(prices)
+    ma200          = round(float(np.mean(prices[-200:])), 2) if len(prices) >= 200 else None
+    ma20_regime    = compute_ma20_regime(prices)
+    ma20_tp, std20_tp = _compute_tp_metrics(highs, lows, prices)
 
     existing.close               = close
     existing.volume              = volume
+    existing.daily_high          = h
+    existing.daily_low           = l
     existing.ma20                = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
     existing.ma50                = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
     existing.ma100               = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
     existing.ma200               = ma200
     existing.std20               = std20
     existing.ma20_regime         = ma20_regime
+    existing.ma20_tp             = ma20_tp
+    existing.std20_tp            = std20_tp
     existing.spark_json          = json.dumps(spark_prices)
     existing.history_json        = json.dumps(prices)
     existing.history_dates_json  = json.dumps(dates)
+    existing.history_high_json   = json.dumps(highs)
+    existing.history_low_json    = json.dumps(lows)
     existing.volume_history_json = json.dumps(vols)
     existing.cache_date          = today
     existing.updated_at          = datetime.utcnow()
@@ -167,7 +217,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
     History merge: if existing history is longer than the new Schwab data
     (which only fetches 3 months), preserve the existing history and only
     update the recent portion. This prevents overwriting 5-year Yahoo history
-    with 3 months of Schwab data.
+    with 3 months of Schwab data.  Same merge applied to high/low history.
     """
     today  = datetime.now(_ET).strftime("%Y-%m-%d")
     ticker = data["ticker"]
@@ -177,7 +227,11 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         old_prices = json.loads(existing.history_json)        if existing.history_json        else []
         old_dates  = json.loads(existing.history_dates_json)  if existing.history_dates_json  else []
         old_vols   = json.loads(existing.volume_history_json) if existing.volume_history_json else []
+        old_highs  = json.loads(existing.history_high_json)   if existing.history_high_json   else []
+        old_lows   = json.loads(existing.history_low_json)    if existing.history_low_json    else []
         new_p, new_d, new_v = data["history_prices"], data["history_dates"], data["volume_history"]
+        new_h = data.get("history_highs", [])
+        new_l = data.get("history_lows",  [])
 
         if old_prices and new_d and len(new_p) < len(old_prices):
             # Schwab data is shorter — prepend old history up to where new data starts
@@ -185,52 +239,72 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
             new_p = old_prices[:cut] + new_p
             new_d = old_dates[:cut]  + new_d
             new_v = old_vols[:cut]   + new_v
+            # Merge OHLC — old OHLC history may be shorter if newly added; pad with close
+            if new_h and old_highs and len(new_h) < len(new_p):
+                new_h = old_highs[:cut] + new_h
+                new_l = old_lows[:cut]  + new_l
 
         # Compute MA/vol metrics from merged full history — Schwab alone is only 3 months
         # so MA200 and ma20_regime require the prepended history to be meaningful.
-        close     = data["close"]
-        std20     = _compute_std20(new_p, close)
-        ma200     = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
+        close       = data["close"]
+        std20       = _compute_std20(new_p, close)
+        ma200       = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
         ma20_regime = compute_ma20_regime(new_p)
+        ma20_tp, std20_tp = _compute_tp_metrics(new_h, new_l, new_p)
 
         existing.close               = close
         existing.volume              = data["volume"]
+        existing.daily_high          = data.get("daily_high")
+        existing.daily_low           = data.get("daily_low")
         existing.ma20                = data["ma20"]
         existing.ma50                = data["ma50"]
         existing.ma100               = data["ma100"]
         existing.ma200               = ma200
         existing.std20               = std20
         existing.ma20_regime         = ma20_regime
+        existing.ma20_tp             = ma20_tp
+        existing.std20_tp            = std20_tp
         existing.rel_iv              = data["rel_iv"]
         existing.spark_json          = json.dumps(data["spark_prices"])
         existing.history_json        = json.dumps(new_p)
         existing.history_dates_json  = json.dumps(new_d)
+        existing.history_high_json   = json.dumps(new_h) if new_h else existing.history_high_json
+        existing.history_low_json    = json.dumps(new_l) if new_l else existing.history_low_json
         existing.volume_history_json = json.dumps(new_v)
         existing.cache_date          = today
         existing.updated_at          = datetime.utcnow()
         existing.data_source         = data_source
     else:
         new_p = data["history_prices"]
+        new_h = data.get("history_highs", [])
+        new_l = data.get("history_lows",  [])
         close = data["close"]
-        std20     = _compute_std20(new_p, close)
-        ma200     = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
+        std20       = _compute_std20(new_p, close)
+        ma200       = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
         ma20_regime = compute_ma20_regime(new_p)
+        ma20_tp, std20_tp = _compute_tp_metrics(new_h, new_l, new_p)
 
         db.add(PriceCache(
             ticker               = ticker,
             yahoo_symbol         = data.get("schwab_symbol", ticker),
             close                = close,
             volume               = data["volume"],
+            daily_high           = data.get("daily_high"),
+            daily_low            = data.get("daily_low"),
             ma20                 = data["ma20"],
             ma50                 = data["ma50"],
             ma100                = data["ma100"],
             ma200                = ma200,
             std20                = std20,
             ma20_regime          = ma20_regime,
+            ma20_tp              = ma20_tp,
+            std20_tp             = std20_tp,
             rel_iv               = data["rel_iv"],
             spark_json           = json.dumps(data["spark_prices"]),
             history_json         = json.dumps(data["history_prices"]),
             history_dates_json   = json.dumps(data["history_dates"]),
+            history_high_json    = json.dumps(new_h) if new_h else None,
+            history_low_json     = json.dumps(new_l) if new_l else None,
             volume_history_json  = json.dumps(data["volume_history"]),
             cache_date           = today,
             data_source          = data_source,
@@ -339,20 +413,25 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
             errors += 1
             continue
 
-        close        = round(float(close), 2)
+        close      = round(float(close), 2)
+        daily_high = round(float(q.get("highPrice", close)), 2)
+        daily_low  = round(float(q.get("lowPrice",  close)), 2)
+
         existing_row = existing_map.get(app_ticker)
         mode         = _history_fetch_mode(existing_row, today)
 
         # ── No API call paths ────────────────────────────────────────────────
         if mode == "skip":
             logger.debug(f"Schwab: history current for {app_ticker} — updating quote only")
-            _update_quote_only(existing_row, close, volume, today, "schwab")
+            _update_quote_only(existing_row, close, volume, today, "schwab",
+                               high=daily_high, low=daily_low)
             fetched += 1
             continue
 
         if mode == "append":
             logger.debug(f"Schwab: appending today's bar for {app_ticker}")
-            _append_bar(existing_row, close, volume, today, "schwab")
+            _append_bar(existing_row, close, volume, today, "schwab",
+                        high=daily_high, low=daily_low)
             fetched += 1
             continue
 
@@ -390,6 +469,8 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
             continue
 
         history_prices = [round(float(c["close"]), 4) for c in candles]
+        history_highs  = [round(float(c.get("high", c["close"])), 4) for c in candles]
+        history_lows   = [round(float(c.get("low",  c["close"])), 4) for c in candles]
         history_dates  = [
             datetime.fromtimestamp(c["datetime"] / 1000, tz=_ET).strftime("%Y-%m-%d")
             for c in candles
@@ -412,6 +493,8 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
             "schwab_symbol":  schwab_sym,
             "close":          close,
             "volume":         volume,
+            "daily_high":     daily_high,
+            "daily_low":      daily_low,
             "ma20":           ma20,
             "ma50":           ma50,
             "ma100":          ma100,
@@ -419,6 +502,8 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
             "spark_prices":   spark_prices,
             "history_prices": history_prices,
             "history_dates":  history_dates,
+            "history_highs":  history_highs,
+            "history_lows":   history_lows,
             "volume_history": volume_history,
         }, data_source="schwab")
 
@@ -480,8 +565,9 @@ def _yahoo_fetch_subset(db: Session, tickers: list, data_source: str) -> dict:
         if mode == "append":
             result = fetch_ticker_close(ticker)
             if result:
-                close, volume = result
-                _append_bar(existing, close, volume, today, data_source)
+                close, volume, high, low = result
+                _append_bar(existing, close, volume, today, data_source,
+                            high=high, low=low)
                 fetched += 1
             else:
                 errors += 1

@@ -27,3 +27,9 @@ class PriceCache(Base):
     iv_source          = Column(String, nullable=True)    # 'schwab' | 'proxy' — populated by IV task
     vov_30d            = Column(Float,  nullable=True)    # 30-day realized vol of VIX log returns, annualized — VIX row only
     vov_rank           = Column(Float,  nullable=True)    # percentile of vov_30d within its own 252-day rolling history — VIX row only
+    daily_high         = Column(Float,  nullable=True)    # today's session high
+    daily_low          = Column(Float,  nullable=True)    # today's session low
+    history_high_json  = Column(Text,   nullable=True)    # JSON array of daily highs, aligned to history_json
+    history_low_json   = Column(Text,   nullable=True)    # JSON array of daily lows, aligned to history_json
+    ma20_tp            = Column(Float,  nullable=True)    # MA20 of typical price (H+L+C)/3 — center for LRR/HRR
+    std20_tp           = Column(Float,  nullable=True)    # STD20 of typical price — band width for LRR/HRR

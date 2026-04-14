@@ -150,43 +150,60 @@ def _infer_pivot_direction(pivot_row) -> str | None:
 def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
                            h_trend: float | None,
                            ma20_regime: str | None,
-                           pivot_dir: str | None = None) -> tuple:
+                           pivot_dir: str | None = None,
+                           ma20_tp: float | None = None,
+                           std20_tp: float | None = None) -> tuple:
     """
     BB framework for Trade timeframe (v1.7 spec §2.7).
+
+    Center: MA20 of typical price (H+L+C)/3 when available; falls back to
+    MA20(close) during warmup while OHLC history accumulates.
+    Width:  STD20 of typical price when available; falls back to STD20(close).
+
+    Typical-price center dampens band movement asymmetrically:
+      - Close-on-lows day (selloff):  TP > close → MA20_TP resists slicing down
+      - Close-on-highs day (recovery): TP < close → MA20_TP stays low while price rises
+
+    The ma20_regime check (above/below MA20) still uses close vs MA20(close) —
+    it is a structural assessment, not a band calculation detail.
 
     Two k coefficients, named by function:
       k_wide  = 2.0                       # standard BB (2σ) — target side, never flips
       k_tight = max(0, H_trend - 0.5)    # entry side — tight near MA20 (0 when H < 0.5)
 
     Structural uptrend (ABC pivot = uptrend):
-      HRR = MA20 + k_wide  × STD20       # target above — always BB upper
-      LRR = MA20 - k_tight × STD20       # normal (above MA20): tight floor ≈ MA20
-      LRR = MA20 - k_wide  × STD20       # counter-trend (below MA20): wide floor = BB lower
+      HRR = center + k_wide  × vol       # target above — always BB upper
+      LRR = center - k_tight × vol       # normal (above MA20): tight floor ≈ center
+      LRR = center - k_wide  × vol       # counter-trend (below MA20): wide floor = BB lower
 
     Structural downtrend (mirror):
-      LRR = MA20 - k_wide  × STD20       # target below — always BB lower
-      HRR = MA20 + k_tight × STD20       # normal (below MA20): tight ceiling ≈ MA20
-      HRR = MA20 + k_wide  × STD20       # counter-trend (above MA20): wide ceiling = BB upper
+      LRR = center - k_wide  × vol       # target below — always BB lower
+      HRR = center + k_tight × vol       # normal (below MA20): tight ceiling ≈ center
+      HRR = center + k_wide  × vol       # counter-trend (above MA20): wide ceiling = BB upper
 
     Returns (None, None) if any required input is missing.
     """
-    if ma20 is None or std20 is None or h_trend is None:
+    # Use typical-price metrics when available; fall back to close-based
+    center = ma20_tp  if ma20_tp  is not None else ma20
+    vol    = std20_tp if std20_tp is not None else std20
+
+    if center is None or vol is None or h_trend is None:
         return None, None
-    if std20 <= 0:
+    if vol <= 0:
         return None, None
 
     k_wide  = 2.0
     k_tight = max(0.0, h_trend - 0.5)
-    above   = (ma20_regime or "uptrend") == "uptrend"   # True = price above MA20
+    above   = (ma20_regime or "uptrend") == "uptrend"   # close vs MA20(close) — unchanged
 
     if pivot_dir == "downtrend":
         # LRR is always the wide target; HRR switches tight/wide by regime
-        lrr = round(ma20 - k_wide  * std20, 4)
-        hrr = round(ma20 + (k_tight if not above else k_wide) * std20, 4)
+        lrr = round(center - k_wide  * vol, 4)
+        hrr = round(center + (k_tight if not above else k_wide) * vol, 4)
     else:
         # uptrend or unknown: HRR is always the wide target; LRR switches tight/wide by regime
-        hrr = round(ma20 + k_wide  * std20, 4)
-        lrr = round(ma20 - (k_tight if above else k_wide) * std20, 4)
+        hrr = round(center + k_wide  * vol, 4)
+        lrr = round(center - (k_tight if above else k_wide) * vol, 4)
 
     return lrr, hrr
 
@@ -425,6 +442,9 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     ma200       = float(cache_row.ma200)       if (cache_row and cache_row.ma200 is not None) else None
     std20       = float(cache_row.std20)       if (cache_row and cache_row.std20 is not None) else None
     ma20_regime = cache_row.ma20_regime        if cache_row else None
+    # Typical-price metrics — better BB center (resists selloff slicing, stays low on recovery)
+    ma20_tp     = float(cache_row.ma20_tp)     if (cache_row and getattr(cache_row, 'ma20_tp',  None) is not None) else None
+    std20_tp    = float(cache_row.std20_tp)    if (cache_row and getattr(cache_row, 'std20_tp', None) is not None) else None
 
     # OBV pivot direction — compared against Trade Dir for vol_signal
     if prices and volumes and len(prices) == len(volumes):
@@ -474,7 +494,8 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
         # ── LRR / HRR by timeframe ───────────────────────────────────────────
         if tf == "trade":
-            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trend, ma20_regime, pivot_dir)
+            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, h_trend, ma20_regime, pivot_dir,
+                                             ma20_tp=ma20_tp, std20_tp=std20_tp)
 
             # WARNING: LRR drifted below break level (uptrend) or HRR above break level (downtrend)
             # Break level = C normally; B when d_extended is True.

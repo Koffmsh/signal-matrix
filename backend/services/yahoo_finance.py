@@ -67,7 +67,7 @@ def get_yahoo_symbol(ticker: str) -> str:
 
 def fetch_ticker_close(ticker: str) -> tuple | None:
     """
-    Lightweight fetch — returns (close, volume) using only the last 5 days of data.
+    Lightweight fetch — returns (close, volume, high, low) using only the last 5 days.
     Used for daily append on Yahoo-only tickers — avoids full 5-year history pull.
     Returns None on failure.
     """
@@ -79,7 +79,9 @@ def fetch_ticker_close(ticker: str) -> tuple | None:
             return None
         close  = round(float(hist["Close"].iloc[-1]), 2)
         volume = int(hist["Volume"].iloc[-1]) if not hist["Volume"].empty else 0
-        return close, volume
+        high   = round(float(hist["High"].iloc[-1]),  2) if "High"  in hist.columns else close
+        low    = round(float(hist["Low"].iloc[-1]),   2) if "Low"   in hist.columns else close
+        return close, volume, high, low
     except Exception as e:
         logger.warning(f"fetch_ticker_close failed for {ticker}: {e}")
         return None
@@ -104,10 +106,14 @@ def fetch_ticker_data(ticker: str) -> dict | None:
 
         closes  = hist["Close"].dropna()
         volumes = hist["Volume"].dropna()
+        highs   = hist["High"].dropna()  if "High"  in hist.columns else closes
+        lows    = hist["Low"].dropna()   if "Low"   in hist.columns else closes
 
         # Latest values
         close  = round(float(closes.iloc[-1]), 2)
         volume = int(volumes.iloc[-1]) if not volumes.empty else 0
+        daily_high = round(float(highs.iloc[-1]),  2) if len(highs)  > 0 else close
+        daily_low  = round(float(lows.iloc[-1]),   2) if len(lows)   > 0 else close
 
         # Moving averages — computed from close history
         ma20  = round(float(closes.tail(20).mean()),  2) if len(closes) >= 20  else None
@@ -130,6 +136,10 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         history_closes = closes[closes.index.date <= date.today()]
         history_prices = [round(float(p), 4) for p in history_closes.tolist()]
         history_dates  = [str(d.date()) for d in history_closes.index]
+
+        # OHLC history — aligned to history_closes dates
+        history_highs = [round(float(h), 4) for h in highs.reindex(history_closes.index).fillna(history_closes).tolist()]
+        history_lows  = [round(float(l), 4) for l in lows.reindex(history_closes.index).fillna(history_closes).tolist()]
 
         # Volume history — aligned to history_closes dates so OBV series stays in sync
         # PHASE 5 SWAP COMPLETE: Schwab path populates volume_history_json from
@@ -158,6 +168,8 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "yahoo_symbol":    yahoo_symbol,
             "close":           close,
             "volume":          volume,
+            "daily_high":      daily_high,
+            "daily_low":       daily_low,
             "ma20":            ma20,
             "ma50":            ma50,
             "ma100":           ma100,
@@ -168,6 +180,8 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "spark_prices":    spark_prices,
             "history_prices":  history_prices,
             "history_dates":   history_dates,
+            "history_highs":   history_highs,
+            "history_lows":    history_lows,
             "volume_history":  volume_history,
             "updated":         updated,
         }
