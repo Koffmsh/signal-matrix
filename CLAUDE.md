@@ -351,6 +351,14 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `schwab_market_data._compute_tp_metrics()` function removed; no TP writes anywhere
 - **Rule:** Do not re-add MA20_TP. MA20(close) is the permanent center for the BB LRR/HRR formula.
 
+### H/L History 3-Bar Alignment Fix (One-Time Data Migration)
+- **Root cause:** When `history_high_json` / `history_low_json` columns were first added (migration `f7a3b2c1d9e6`), the initial "short" fill started 3 trading days later than the existing close history. Those 3 leading dates never received H/L values, leaving every ticker's H/L array 3 bars shorter than its close array.
+- **Symptom:** `highs[i]` contained data for `dates[i+3]`, not `dates[i]` — ATR calculations for 14-day windows touching that zone were incorrect (inflated, since misaligned H/L appeared to spike relative to close).
+- **Fix (2026-04-14):** One-time data script padded the front of `history_high_json` and `history_low_json` with the close price for the missing dates (H=L=C proxy), making all arrays equal-length. ATR was recomputed from the corrected arrays for all 63 local (SQLite) and 79 production (Supabase) tickers.
+- **Code is correct:** Both the Schwab path (`_schwab_fetch` uses candles directly) and Yahoo path (`fetch_ticker_data` uses `.reindex(history_closes.index)`) correctly align H/L to close dates. The misalignment was a legacy bootstrap artifact only.
+- **All future fetches:** append/skip/short/bootstrap paths all preserve or rebuild correct alignment — no ongoing issue.
+- **Rule:** If adding new OHLC-based columns (e.g. ATR variants), always verify `len(history_high_json) == len(history_json)` after the first data run.
+
 ### Supabase Direct Connection — IPv6 Only from Docker (`alembic/env.py`)
 - `db.wxqioudsteiwaazrgbao.supabase.co:5432` resolves to **IPv6 only** inside the Docker container
 - Docker Desktop on Windows does not route IPv6 egress — connection fails with "Network is unreachable"
@@ -1559,6 +1567,9 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `e02db23` — Perf: page load /cached endpoint, React Router SPA nav, N+1 fix, gap detection, RUT ticker
   - `110deaf` — Perf: Yahoo-only ticker gap detection, fetch_ticker_close lightweight fetch
   - `d05d5b1` — Perf: IV fetch idempotent on manual REFRESH DATA (force=False)
+  - `f7b5197` — migration: drop ma20_tp/std20_tp, add atr to price_cache
+  - `893c773` — feat: v1.8 LRR/HRR — TP center, fixed k_tight=0, ATR buffer, ATR backfill fix
+  - `ad3d728` — docs: update CLAUDE.md — drop MA20_TP, add ATR, alembic SQLite fallback
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
