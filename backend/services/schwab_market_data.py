@@ -74,6 +74,26 @@ def _compute_std20(prices: list, close: float = None) -> float | None:
     return round(float(np.std(prices[-20:], ddof=0)), 4)
 
 
+def _compute_atr(highs: list, lows: list, closes: list, period: int = 14) -> float | None:
+    """
+    Compute Average True Range (simple MA of True Range over `period` days).
+    TR[i] = max(H[i]-L[i], abs(H[i]-C[i-1]), abs(L[i]-C[i-1]))
+    Requires period+1 aligned bars. Returns None if insufficient data.
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if n < period + 1:
+        return None
+    tr = [
+        max(highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i]  - closes[i - 1]))
+        for i in range(1, n)
+    ]
+    if len(tr) < period:
+        return None
+    return round(float(np.mean(tr[-period:])), 4)
+
+
 def _compute_tp_metrics(highs: list, lows: list, closes: list) -> tuple:
     """
     Compute MA20 and STD20 of typical price (H+L+C)/3.
@@ -133,9 +153,12 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
 def _update_quote_only(existing: PriceCache, close: float, volume: int,
                        today: str, data_source: str,
                        high: float = None, low: float = None) -> None:
-    """Update close/volume/timestamp only — history unchanged (today already stored)."""
+    """Update close/volume/timestamp only — history unchanged (today already stored).
+    Also recomputes ATR so it stays fresh even on same-day skip runs."""
     import pandas as pd
-    prices   = json.loads(existing.history_json) if existing.history_json else []
+    prices   = json.loads(existing.history_json)       if existing.history_json       else []
+    highs    = json.loads(existing.history_high_json)  if existing.history_high_json  else []
+    lows     = json.loads(existing.history_low_json)   if existing.history_low_json   else []
     closes_s = pd.Series(prices)
     existing.close       = close
     existing.volume      = volume
@@ -144,6 +167,7 @@ def _update_quote_only(existing: PriceCache, close: float, volume: int,
     existing.ma20        = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
     existing.ma50        = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
     existing.ma100       = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
+    existing.atr         = _compute_atr(highs, lows, prices)
     existing.cache_date  = today
     existing.updated_at  = datetime.utcnow()
     existing.data_source = data_source
@@ -187,6 +211,7 @@ def _append_bar(existing: PriceCache, close: float, volume: int,
     ma200          = round(float(np.mean(prices[-200:])), 2) if len(prices) >= 200 else None
     ma20_regime    = compute_ma20_regime(prices)
     ma20_tp, std20_tp = _compute_tp_metrics(highs, lows, prices)
+    atr            = _compute_atr(highs, lows, prices)
 
     existing.close               = close
     existing.volume              = volume
@@ -200,6 +225,7 @@ def _append_bar(existing: PriceCache, close: float, volume: int,
     existing.ma20_regime         = ma20_regime
     existing.ma20_tp             = ma20_tp
     existing.std20_tp            = std20_tp
+    existing.atr                 = atr
     existing.spark_json          = json.dumps(spark_prices)
     existing.history_json        = json.dumps(prices)
     existing.history_dates_json  = json.dumps(dates)
@@ -251,6 +277,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         ma200       = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
         ma20_regime = compute_ma20_regime(new_p)
         ma20_tp, std20_tp = _compute_tp_metrics(new_h, new_l, new_p)
+        atr         = _compute_atr(new_h, new_l, new_p)
 
         existing.close               = close
         existing.volume              = data["volume"]
@@ -264,6 +291,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         existing.ma20_regime         = ma20_regime
         existing.ma20_tp             = ma20_tp
         existing.std20_tp            = std20_tp
+        existing.atr                 = atr
         existing.rel_iv              = data["rel_iv"]
         existing.spark_json          = json.dumps(data["spark_prices"])
         existing.history_json        = json.dumps(new_p)
@@ -283,6 +311,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         ma200       = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
         ma20_regime = compute_ma20_regime(new_p)
         ma20_tp, std20_tp = _compute_tp_metrics(new_h, new_l, new_p)
+        atr         = _compute_atr(new_h, new_l, new_p)
 
         db.add(PriceCache(
             ticker               = ticker,
@@ -299,6 +328,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
             ma20_regime          = ma20_regime,
             ma20_tp              = ma20_tp,
             std20_tp             = std20_tp,
+            atr                  = atr,
             rel_iv               = data["rel_iv"],
             spark_json           = json.dumps(data["spark_prices"]),
             history_json         = json.dumps(data["history_prices"]),

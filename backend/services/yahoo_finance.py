@@ -159,6 +159,18 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         # MA20 price regime — 2-consecutive-close rule (separate from ABC pivot direction)
         ma20_regime = compute_ma20_regime(history_prices)
 
+        # ATR (14-day simple MA of True Range) — aligned to history_closes
+        atr = None
+        if len(history_prices) >= 15 and len(history_highs) >= 15 and len(history_lows) >= 15:
+            tr_vals = [
+                max(history_highs[i] - history_lows[i],
+                    abs(history_highs[i] - history_prices[i - 1]),
+                    abs(history_lows[i]  - history_prices[i - 1]))
+                for i in range(1, len(history_prices))
+            ]
+            if len(tr_vals) >= 14:
+                atr = round(float(np.mean(tr_vals[-14:])), 4)
+
         updated = datetime.now(_ET).strftime("%m/%d/%y %H:%M")
 
         time.sleep(0.5)  # Rate limit: pause between Yahoo Finance fetches
@@ -183,6 +195,7 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "history_highs":   history_highs,
             "history_lows":    history_lows,
             "volume_history":  volume_history,
+            "atr":             atr,
             "updated":         updated,
         }
 

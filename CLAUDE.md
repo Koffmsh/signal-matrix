@@ -279,31 +279,72 @@ Critical issues already resolved — do not reintroduce these bugs:
   where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
 - Rel IV **removed from conviction formula entirely** — informational display in popup only; NOT in LRR/HRR formula (v1.7)
 - Volume multiplier: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (OBV-driven)
-- VIX regime multiplier (applied last): Investable(<20) × 1.10, Edgy(20–23) × 1.00, Choppy(24–29) × 0.90, Danger(≥30) × 0.80
+- VIX regime multiplier (applied last): Investable(<19) × 1.10, Edgy(19–23) × 1.00, Choppy(24–29) × 0.90, Danger(≥30) × 0.80
 
-### Bollinger Band LRR/HRR — v1.7 Formula Replaces sigma/anchor/bc_range (`conviction_engine.py`)
-- **Supersedes:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas — do not use v1.6 or earlier
-- **k coefficients — two, named by function:**
+### Bollinger Band LRR/HRR — v1.8 Formula (TP center + close STD + ATR buffer)
+- **Supersedes:** v1.7 H-modulated k_tight formula. All prior sigma/anchor/bc_range formulas obsolete.
+- **Two k coefficients — fixed, not H-modulated:**
   ```
-  k_wide  = 2.0                      # standard 2σ BB — target side, never flips
-  k_tight = max(0, H_trend - 0.5)    # entry side — ≈ MA20 when H < 0.5; clamped ≥ 0
+  k_wide  = 2.0    # target side — standard 2σ BB; never changes
+  k_tight = 0.0    # entry side — MA20_TP exactly; H removed from band width
   ```
-- **Pivot direction determines which side is target vs entry; MA20 regime switches the entry side:**
-  ```
-  Structural uptrend:
-    HRR = MA20 + k_wide  × STD20    # target above — always BB upper
-    LRR = MA20 - k_tight × STD20    # normal (above MA20): tight floor ≈ MA20
-    LRR = MA20 - k_wide  × STD20    # counter-trend (below MA20): wide floor = BB lower
+  H is still calculated and stored in `signal_hurst` for indicator regime classification
+  (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT influence band width.
 
-  Structural downtrend (mirror):
-    LRR = MA20 - k_wide  × STD20    # target below — always BB lower
-    HRR = MA20 + k_tight × STD20    # normal (below MA20): tight ceiling ≈ MA20
-    HRR = MA20 + k_wide  × STD20    # counter-trend (above MA20): wide ceiling = BB upper
+- **Center: MA20(TP) — typical price = (H+L+C)/3**
+  MA20_TP stored in `price_cache.ma20_tp`. Falls back to MA20(close) during warmup.
+  MA20_TP vs MA20(close) divergence is small in practice (±7 pts on SPX). The TP center
+  resists downward movement during sell days (close near low → TP > close → MA_TP > MA_close),
+  providing a more stable ceiling anchor in downtrends.
+
+- **STD20: close-based always — do not use STD(TP)**
+  TP is smoother than close → STD(TP) < STD(close) → artificially narrows bands. Always use:
+  `std20 = std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std.
+  Stored in `price_cache.std20` (close-based).
+
+- **ATR: 14-day simple MA of True Range**
+  `TR[i] = max(H-L, |H-C_prev|, |L-C_prev|)`. Stored in `price_cache.atr`.
+  Used in downtrend + normal case HRR to ensure meaningful buffer above close when
+  price approaches MA20_TP from below.
+
+- **Full formula by pivot direction + MA20 regime:**
   ```
-- **STD20:** `std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std (not return vol)
-- **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction. 1 close on wrong side forgiven; day 2 flips regime. Stored in `price_cache.ma20_regime`
+  center = MA20_TP  (fallback: MA20_close)
+  vol    = STD20(close)
+
+  Structural uptrend + above MA20 (normal):
+    LRR = center                                   # MA20_TP — tight entry floor
+    HRR = center + k_wide × vol                    # BB upper — target
+
+  Structural uptrend + below MA20 (counter-trend):
+    LRR = center - k_wide × vol                    # BB lower — widens to full band
+    HRR = center + k_wide × vol                    # BB upper — target
+
+  Structural downtrend + below MA20 (normal):
+    LRR = center - k_wide × vol                    # BB lower — target
+    HRR = max(center, close + 0.5 × ATR)           # ATR buffer: ensures HRR sits at least
+                                                   # 0.5×ATR above close; collapses to MA20_TP
+                                                   # when price is far below (ATR buffer inactive)
+
+  Structural downtrend + above MA20 (counter-trend flip):
+    LRR = center - k_wide × vol                    # BB lower — target
+    HRR = center + k_wide × vol                    # BB upper — widens to full band
+  ```
+
+- **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction.
+  1 close on wrong side forgiven; day 2 flips regime. Stored in `price_cache.ma20_regime`.
+  Regime check uses close vs MA20(close) — NOT MA20_TP.
+
+- **ATR backfill note:** `price_cache.atr` was added by migration `j7e5f3g1h2i0`. If `atr = NULL`
+  after migration (skip-mode run hit before ATR code deployed), run backfill:
+  ```python
+  tr = [max(H[i]-L[i], |H[i]-P[i-1]|, |L[i]-P[i-1]|) for i in range(1, n)]
+  atr = mean(tr[-14:])
+  ```
+  `_update_quote_only()` also recomputes ATR on same-day skip runs.
+
 - **Rel IV completely removed from LRR/HRR** — informational display in popup only
-- **MA20 / STD20 / MA20 regime stored in price_cache** — written on every price fetch
+- **MA20 / STD20 / MA20_TP / ATR stored in price_cache** — written on every price fetch
 
 ### Trend Level and Tail Level — Single MA (v1.7, replaces dual LRR/HRR for Trend and LT)
 - **Supersedes:** Dual Trend LRR/HRR and LT LRR/HRR bands — only one level per timeframe now
@@ -1128,60 +1169,83 @@ NOT $427.13 (stale C)
 **Uptrend:** Enter at LRR, target HRR (above D)
 **Downtrend:** Enter at HRR (bounce), target LRR (below D)
 
-### LRR / HRR Formula — Bollinger Band Framework v1.7 (`conviction_engine.py`)
+### LRR / HRR Formula — Bollinger Band Framework v1.8 (`conviction_engine.py`)
 
-**SUPERSEDES:** All prior sigma/anchor/bc_range/hf/f_hrr/f_lrr formulas from v1.6 and earlier. Do not use.
+**SUPERSEDES:** v1.7 H-modulated formula. All prior sigma/anchor/bc_range formulas obsolete. Do not use.
 
 #### Inputs
 ```python
-MA20        = 20-day simple moving average of close prices     # stored in price_cache.ma20
-STD20       = std(prices[-20:], ddof=0)                        # standard BB price-level std
-H_trend     = Hurst exponent, Trend timeframe (252-day DFA)    # single H source — H_trade removed
+MA20_TP     = 20-day simple MA of typical price (H+L+C)/3     # stored in price_cache.ma20_tp
+MA20        = 20-day simple MA of close prices                 # stored in price_cache.ma20 (regime check only)
+STD20       = std(prices[-20:], ddof=0)                        # close-based std (NOT STD of TP)
+ATR         = 14-day simple MA of True Range                   # stored in price_cache.atr
 pivot_dir   = 'uptrend' | 'downtrend' | None                   # from ABC pivot structure
 ma20_regime = 'uptrend' | 'downtrend'                          # stored in price_cache.ma20_regime
+# Note: H_trend still computed and stored but NOT used in band formula (v1.8 change)
 ```
 
-#### k Coefficients — Named by Function
+#### k Coefficients — Fixed (v1.8: H removed from band width)
 ```python
-k_wide  = 2.0                       # standard 2σ BB — target side, never flips
-k_tight = max(0, H_trend - 0.5)     # entry side — ≈ MA20 when H < 0.5; clamped ≥ 0
+k_wide  = 2.0    # standard 2σ BB — target side, never changes
+k_tight = 0.0    # entry side — MA20_TP exactly; H no longer modulates this
 
-# k_tight behavior:
-#   H < 0.50 (mean-reverting) → k = 0.00  (entry = MA20 exactly)
-#   H = 0.60 (moderate trend) → k = 0.10
-#   H = 0.75 (strong trend)   → k = 0.25
+# H is still computed + stored (signal_hurst.h_trade / h_trend) for:
+#   H < 0.45 → mean-reverting regime → use oscillators (RSI, Stochastics)
+#   H > 0.55 → trending regime → use trend-following indicators (MA, momentum)
+# H does NOT affect LRR, HRR, or band width.
+```
+
+#### Center: MA20(TP) — Typical Price = (H+L+C)/3
+```python
+center = ma20_tp  # stored in price_cache.ma20_tp; fallback to ma20 (close-based) if None
+vol    = std20    # ALWAYS close-based std: std(prices[-20:], ddof=0)
+                  # Do NOT use STD(TP) — TP is smoother → STD(TP) dampens band width
 ```
 
 #### MA20 Price Regime Switch — 2-Consecutive-Close Rule
 ```
-regime = "uptrend"   if 2+ consecutive closes ABOVE MA20
-regime = "downtrend" if 2+ consecutive closes BELOW MA20
+regime = "uptrend"   if 2+ consecutive closes ABOVE MA20(close)
+regime = "downtrend" if 2+ consecutive closes BELOW MA20(close)
 ```
 - Independent of ABC pivot structural direction. Pivots say "what is the structural trend." Regime says "where is price vs MA20 right now."
 - 1 close on wrong side of MA20 is forgiven. Day 2 flips regime.
+- Regime check uses close vs MA20(close) — NOT MA20_TP.
 - Stored in `price_cache.ma20_regime` — written on every price fetch
 
-#### LRR/HRR Formulas — Pivot Direction + Regime Switch
+#### LRR/HRR Formulas — Pivot Direction + Regime Switch (v1.8)
 ```python
-# Structural uptrend (ABC pivot direction = uptrend):
-HRR = MA20 + k_wide  × STD20    # target above — always BB upper, never flips
-LRR = MA20 - k_tight × STD20    # normal (above MA20): tight floor ≈ MA20
-LRR = MA20 - k_wide  × STD20    # counter-trend (below MA20): wide floor = BB lower
+# Structural uptrend + above MA20 (normal):
+LRR = center                               # MA20_TP — tight entry floor
+HRR = center + k_wide × vol               # BB upper — target
 
-# Structural downtrend (perfect mirror):
-LRR = MA20 - k_wide  × STD20    # target below — always BB lower, never flips
-HRR = MA20 + k_tight × STD20    # normal (below MA20): tight ceiling ≈ MA20
-HRR = MA20 + k_wide  × STD20    # counter-trend (above MA20): wide ceiling = BB upper
+# Structural uptrend + below MA20 (counter-trend):
+LRR = center - k_wide × vol               # BB lower — widens to full band
+HRR = center + k_wide × vol               # BB upper — target
+
+# Structural downtrend + below MA20 (normal):
+LRR = center - k_wide × vol               # BB lower — target
+HRR = max(center, close + 0.5 × atr)     # ATR buffer: meaningful ceiling above close;
+                                           # collapses to MA20_TP when close is far below
+
+# Structural downtrend + above MA20 (counter-trend flip):
+LRR = center - k_wide × vol               # BB lower — target
+HRR = center + k_wide × vol               # BB upper — widens to full band
 ```
 
 #### Role Summary
 ```
-Uptrend + above MA20 (normal):       LRR = entry (tight ≈ MA20),  HRR = target (BB upper)
-Uptrend + below MA20 (counter-trend): LRR = wide (BB lower),       HRR = target (BB upper)
-Downtrend + below MA20 (normal):     HRR = entry (tight ≈ MA20),  LRR = target (BB lower)
-Downtrend + above MA20 (counter-trend): HRR = wide (BB upper),    LRR = target (BB lower)
+Uptrend + above MA20 (normal):       LRR = MA20_TP (tight entry),  HRR = BB upper (target)
+Uptrend + below MA20 (counter-trend): LRR = BB lower (wide),        HRR = BB upper (target)
+Downtrend + below MA20 (normal):     LRR = BB lower (target),       HRR = max(MA20_TP, close+0.5×ATR)
+Downtrend + above MA20 (counter-trend): LRR = BB lower (target),   HRR = BB upper (wide)
 ```
-k_wide always defines the side where you exit. k_tight always defines the normal entry side.
+k_wide always defines the target/exit side. Entry side collapses to MA20_TP (k_tight = 0).
+
+#### ATR Buffer Behavior
+- When close is far below MA20_TP (2×ATR or more): `close + 0.5×ATR` < MA20_TP → HRR = MA20_TP
+- When close approaches MA20_TP (within 0.5×ATR): buffer kicks in → HRR = close + 0.5×ATR
+- This ensures HRR always provides a meaningful ceiling, even when close has recovered near MA20_TP
+- ATR = 14-day simple MA of True Range; stored in `price_cache.atr`
 
 #### Self-Correction Property
 When close drops below LRR → tomorrow's MA20 falls → LRR follows MA20 downward automatically. Formula self-heals within 1–3 sessions.

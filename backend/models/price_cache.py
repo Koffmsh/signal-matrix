@@ -32,4 +32,5 @@ class PriceCache(Base):
     history_high_json  = Column(Text,   nullable=True)    # JSON array of daily highs, aligned to history_json
     history_low_json   = Column(Text,   nullable=True)    # JSON array of daily lows, aligned to history_json
     ma20_tp            = Column(Float,  nullable=True)    # MA20 of typical price (H+L+C)/3 — center for LRR/HRR
-    std20_tp           = Column(Float,  nullable=True)    # STD20 of typical price — band width for LRR/HRR
+    std20_tp           = Column(Float,  nullable=True)    # STD20 of typical price (stored, not used in band width)
+    atr                = Column(Float,  nullable=True)    # 14-day Average True Range (simple MA of TR)
