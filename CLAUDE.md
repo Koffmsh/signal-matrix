@@ -281,39 +281,37 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Volume multiplier: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (OBV-driven)
 - VIX regime multiplier (applied last): Investable(<19) × 1.10, Edgy(19–23) × 1.00, Choppy(24–29) × 0.90, Danger(≥30) × 0.80
 
-### Bollinger Band LRR/HRR — v1.8 Formula (TP center + close STD + ATR buffer)
-- **Supersedes:** v1.7 H-modulated k_tight formula. All prior sigma/anchor/bc_range formulas obsolete.
+### Bollinger Band LRR/HRR — v1.8 Formula (MA20 close center + close STD + ATR buffer)
+- **Supersedes:** v1.7 H-modulated k_tight formula and v1.8-interim TP-center formula. All prior sigma/anchor/bc_range/MA20_TP formulas obsolete.
 - **Two k coefficients — fixed, not H-modulated:**
   ```
   k_wide  = 2.0    # target side — standard 2σ BB; never changes
-  k_tight = 0.0    # entry side — MA20_TP exactly; H removed from band width
+  k_tight = 0.0    # entry side — MA20(close) exactly; H removed from band width
   ```
   H is still calculated and stored in `signal_hurst` for indicator regime classification
   (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT influence band width.
 
-- **Center: MA20(TP) — typical price = (H+L+C)/3**
-  MA20_TP stored in `price_cache.ma20_tp`. Falls back to MA20(close) during warmup.
-  MA20_TP vs MA20(close) divergence is small in practice (±7 pts on SPX). The TP center
-  resists downward movement during sell days (close near low → TP > close → MA_TP > MA_close),
-  providing a more stable ceiling anchor in downtrends.
+- **Center: MA20(close) — standard 20-day simple moving average of close prices**
+  Stored in `price_cache.ma20`. MA20_TP was tried as an interim center but the improvement
+  over MA20(close) was negligible (±7 pts on SPX) and `ma20_tp` / `std20_tp` columns have
+  been dropped (migration `13fb636fe76a`). MA20(close) is the permanent center.
 
-- **STD20: close-based always — do not use STD(TP)**
-  TP is smoother than close → STD(TP) < STD(close) → artificially narrows bands. Always use:
+- **STD20: close-based always**
   `std20 = std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std.
   Stored in `price_cache.std20` (close-based).
 
 - **ATR: 14-day simple MA of True Range**
   `TR[i] = max(H-L, |H-C_prev|, |L-C_prev|)`. Stored in `price_cache.atr`.
-  Used in downtrend + normal case HRR to ensure meaningful buffer above close when
-  price approaches MA20_TP from below.
+  Added by migration `j7e5f3g1h2i0`. Used in downtrend + normal case HRR to ensure
+  a meaningful ceiling above close when price approaches MA20 from below.
 
 - **Full formula by pivot direction + MA20 regime:**
   ```
-  center = MA20_TP  (fallback: MA20_close)
+  center = MA20(close)
   vol    = STD20(close)
 
   Structural uptrend + above MA20 (normal):
-    LRR = center                                   # MA20_TP — tight entry floor
+    LRR = center                                   # MA20 — tight entry floor (k_tight = 0)
     HRR = center + k_wide × vol                    # BB upper — target
 
   Structural uptrend + below MA20 (counter-trend):
@@ -323,8 +321,8 @@ Critical issues already resolved — do not reintroduce these bugs:
   Structural downtrend + below MA20 (normal):
     LRR = center - k_wide × vol                    # BB lower — target
     HRR = max(center, close + 0.5 × ATR)           # ATR buffer: ensures HRR sits at least
-                                                   # 0.5×ATR above close; collapses to MA20_TP
-                                                   # when price is far below (ATR buffer inactive)
+                                                   # 0.5×ATR above close; collapses to MA20
+                                                   # when price is far below (buffer inactive)
 
   Structural downtrend + above MA20 (counter-trend flip):
     LRR = center - k_wide × vol                    # BB lower — target
@@ -333,18 +331,10 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 - **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction.
   1 close on wrong side forgiven; day 2 flips regime. Stored in `price_cache.ma20_regime`.
-  Regime check uses close vs MA20(close) — NOT MA20_TP.
-
-- **ATR backfill note:** `price_cache.atr` was added by migration `j7e5f3g1h2i0`. If `atr = NULL`
-  after migration (skip-mode run hit before ATR code deployed), run backfill:
-  ```python
-  tr = [max(H[i]-L[i], |H[i]-P[i-1]|, |L[i]-P[i-1]|) for i in range(1, n)]
-  atr = mean(tr[-14:])
-  ```
-  `_update_quote_only()` also recomputes ATR on same-day skip runs.
+  Regime check uses close vs MA20(close).
 
 - **Rel IV completely removed from LRR/HRR** — informational display in popup only
-- **MA20 / STD20 / MA20_TP / ATR stored in price_cache** — written on every price fetch
+- **MA20 / STD20 / ATR stored in price_cache** — written on every price fetch
 
 ### Trend Level and Tail Level — Single MA (v1.7, replaces dual LRR/HRR for Trend and LT)
 - **Supersedes:** Dual Trend LRR/HRR and LT LRR/HRR bands — only one level per timeframe now
@@ -353,6 +343,13 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Tail Level:** MA200, shown only when LT Dir ≠ Neutral AND 20-day slope confirms direction
 - **Code/DB key unchanged:** still `"lt"` everywhere in models and DB; display label only is "Tail"
 - **Trend HRR removed from table and popup** — only one level per Trend/Tail timeframe
+
+### MA20_TP Center Dropped — MA20(close) Is Permanent Center (`conviction_engine.py`, `schwab_market_data.py`)
+- **MA20_TP (typical price center)** was added as a v1.8 interim: TP = (H+L+C)/3 resists downward movement during sell days
+- **Removed (migration `13fb636fe76a`):** TP center improvement over MA20(close) was negligible (±7 pts on SPX). Not worth the schema complexity.
+- `price_cache.ma20_tp` and `price_cache.std20_tp` columns dropped; `conviction_engine.compute_trade_lrr_hrr()` uses `ma20` directly
+- `schwab_market_data._compute_tp_metrics()` function removed; no TP writes anywhere
+- **Rule:** Do not re-add MA20_TP. MA20(close) is the permanent center for the BB LRR/HRR formula.
 
 ### Supabase Direct Connection — IPv6 Only from Docker (`alembic/env.py`)
 - `db.wxqioudsteiwaazrgbao.supabase.co:5432` resolves to **IPv6 only** inside the Docker container
@@ -566,7 +563,10 @@ signal-matrix/
 │   │       ├── b3f1c9d2e4a7_price_cache_add_ma_columns.py   ← v1.7 Phase A
 │   │       ├── c9a4e1f2b8d3_signal_output_add_ma_levels.py  ← v1.7 Phase B
 │   │       ├── d5e3f1a2c4b7_signal_output_add_extended_flags.py ← v1.7 Phase C
-│   │       └── e2f4a6b8c1d0_add_d_extended_to_pivots_and_output.py ← EXTENDED architectural cleanup
+│   │       ├── e2f4a6b8c1d0_add_d_extended_to_pivots_and_output.py ← EXTENDED architectural cleanup
+│   │       ├── f7a3b2c1d9e6_price_cache_add_ohlc_tp.py      ← added daily_high/low, history H/L, vov
+│   │       ├── j7e5f3g1h2i0_price_cache_add_atr.py          ← added price_cache.atr (14-day ATR)
+│   │       └── 13fb636fe76a_price_cache_drop_tp_columns.py  ← dropped ma20_tp, std20_tp (±7pt SPX, negligible)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1175,19 +1175,19 @@ NOT $427.13 (stale C)
 
 #### Inputs
 ```python
-MA20_TP     = 20-day simple MA of typical price (H+L+C)/3     # stored in price_cache.ma20_tp
-MA20        = 20-day simple MA of close prices                 # stored in price_cache.ma20 (regime check only)
-STD20       = std(prices[-20:], ddof=0)                        # close-based std (NOT STD of TP)
+MA20        = 20-day simple MA of close prices                 # stored in price_cache.ma20 (center + regime check)
+STD20       = std(prices[-20:], ddof=0)                        # close-based std
 ATR         = 14-day simple MA of True Range                   # stored in price_cache.atr
 pivot_dir   = 'uptrend' | 'downtrend' | None                   # from ABC pivot structure
 ma20_regime = 'uptrend' | 'downtrend'                          # stored in price_cache.ma20_regime
 # Note: H_trend still computed and stored but NOT used in band formula (v1.8 change)
+# Note: ma20_tp / std20_tp were dropped (migration 13fb636fe76a) — improvement was negligible
 ```
 
 #### k Coefficients — Fixed (v1.8: H removed from band width)
 ```python
 k_wide  = 2.0    # standard 2σ BB — target side, never changes
-k_tight = 0.0    # entry side — MA20_TP exactly; H no longer modulates this
+k_tight = 0.0    # entry side — MA20 exactly; H does not modulate this
 
 # H is still computed + stored (signal_hurst.h_trade / h_trend) for:
 #   H < 0.45 → mean-reverting regime → use oscillators (RSI, Stochastics)
@@ -1195,11 +1195,10 @@ k_tight = 0.0    # entry side — MA20_TP exactly; H no longer modulates this
 # H does NOT affect LRR, HRR, or band width.
 ```
 
-#### Center: MA20(TP) — Typical Price = (H+L+C)/3
+#### Center: MA20(close)
 ```python
-center = ma20_tp  # stored in price_cache.ma20_tp; fallback to ma20 (close-based) if None
-vol    = std20    # ALWAYS close-based std: std(prices[-20:], ddof=0)
-                  # Do NOT use STD(TP) — TP is smoother → STD(TP) dampens band width
+center = ma20   # 20-day simple MA of close prices; stored in price_cache.ma20
+vol    = std20  # close-based std: std(prices[-20:], ddof=0)
 ```
 
 #### MA20 Price Regime Switch — 2-Consecutive-Close Rule
@@ -1209,13 +1208,12 @@ regime = "downtrend" if 2+ consecutive closes BELOW MA20(close)
 ```
 - Independent of ABC pivot structural direction. Pivots say "what is the structural trend." Regime says "where is price vs MA20 right now."
 - 1 close on wrong side of MA20 is forgiven. Day 2 flips regime.
-- Regime check uses close vs MA20(close) — NOT MA20_TP.
 - Stored in `price_cache.ma20_regime` — written on every price fetch
 
 #### LRR/HRR Formulas — Pivot Direction + Regime Switch (v1.8)
 ```python
 # Structural uptrend + above MA20 (normal):
-LRR = center                               # MA20_TP — tight entry floor
+LRR = center                               # MA20 — tight entry floor (k_tight = 0)
 HRR = center + k_wide × vol               # BB upper — target
 
 # Structural uptrend + below MA20 (counter-trend):
@@ -1225,7 +1223,7 @@ HRR = center + k_wide × vol               # BB upper — target
 # Structural downtrend + below MA20 (normal):
 LRR = center - k_wide × vol               # BB lower — target
 HRR = max(center, close + 0.5 × atr)     # ATR buffer: meaningful ceiling above close;
-                                           # collapses to MA20_TP when close is far below
+                                           # collapses to MA20 when close is far below
 
 # Structural downtrend + above MA20 (counter-trend flip):
 LRR = center - k_wide × vol               # BB lower — target
@@ -1234,17 +1232,17 @@ HRR = center + k_wide × vol               # BB upper — widens to full band
 
 #### Role Summary
 ```
-Uptrend + above MA20 (normal):       LRR = MA20_TP (tight entry),  HRR = BB upper (target)
-Uptrend + below MA20 (counter-trend): LRR = BB lower (wide),        HRR = BB upper (target)
-Downtrend + below MA20 (normal):     LRR = BB lower (target),       HRR = max(MA20_TP, close+0.5×ATR)
-Downtrend + above MA20 (counter-trend): LRR = BB lower (target),   HRR = BB upper (wide)
+Uptrend + above MA20 (normal):          LRR = MA20 (tight entry, k_tight=0), HRR = BB upper (target)
+Uptrend + below MA20 (counter-trend):   LRR = BB lower (wide),               HRR = BB upper (target)
+Downtrend + below MA20 (normal):        LRR = BB lower (target),              HRR = max(MA20, close+0.5×ATR)
+Downtrend + above MA20 (counter-trend): LRR = BB lower (target),              HRR = BB upper (wide)
 ```
-k_wide always defines the target/exit side. Entry side collapses to MA20_TP (k_tight = 0).
+k_wide always defines the target/exit side. Entry side collapses to MA20 (k_tight = 0).
 
 #### ATR Buffer Behavior
-- When close is far below MA20_TP (2×ATR or more): `close + 0.5×ATR` < MA20_TP → HRR = MA20_TP
-- When close approaches MA20_TP (within 0.5×ATR): buffer kicks in → HRR = close + 0.5×ATR
-- This ensures HRR always provides a meaningful ceiling, even when close has recovered near MA20_TP
+- When close is far below MA20 (2×ATR or more): `close + 0.5×ATR` < MA20 → HRR = MA20
+- When close approaches MA20 (within 0.5×ATR): buffer kicks in → HRR = close + 0.5×ATR
+- This ensures HRR always provides a meaningful ceiling, even when close has recovered near MA20
 - ATR = 14-day simple MA of True Range; stored in `price_cache.atr`
 
 #### Self-Correction Property
@@ -1344,10 +1342,15 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
 price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_regime,
                 rel_iv, iv_source, data_source, cache_date,
                 history_json, volume_history_json,
+                history_dates_json, history_high_json, history_low_json,
+                daily_high, daily_low,
                 spark_json, updated_at,
+                atr,                        ← 14-day simple MA of True Range (migration j7e5f3g1h2i0)
                 vov_30d,                    ← Phase 6: 30-day VIX volatility-of-volatility (decimal, e.g. 0.15)
                 vov_rank,                   ← Phase 6: VoV rank within its own 252-day rolling history (0–100)
                 UNIQUE(ticker)
+# NOTE: ma20_tp and std20_tp were added (f7a3b2c1d9e6) then dropped (13fb636fe76a) —
+#       MA20_TP center improvement over MA20(close) was negligible (±7 pts on SPX)
 ```
 
 ### FastAPI Endpoints (Phase 3)
@@ -1690,7 +1693,7 @@ Every schema change must follow this sequence exactly. Do not skip steps, do not
 docker exec signal-matrix-backend-1 alembic upgrade head
 ```
 - If this fails, fix the migration file before touching production
-- Local SQLite uses the standard connection string in `alembic/env.py`
+- Local SQLite: `alembic/env.py` falls back to `sqlite:////app/signal_matrix.db` when no DB env vars are set
 
 ### Step 3 — Encode the Supabase password before production migration
 The Supabase password contains `#`, `$`, `/`, and `@` — these are silently mangled by Fly.io
