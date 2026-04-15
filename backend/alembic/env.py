@@ -33,13 +33,14 @@ target_metadata = Base.metadata
 
 def _get_migration_url() -> str:
     """
-    Returns a synchronous psycopg2 URL for Alembic migrations.
+    Returns a synchronous URL for Alembic migrations.
     Priority:
       1. DATABASE_URL — pre-encoded Fly.io secret (password already percent-encoded);
          used verbatim after driver/SSL swap — no re-encoding.
       2. SUPABASE_CONNECTION_STRING — direct port 5432 (IPv6 only from Docker)
       3. SUPABASE_POOLED_CONNECTION_STRING — port 6543, IPv4-routable from Docker;
          password may contain raw special chars — stripped of template brackets and re-encoded.
+      4. SQLite fallback — local dev (same as database.py)
     """
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
@@ -53,10 +54,8 @@ def _get_migration_url() -> str:
         or os.environ.get("SUPABASE_POOLED_CONNECTION_STRING")
     )
     if not raw:
-        raise RuntimeError(
-            "No database URL found. Set DATABASE_URL, SUPABASE_CONNECTION_STRING, "
-            "or SUPABASE_POOLED_CONNECTION_STRING."
-        )
+        # Local dev fallback — SQLite
+        return "sqlite:////app/signal_matrix.db"
     # Swap driver: asyncpg → psycopg2 (Alembic requires synchronous connection)
     raw = raw.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
     # Swap SSL param style: asyncpg uses ssl=require, psycopg2 uses sslmode=require
@@ -90,11 +89,16 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     from sqlalchemy import create_engine as _create_engine
 
+    url = _get_migration_url()
+    # SQLite requires check_same_thread=False; Postgres does not accept that arg.
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+
     # Create engine directly — avoids configparser % interpolation issues
     # with URL-encoded passwords (e.g. %40 for @).
     connectable = _create_engine(
-        _get_migration_url(),
+        url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     with connectable.connect() as connection:

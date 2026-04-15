@@ -94,25 +94,6 @@ def _compute_atr(highs: list, lows: list, closes: list, period: int = 14) -> flo
     return round(float(np.mean(tr[-period:])), 4)
 
 
-def _compute_tp_metrics(highs: list, lows: list, closes: list) -> tuple:
-    """
-    Compute MA20 and STD20 of typical price (H+L+C)/3.
-    Returns (ma20_tp, std20_tp) or (None, None) if fewer than 20 bars available.
-
-    Typical price dampens band movement in both directions:
-      - Close-on-lows day (selloff):  TP > close → MA20_TP holds above MA20_close → LRR resists slicing down
-      - Close-on-highs day (recovery): TP < close → MA20_TP stays below MA20_close → LRR stays low
-    """
-    n = min(len(highs), len(lows), len(closes))
-    if n < 20:
-        return None, None
-    tp = [
-        (h + l + c) / 3.0
-        for h, l, c in zip(highs[-20:], lows[-20:], closes[-20:])
-    ]
-    ma20_tp  = round(float(np.mean(tp)), 4)
-    std20_tp = round(float(np.std(tp, ddof=0)), 4)
-    return ma20_tp, std20_tp
 
 
 def _history_fetch_mode(existing_row, today_str: str) -> str:
@@ -210,7 +191,6 @@ def _append_bar(existing: PriceCache, close: float, volume: int,
     std20          = _compute_std20(prices)
     ma200          = round(float(np.mean(prices[-200:])), 2) if len(prices) >= 200 else None
     ma20_regime    = compute_ma20_regime(prices)
-    ma20_tp, std20_tp = _compute_tp_metrics(highs, lows, prices)
     atr            = _compute_atr(highs, lows, prices)
 
     existing.close               = close
@@ -223,8 +203,6 @@ def _append_bar(existing: PriceCache, close: float, volume: int,
     existing.ma200               = ma200
     existing.std20               = std20
     existing.ma20_regime         = ma20_regime
-    existing.ma20_tp             = ma20_tp
-    existing.std20_tp            = std20_tp
     existing.atr                 = atr
     existing.spark_json          = json.dumps(spark_prices)
     existing.history_json        = json.dumps(prices)
@@ -276,7 +254,6 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         std20       = _compute_std20(new_p, close)
         ma200       = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
         ma20_regime = compute_ma20_regime(new_p)
-        ma20_tp, std20_tp = _compute_tp_metrics(new_h, new_l, new_p)
         atr         = _compute_atr(new_h, new_l, new_p)
 
         existing.close               = close
@@ -289,8 +266,6 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         existing.ma200               = ma200
         existing.std20               = std20
         existing.ma20_regime         = ma20_regime
-        existing.ma20_tp             = ma20_tp
-        existing.std20_tp            = std20_tp
         existing.atr                 = atr
         existing.rel_iv              = data["rel_iv"]
         existing.spark_json          = json.dumps(data["spark_prices"])
@@ -310,7 +285,6 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         std20       = _compute_std20(new_p, close)
         ma200       = round(float(np.mean(new_p[-200:])), 2) if len(new_p) >= 200 else None
         ma20_regime = compute_ma20_regime(new_p)
-        ma20_tp, std20_tp = _compute_tp_metrics(new_h, new_l, new_p)
         atr         = _compute_atr(new_h, new_l, new_p)
 
         db.add(PriceCache(
@@ -326,8 +300,6 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
             ma200                = ma200,
             std20                = std20,
             ma20_regime          = ma20_regime,
-            ma20_tp              = ma20_tp,
-            std20_tp             = std20_tp,
             atr                  = atr,
             rel_iv               = data["rel_iv"],
             spark_json           = json.dumps(data["spark_prices"]),
