@@ -59,19 +59,26 @@ def compute_vov_with_rank(vix_history_json: str) -> tuple:
 
 def serialize_cache_row(row: PriceCache) -> dict:
     return {
-        "ticker":       row.ticker,
-        "close":        row.close,
-        "volume":       row.volume,
-        "ma20":         row.ma20,
-        "ma50":         row.ma50,
-        "ma100":        row.ma100,
-        "rel_iv":       row.rel_iv,
-        "spark_prices": json.loads(row.spark_json),
-        "data_source":  row.data_source or "yahoo",
-        "iv_source":    row.iv_source,
-        "vov_30d":      row.vov_30d,
-        "vov_rank":     row.vov_rank,
-        "updated":      row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
+        "ticker":          row.ticker,
+        "close":           row.close,
+        "volume":          row.volume,
+        "ma20":            row.ma20,
+        "ma50":            row.ma50,
+        "ma100":           row.ma100,
+        "rel_iv":          row.rel_iv,
+        "spark_prices":    json.loads(row.spark_json),
+        "data_source":     row.data_source or "yahoo",
+        "iv_source":       row.iv_source,
+        "vov_30d":         row.vov_30d,
+        "vov_rank":        row.vov_rank,
+        # Volatility metrics
+        "hv30":            row.hv30,
+        "hv90":            row.hv90,
+        "iv30":            row.iv30,
+        "risk_reversal":   row.risk_reversal,
+        "skew_rank":       row.skew_rank,
+        "put_call_ratio":  row.put_call_ratio,
+        "updated":         row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
 
@@ -206,6 +213,8 @@ def refresh_data(db: Session) -> dict:
             PriceCache.ticker, PriceCache.close, PriceCache.volume,
             PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
             PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d, PriceCache.vov_rank,
+            PriceCache.hv30, PriceCache.hv90, PriceCache.iv30,
+            PriceCache.risk_reversal, PriceCache.skew_rank, PriceCache.put_call_ratio,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()
@@ -244,6 +253,8 @@ def get_cached(db: Session = Depends(get_db)):
             PriceCache.ticker, PriceCache.close, PriceCache.volume,
             PriceCache.ma20, PriceCache.ma50, PriceCache.ma100,
             PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d, PriceCache.vov_rank,
+            PriceCache.hv30, PriceCache.hv90, PriceCache.iv30,
+            PriceCache.risk_reversal, PriceCache.skew_rank, PriceCache.put_call_ratio,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()

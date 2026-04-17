@@ -74,6 +74,7 @@ def _compute_std20(prices: list, close: float = None) -> float | None:
     return round(float(np.std(prices[-20:], ddof=0)), 4)
 
 
+
 def _compute_atr(highs: list, lows: list, closes: list, period: int = 14) -> float | None:
     """
     Compute Average True Range (simple MA of True Range over `period` days).

@@ -32,3 +32,9 @@ class PriceCache(Base):
     history_high_json  = Column(Text,   nullable=True)    # JSON array of daily highs, aligned to history_json
     history_low_json   = Column(Text,   nullable=True)    # JSON array of daily lows, aligned to history_json
     atr                = Column(Float,  nullable=True)    # 14-day Average True Range (simple MA of TR)
+    hv30               = Column(Float,  nullable=True)    # 21-day (HV30) annualized realized vol (decimal)
+    hv90               = Column(Float,  nullable=True)    # 63-day (HV90) annualized realized vol (decimal)
+    iv30               = Column(Float,  nullable=True)    # raw 30d constant-maturity implied vol from Schwab
+    risk_reversal      = Column(Float,  nullable=True)    # 25Δ call IV - 25Δ put IV; positive = bullish forward skew
+    skew_rank          = Column(Integer, nullable=True)   # RR rank within 252-day rolling history (0-100)
+    put_call_ratio     = Column(Float,  nullable=True)    # total put OI / total call OI

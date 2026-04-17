@@ -134,14 +134,21 @@ function mergeRealData(mockRow, realDataMap) {
     sparkPrices: real.spark_prices?.length === 60
                    ? real.spark_prices
                    : mockRow.sparkPrices,
-    relIV:       real.rel_iv       ?? mockRow.relIV,
-    ivSource:    real.iv_source    ?? null,
-    volume:      real.volume       ?? 0,
-    ma20:        real.ma20         ?? null,
-    ma50:        real.ma50         ?? null,
-    ma100:       real.ma100        ?? null,
-    updated:     real.updated      ?? mockRow.updated,
-    dataSource:  "live",
+    relIV:          real.rel_iv          ?? mockRow.relIV,
+    ivSource:       real.iv_source       ?? null,
+    volume:         real.volume          ?? 0,
+    ma20:           real.ma20            ?? null,
+    ma50:           real.ma50            ?? null,
+    ma100:          real.ma100           ?? null,
+    updated:        real.updated         ?? mockRow.updated,
+    dataSource:     "live",
+    // Volatility metrics
+    hv30:           real.hv30            ?? null,
+    hv90:           real.hv90            ?? null,
+    iv30:           real.iv30            ?? null,
+    riskReversal:   real.risk_reversal   ?? null,
+    skewRank:       real.skew_rank       ?? null,
+    putCallRatio:   real.put_call_ratio  ?? null,
   };
 }
 
@@ -981,8 +988,48 @@ function Dashboard() {
             [<span>H<span style={{fontSize:"13px"}}>↓</span> Trend</span>,   row.hTrendDown != null ? row.hTrendDown.toFixed(3) : "—",  hurstColor(row.hTrendDown),              false, "Asymmetric Hurst — downtrend DFA (Commodities/FX only)\nUsed as H_eff when viewpoint is Bearish\n≥ 0.60 — Trending (green) · < 0.50 — Mean-reverting (red)"],
           ] : []),
           ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false, "Hurst exponent (Tail, 756-day DFA) — context only, not in conviction\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
-          [row.ivSource === "schwab" ? "IV% \u2014 schwab" : "IV% \u2014 proxy",
-                           `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
+          // ── Volatility ────────────────────────────────────────────────────
+          [row.ivSource === "schwab" ? "IV Rank \u2014 schwab" : "IV Rank \u2014 proxy",
+                           row.relIV != null ? `${row.relIV}%` : "—",                                     ivColor(row.relIV),                     false,
+                           "IV Rank: where current IV30 sits within its 252-day range\n< 20 = historically cheap options (green)\n> 80 = expensive options (red)"],
+          ["IV30",         row.iv30   != null ? `${(row.iv30   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,
+                           "30-day constant-maturity implied volatility (ATM, interpolated)"],
+          ["HV30",         row.hv30   != null ? `${(row.hv30   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,
+                           "21-day (≈30 calendar day) annualized realized volatility"],
+          ["HV90",         row.hv90   != null ? `${(row.hv90   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,
+                           "63-day (≈90 calendar day) annualized realized volatility"],
+          ["Vol Premium",  (() => {
+                             if (row.iv30 == null || row.hv30 == null) return "—";
+                             const vp = (row.iv30 - row.hv30) * 100;
+                             return `${vp >= 0 ? "+" : ""}${vp.toFixed(1)}%`;
+                           })(),
+                           (() => {
+                             if (row.iv30 == null || row.hv30 == null) return "#8899aa";
+                             return (row.iv30 - row.hv30) < 0 ? "#00e5a0" : "#f0b429";
+                           })(),
+                           false,
+                           "IV30 − HV30 (vol risk premium)\nNegative = IV cheap vs realized = green\nPositive = IV expensive vs realized = amber"],
+          ["Risk Reversal", row.riskReversal != null ? `${(row.riskReversal * 100).toFixed(2)}%` : "—",
+                           (() => {
+                             if (row.riskReversal == null) return "#8899aa";
+                             return row.riskReversal > 0 ? "#00e5a0" : row.riskReversal < -0.02 ? "#ff4d6d" : "#8899aa";
+                           })(),
+                           false,
+                           "25Δ Call IV − 25Δ Put IV\nPositive = forward skew = institutional call buying = bullish\nNegative = normal smirk = downside protection bid"],
+          ["Skew Rank",    row.skewRank != null ? `${row.skewRank}%` : "—",
+                           (() => {
+                             if (row.skewRank == null) return "#8899aa";
+                             return row.skewRank < 20 ? "#00e5a0" : row.skewRank > 80 ? "#ff4d6d" : "#8899aa";
+                           })(),
+                           false,
+                           "Risk Reversal rank within 252-day rolling history\nLow = puts cheap vs calls = bullish tailwind\nHigh = puts expensive = fear / bearish signal"],
+          ["P/C Ratio",    row.putCallRatio != null ? row.putCallRatio.toFixed(2) : "—",
+                           (() => {
+                             if (row.putCallRatio == null) return "#8899aa";
+                             return row.putCallRatio > 1.2 ? "#00e5a0" : row.putCallRatio < 0.6 ? "#ff4d6d" : "#8899aa";
+                           })(),
+                           false,
+                           "Total put OI ÷ total call OI\n> 1.2 = extreme fear / capitulation = contrarian bullish\n< 0.6 = complacency = potential top signal"],
           ["Updated",      row.updated,                                                                    "#667788",                              false],
         ];
 
