@@ -273,6 +273,29 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
 - **Production reset required after this fix:** run `DELETE FROM iv_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
 
+### Volatility Metrics Expansion — HV30/HV90, IV30, Risk Reversal, Skew Rank, P/C Ratio (`schwab_options.py`)
+- **All vol metrics come exclusively from `schwab_fetch_iv`** — HV30/HV90 are NOT computed in `schwab_market_data.py` from Yahoo data. All-or-nothing: if Schwab tokens unavailable, all new vol fields remain null (no partial population from Yahoo)
+- **HV30/HV90 — Annualized Realized Volatility:**
+  - `hv30` = std of last 21 log returns × √252 (≈ 30 calendar days); `hv90` = std of last 63 log returns × √252 (≈ 90 calendar days)
+  - Computed from `price_cache.history_json` inside `_compute_hv(db, ticker)` — no additional API call needed
+  - Naming convention: 21 trading days ≈ 30 calendar days; 63 trading days ≈ 90 calendar days (matches IV30 tenor)
+- **`strike_count = 20`** — raised from 1 to capture 25Δ OTM options (20 strikes each side of ATM); required for skew extraction
+- **25Δ Risk Reversal — `_extract_25d_skew(data)`:**
+  - Finds option with delta closest to +0.25 (OTM call) and -0.25 (OTM put) for each expiration
+  - Interpolates to 30-day constant maturity using same near/far bracket as IV30
+  - `risk_reversal = call_iv_25d - put_iv_25d`; positive = forward skew = institutional call buying = bullish; negative = normal smirk = downside protection bid (typical for equities)
+- **Skew Rank — `_compute_skew_rank(db, ticker, today_rr)`:**
+  - Risk reversal rank within its own 252-day rolling history: `(rr - min) / (max - min) × 100`
+  - Same methodology as IV Rank; requires `_RANK_MIN_HISTORY = 30` observations before meaningful
+- **Put/Call Ratio — `_extract_put_call_ratio(data)`:**
+  - Total put OI ÷ total call OI across all fetched strikes and expirations
+  - `> 1.2` = fear/capitulation (contrarian bullish); `< 0.6` = complacency
+- **iv_history renamed columns:** `rv21` → `hv30`, `rv63` → `hv90` (migration `k1a2b3c4d5e6`)
+- **iv_history new columns:** `call_iv_25d`, `put_iv_25d`, `risk_reversal`, `put_call_ratio` (migration `k1a2b3c4d5e6`)
+- **price_cache new columns:** `hv30`, `hv90`, `iv30`, `risk_reversal`, `skew_rank` (Integer), `put_call_ratio` (migration `l2b3c4d5e6f7`)
+- **IV30 vs Schwab "Implied Volatility":** Our IV30 is constant-maturity 30-day interpolated ATM IV (TOS methodology). Schwab's "Implied Volatility" stat in the Options Statistics panel is front-month ATM IV without maturity adjustment — will differ by ~2-4% due to term structure. Both are correct; they measure different things. Constant-maturity is methodologically cleaner for cross-asset comparison.
+- **Idempotency:** checked against `iv_history` table (not `price_cache.iv_source`) — `iv_history` must be cleared to force re-fetch: `DELETE FROM iv_history WHERE iv_date = 'YYYY-MM-DD'`
+
 ### Conviction Score — Base 50 + Proximity + OBV Alignment + Slope Boost (v1.8+)
 - **H completely removed from conviction formula** — H is still calculated and stored for regime classification display only (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT affect conviction score.
 - **Current formula:**
@@ -607,7 +630,9 @@ signal-matrix/
 │   │       ├── e2f4a6b8c1d0_add_d_extended_to_pivots_and_output.py ← EXTENDED architectural cleanup
 │   │       ├── f7a3b2c1d9e6_price_cache_add_ohlc_tp.py      ← added daily_high/low, history H/L, vov
 │   │       ├── j7e5f3g1h2i0_price_cache_add_atr.py          ← added price_cache.atr (14-day ATR)
-│   │       └── 13fb636fe76a_price_cache_drop_tp_columns.py  ← dropped ma20_tp, std20_tp (±7pt SPX, negligible)
+│   │       ├── 13fb636fe76a_price_cache_drop_tp_columns.py  ← dropped ma20_tp, std20_tp (±7pt SPX, negligible)
+│   │       ├── k1a2b3c4d5e6_iv_history_vol_rename_and_skew.py ← rv21→hv30, rv63→hv90; added call_iv_25d, put_iv_25d, risk_reversal, put_call_ratio
+│   │       └── l2b3c4d5e6f7_price_cache_add_vol_columns.py  ← added hv30, hv90, iv30, risk_reversal, skew_rank, put_call_ratio
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1404,6 +1429,12 @@ price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_reg
                 atr,                        ← 14-day simple MA of True Range (migration j7e5f3g1h2i0)
                 vov_30d,                    ← Phase 6: 30-day VIX volatility-of-volatility (decimal, e.g. 0.15)
                 vov_rank,                   ← Phase 6: VoV rank within its own 252-day rolling history (0–100)
+                hv30,                       ← annualized realized vol, 21-day (≈30 cal days); decimal (migration l2b3c4d5e6f7)
+                hv90,                       ← annualized realized vol, 63-day (≈90 cal days); decimal (migration l2b3c4d5e6f7)
+                iv30,                       ← 30-day constant-maturity ATM IV; decimal (migration l2b3c4d5e6f7)
+                risk_reversal,              ← 25Δ call IV − 25Δ put IV; decimal (migration l2b3c4d5e6f7)
+                skew_rank,                  ← Integer 0–100: RR rank within 252-day history (migration l2b3c4d5e6f7)
+                put_call_ratio,             ← total put OI / total call OI across fetched chain (migration l2b3c4d5e6f7)
                 UNIQUE(ticker)
 # NOTE: ma20_tp and std20_tp were added (f7a3b2c1d9e6) then dropped (13fb636fe76a) —
 #       MA20_TP center improvement over MA20(close) was negligible (±7 pts on SPX)
@@ -1573,7 +1604,14 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | H↑ Trend | Uptrend asymmetric Hurst — Commodities/FX only; from `h_trend_up` in `signal_hurst`; arrow rendered at 13px in label |
 | H↓ Trend | Downtrend asymmetric Hurst — Commodities/FX only; from `h_trend_down` in `signal_hurst`; arrow rendered at 13px in label |
 | Hurst (Tail) | Tail/LT timeframe H value; hover tooltip shows color thresholds; context only — not in conviction |
-| Rel IV% | IV Rank — schwab or proxy source tagged; informational only (not in conviction formula) |
+| IV Rank | IV Rank % — source tagged (schwab / proxy); `< 20` green (cheap), `> 80` red (expensive) |
+| IV30 | 30-day constant-maturity ATM implied vol % — Schwab only, "—" on proxy |
+| HV30 | 21-day (≈30 cal day) annualized realized vol % — Schwab only |
+| HV90 | 63-day (≈90 cal day) annualized realized vol % — Schwab only |
+| Vol Premium | IV30 − HV30; negative = options cheap vs realized = green; positive = expensive = amber |
+| Risk Reversal | 25Δ call IV − 25Δ put IV; positive = forward skew = bullish (green); negative = normal smirk |
+| Skew Rank | RR rank within 252-day history; `< 20` green (puts cheap); `> 80` red (fear/puts expensive) |
+| P/C Ratio | Total put OI ÷ call OI; `> 1.2` green (fear/contrarian bullish); `< 0.6` red (complacency) |
 | Updated | Last data fetch timestamp |
 
 ## Color Coding
@@ -1618,6 +1656,8 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `f7b5197` — migration: drop ma20_tp/std20_tp, add atr to price_cache
   - `893c773` — feat: v1.8 LRR/HRR — TP center, fixed k_tight=0, ATR buffer, ATR backfill fix
   - `ad3d728` — docs: update CLAUDE.md — drop MA20_TP, add ATR, alembic SQLite fallback
+  - `7f1eeda` — feat: conviction engine v1.8 — remove H, OBV slope layers, auto_adjust fix
+  - `3432b45` — feat: volatility tracking — HV30/HV90, IV30, risk reversal, skew rank, P/C ratio
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
