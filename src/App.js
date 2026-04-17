@@ -892,7 +892,7 @@ function Dashboard() {
               <th style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Formula: H_eff × (0.70 + 0.30 × prox) × OBV mult × VIX regime mult · capped at 100" />
+                title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Viewpoint 50 × (0.70 + 0.30 × prox) × OBV mult × OBV boost" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -983,12 +983,6 @@ function Dashboard() {
           ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false, "Hurst exponent (Tail, 756-day DFA) — context only, not in conviction\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
           [row.ivSource === "schwab" ? "IV% \u2014 schwab" : "IV% \u2014 proxy",
                            `${row.relIV}%`,                                                                ivColor(row.relIV),                     false],
-          ["VIX Regime",   row.vixRegime || "—",
-                           row.vixRegime === "Investable" ? "#00e5a0"
-                         : row.vixRegime === "Edgy"       ? "#f0b429"
-                         : row.vixRegime === "Choppy"     ? "#f0b429"
-                         : row.vixRegime === "Danger"     ? "#ff4d6d" : "#8899aa",
-                           false],
           ["Updated",      row.updated,                                                                    "#667788",                              false],
         ];
 

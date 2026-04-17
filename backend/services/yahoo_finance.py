@@ -73,7 +73,7 @@ def fetch_ticker_close(ticker: str) -> tuple | None:
     """
     yahoo_symbol = get_yahoo_symbol(ticker)
     try:
-        hist = yf.Ticker(yahoo_symbol).history(period="5d")
+        hist = yf.Ticker(yahoo_symbol).history(period="5d", auto_adjust=False)
         if hist.empty:
             logger.warning(f"fetch_ticker_close: no data for {ticker} ({yahoo_symbol})")
             return None
@@ -98,7 +98,7 @@ def fetch_ticker_data(ticker: str) -> dict | None:
 
     try:
         yf_ticker = yf.Ticker(yahoo_symbol)
-        hist = yf_ticker.history(period="5y")
+        hist = yf_ticker.history(period="5y", auto_adjust=False)
 
         if hist.empty or len(hist) < 20:
             logger.warning(f"Insufficient data for {ticker} ({yahoo_symbol})")

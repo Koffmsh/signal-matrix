@@ -154,6 +154,15 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Example:** SPX trend — engine was finding A=10/10/25 (6552.51) which is above C=11/20/25 (6538.76), causing the uptrend check to fail; correct A is 04/08/25 (4982.77); old engine fell back to a stale ABC (C=10/10/25, 111 trading days) and fired NO_STRUCTURE
 - **Rule:** Never assume the nearest A before B is the correct A — always scan all candidates
 
+### Yahoo Finance `auto_adjust=False` — Actual Close Prices (`yahoo_finance.py`)
+- Old behavior: `yf.Ticker().history()` uses `auto_adjust=True` by default — silently adjusts all historical closes for dividends, making stored prices diverge from actual traded prices
+- **Problem:** SPY Aug 1 2025 showed $616.49 in cache vs $621.72 on Yahoo/ThinkorSwim — gap grows for older bars and any dividend-paying ticker
+- **Fixed:** `auto_adjust=False` on both `history(period="5y")` and `history(period="5d")` calls in `yahoo_finance.py`
+- This only affects Yahoo fallback path — Schwab always returns actual prices
+- **After deploying this fix:** wipe local SQLite history (`UPDATE price_cache SET history_json=NULL, ... cache_date='1970-01-01'`) and run REFRESH DATA + CALCULATE SIGNALS to replace adjusted history with actual prices
+- **Production:** safe — Schwab is primary for all equity/ETF tickers; Yahoo fallback only serves indices (SPX, VIX, etc.) and futures which pay no dividends, so `auto_adjust` has no effect on them
+- **Do not** revert to default `auto_adjust=True`
+
 ### EOD Bar Inclusion Fix (`yahoo_finance.py`)
 - Old behavior: `closes.index.date < date.today()` excluded today's close from `history_prices`
 - **Problem:** When the scheduler fetches data at 4 PM ET, today's close IS the confirmed EOD price. Excluding it meant the 5th post-pivot bar didn't count until the next trading day — a confirmed pivot on Mar 20 wouldn't be used in that day's signal calculation even though the data was fetched after close.
@@ -205,7 +214,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Do not** use 20 as the cutoff
 
 ### Vol Signal / Vol Direction — Popup Field Naming (`App.js`)
-- Backend field `vol_signal` (Confirming/Diverging/Neutral) is the OBV-based conviction multiplier tier — "Vol" is the right label because it communicates meaning to the trader; OBV is the calculation method detail
+- Backend field `vol_signal` (Confirming/Diverging/Neutral) is computed from OBV pivot direction vs Trade Dir — stored for popup display only; no longer drives a conviction multiplier (v1.8+)
 - Popup shows two fields:
   - **Vol Direction** — raw OBV pivot trend direction: Bullish / Bearish / Neutral (maps to `obv_direction`)
   - **Vol Signal vs Trade** — Confirming ✓ / Diverging ✗ / Neutral — (maps to `obv_confirming`; compared against Trade Dir)
@@ -264,22 +273,46 @@ Critical issues already resolved — do not reintroduce these bugs:
 - `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
 - **Production reset required after this fix:** run `DELETE FROM iv_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
 
-### Conviction Score — H_trend only + Proximity Boost
-- Old weights (v1.6): Trade H × 0.65 + Trend H × 0.35
-- v1.7 interim: (H_trade × 0.50 + H_trend × 0.50) × 100 — superseded
-- **Current formula:** H_eff × proximity boost × OBV multiplier × VIX regime multiplier (Phase 6)
+### Conviction Score — Base 50 + Proximity + OBV Alignment + Slope Boost (v1.8+)
+- **H completely removed from conviction formula** — H is still calculated and stored for regime classification display only (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT affect conviction score.
+- **Current formula:**
   ```
-  base             = H_eff × 100
-  conviction_raw   = base × (0.70 + 0.30 × prox)
-  conviction_obv   = conviction_raw × obv_multiplier    (1.15 / 1.00 / 0.80)
-  conviction_final = conviction_obv × vix_mult          (1.10 / 1.00 / 0.90 / 0.80)
+  base             = 50   (viewpoint alignment is the gate — trade+trend both agree)
+  conviction_raw   = base × (0.70 + 0.30 × prox)        → range 35–50
+  conviction_align = conviction_raw × alignment_mult      → 1.20 / 0.85 / 1.00
+  conviction_final = conviction_align × slope_boost       → 1.17 / 1.00
                    = min(conviction_final, 100.0)
   ```
-  where `H_eff` = `H_trend_up` (Bullish) or `H_trend_down` (Bearish) for Commodities/FX; `H_trend` for all others
   where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
-- Rel IV **removed from conviction formula entirely** — informational display in popup only; NOT in LRR/HRR formula (v1.7)
-- Volume multiplier: Confirming × 1.15, Neutral × 1.00, Diverging × 0.80 (OBV-driven)
-- VIX regime multiplier (applied last): Investable(<19) × 1.10, Edgy(19–23) × 1.00, Choppy(24–29) × 0.90, Danger(≥30) × 0.80
+
+- **OBV Alignment multiplier (Layer 1)** — OBV pivot direction + OBV slope_trend agree with viewpoint:
+  - Aligned:    OBV pivot = Bullish AND slope_trend = increasing (Bullish viewpoint)
+                OBV pivot = Bearish AND slope_trend = decreasing (Bearish viewpoint) → **× 1.20**
+  - Misaligned: OBV pivot AND slope_trend both oppose viewpoint → **× 0.85**
+  - Neutral:    anything else → **× 1.00**
+
+- **Slope boost multiplier (Layer 2)** — only fires when Layer 1 aligned AND slope direction confirms:
+  - Bullish + aligned + obv_slope = rising  → **× 1.17**
+  - Bearish + aligned + obv_slope = falling → **× 1.17**
+  - Otherwise → **× 1.00**
+
+- **OBV signals computed:**
+  - `obv_dir`: pivot-based OBV direction (bar_window=9) — existing, drives vol_signal display
+  - `obv_ma20`: 20-period SMA of OBV series
+  - `obv_slope`: sign of 3-bar rate of change on OBV MA20 — `rising` | `falling` | `flat`
+    `slope_now = obv_ma20[-1] - obv_ma20[-4]`
+  - `obv_slope_trend`: acceleration — `increasing` | `decreasing` | `flat`
+    `slope_prev = obv_ma20[-2] - obv_ma20[-5]`; compare slope_now vs slope_prev
+
+- **Range: ~30 (floor) – ~70 (ceiling)** — current phase
+  - Floor: `50 × 0.70 × 0.85 × 1.00 = 29.75`
+  - Ceiling: `50 × 1.00 × 1.20 × 1.17 = 70.2`
+
+- **Alert threshold: conviction ≥ 65** (≈ 93% of ceiling; H condition removed)
+
+- **Deferred to later phases:** VIX regime multiplier, IV vs realized vol / option skew (per asset class), quad outlook
+- **`vol_signal`** (Confirming/Diverging/Neutral) still computed and stored for popup display — no longer drives a multiplier
+- Old weights history: v1.6: H_trade×0.65 + H_trend×0.35; v1.7: H_eff×100 + prox boost + OBV mult + VIX mult — all superseded
 
 ### Bollinger Band LRR/HRR — v1.8 Formula (MA20 close center + close STD + ATR buffer)
 - **Supersedes:** v1.7 H-modulated k_tight formula and v1.8-interim TP-center formula. All prior sigma/anchor/bc_range/MA20_TP formulas obsolete.
@@ -956,44 +989,59 @@ def dfa(prices, window):
     # H > 0.5 = trending, H < 0.5 = mean-reverting, H = 0.5 = random walk
 ```
 
-### Conviction Score Formula — Phase 6 (H_eff + Proximity + OBV + VIX Regime)
+### Conviction Score Formula — v1.8+ (Base 50 + Proximity + OBV Alignment + Slope Boost)
 ```
-H_eff (directionally-appropriate Hurst):
-  Commodities / FX (excl. /ZN): H_trend_up (Bullish) or H_trend_down (Bearish)
-  All others:                    H_trend (symmetric 252-day DFA)
-  Fallback:                      H_trend if asymmetric values unavailable
+H completely removed from conviction formula.
+H is still calculated and stored for regime classification display only:
+  H < 0.45 → mean-reverting regime (use oscillators: RSI, Stochastics)
+  H > 0.55 → trending regime (use trend-following: MA, momentum)
 
 Base score:
-  base = H_eff × 100
+  base = 50   (viewpoint alignment is the gate — trade+trend both agree)
 
 Proximity boost (direction-aware — peaks at entry zone):
   Bullish: prox = 1 - (close - trade_lrr) / (trade_hrr - trade_lrr)   # 1.0 at LRR, 0.0 at HRR
   Bearish: prox = (close - trade_lrr) / (trade_hrr - trade_lrr)        # 1.0 at HRR, 0.0 at LRR
   Clamp:   prox = max(0.0, min(1.0, prox))
 
-  conviction_raw = base × (0.70 + 0.30 × prox)
-    → At ideal entry (prox = 1.0): conviction_raw = base × 1.00  (full boost)
-    → At opposite extreme (prox = 0.0): conviction_raw = base × 0.70  (70% floor)
+  conviction_raw = base × (0.70 + 0.30 × prox)   → range 35–50
 
-Rel IV removed from conviction formula entirely (v1.7) — informational popup only.
+OBV Signals:
+  obv_ma20        = 20-period SMA of the OBV series
+  obv_slope       = sign of 3-bar ROC: obv_ma20[-1] - obv_ma20[-4]
+                    'rising' | 'falling' | 'flat'
+  obv_slope_trend = acceleration: slope_now vs slope_prev (obv_ma20[-2] - obv_ma20[-5])
+                    'increasing' | 'decreasing' | 'flat'
 
-Volume Multiplier (OBV pivot direction vs Trade Dir):
-  Confirming  → × 1.15   Vol Direction matches Trade Dir
-  Neutral     → × 1.00   Vol Direction Neutral or mixed
-  Diverging   → × 0.80   Vol Direction opposes Trade Dir
+OBV Alignment Multiplier (Layer 1):
+  Aligned:    OBV pivot=Bullish AND slope_trend=increasing  (Bullish viewpoint)
+              OBV pivot=Bearish AND slope_trend=decreasing  (Bearish viewpoint) → × 1.20
+  Misaligned: both oppose viewpoint → × 0.85
+  Neutral:    anything else → × 1.00
 
-  conviction_obv = conviction_raw × obv_multiplier
+  conviction_align = conviction_raw × alignment_mult
 
-VIX Regime Multiplier (applied last — Phase 6):
-  Investable (VIX < 19)  → × 1.10
-  Edgy       (19–23)     → × 1.00
-  Choppy     (24–29)     → × 0.90
-  Danger     (≥ 30)      → × 0.80
+Slope Boost Multiplier (Layer 2 — only when Layer 1 aligned):
+  Bullish + aligned + obv_slope=rising  → × 1.17
+  Bearish + aligned + obv_slope=falling → × 1.17
+  Otherwise → × 1.00
 
-  conviction_final = conviction_obv × vix_mult
+  conviction_final = conviction_align × slope_boost
                    = min(conviction_final, 100.0)   # hard cap
 
+Range: ~30 (floor) – ~70 (ceiling, current phase)
+  Floor:   50 × 0.70 × 0.85 × 1.00 = 29.75
+  Ceiling: 50 × 1.00 × 1.20 × 1.17 = 70.2
+
+Alert threshold: conviction >= 65 (H condition removed)
+
 CRITICAL: Conviction is BLANK (not calculated) when Viewpoint = Neutral
+
+Deferred to later phases: VIX regime multiplier, IV vs realized vol / option skew
+(per asset class), quad outlook — these will push ceiling toward 100.
+
+vol_signal (Confirming/Diverging/Neutral) still computed and stored for popup display.
+It no longer drives a conviction multiplier.
 ```
 
 **Tail/Long Term H (756-day):** calculated and stored, displayed in popup as context only.
@@ -1001,7 +1049,7 @@ Not used in conviction formula.
 
 ### Direction Determination — Pivots Only (H has NO role)
 
-**H does not determine direction. H drives conviction and LRR position only.**
+**H does not determine direction. H is stored for regime classification display only (v1.8+: H removed from conviction formula and band width).**
 
 ```python
 # Direction check — pivot engine pre-handles B-based breaks when d_extended; _compute_direction

@@ -1,16 +1,22 @@
 """
-Conviction Engine — v1.7
+Conviction Engine — v1.8
 LRR / HRR calculation + Conviction Score for each ticker / timeframe.
 
-Trade timeframe:  Bollinger Band framework (MA20 ± k×STD20, k driven by Hurst).
+Trade timeframe:  Bollinger Band framework (MA20 ± k×STD20).
+  k_wide  = 2.0  (fixed — standard 2σ BB, target/exit side)
+  k_tight = 0.0  (fixed — entry side collapses to MA20 exactly)
+  H is NOT used in band width. H drives conviction score and regime
+  classification only: H < 0.45 → mean-reverting (use oscillators);
+  H > 0.55 → trending (use trend-following indicators).
+
 Trend timeframe:  Single MA100 level — floor (uptrend) or ceiling (downtrend).
 Tail/LT timeframe: Single MA200 level — structural floor or ceiling.
 
 Reads from:
-  - signal_hurst   (h_trade, h_trend, h_lt)
+  - signal_hurst   (h_trade, h_trend, h_lt, h_trend_up, h_trend_down)
   - signal_pivots  (pivot_a/b/c/d, structural_state)
-  - price_cache    (close, ma20, std20, ma20_regime, ma100, ma200, history_json,
-                    volume_history_json)
+  - price_cache    (close, ma20, std20, ma20_regime, ma100, ma200, atr,
+                    history_json, volume_history_json)
 
 Never calls yfinance directly.
 """
@@ -73,8 +79,81 @@ def _obv_direction(closes: list, volumes: list, bar_window: int = 9) -> str:
     return "Neutral"
 
 
-def _volume_multiplier(vol_signal: str) -> float:
-    return {"Confirming": 1.15, "Diverging": 0.80}.get(vol_signal, 1.00)
+def _build_obv_ma20(closes: list, volumes: list) -> list:
+    """Build OBV series then compute its 20-period simple moving average."""
+    obv = _build_obv(closes, volumes)
+    if len(obv) < 20:
+        return []
+    return [sum(obv[i - 19 : i + 1]) / 20.0 for i in range(19, len(obv))]
+
+
+def _obv_slope_signals(obv_ma20: list, viewpoint: str,
+                       obv_dir: str) -> tuple:
+    """
+    Compute 3-bar OBV MA20 slope signals and derived multipliers.
+
+    obv_slope:       'rising' | 'falling' | 'flat'
+        Sign of the 3-bar rate of change on the OBV MA20.
+        slope_now = obv_ma20[-1] - obv_ma20[-4]  (current vs 3 bars ago)
+
+    obv_slope_trend: 'increasing' | 'decreasing' | 'flat'
+        Acceleration — whether the 3-bar slope itself is growing or shrinking.
+        slope_prev = obv_ma20[-2] - obv_ma20[-5]  (prior 3-bar window)
+
+    Alignment (Layer 1):
+        Aligned   — OBV pivot AND slope_trend both agree with viewpoint direction
+                    Bullish: obv_dir=Bullish AND slope_trend=increasing
+                    Bearish: obv_dir=Bearish AND slope_trend=decreasing
+        Misaligned — both oppose viewpoint
+        Neutral   — everything else
+
+    alignment_mult: 1.20 (aligned) | 0.85 (misaligned) | 1.00 (neutral)
+
+    Slope boost (Layer 2 — only when aligned):
+        Bullish + rising  → 1.17
+        Bearish + falling → 1.17
+        Otherwise         → 1.00
+
+    Returns (obv_slope, obv_slope_trend, alignment_mult, slope_boost).
+    Requires len(obv_ma20) >= 6.
+    """
+    if len(obv_ma20) < 6:
+        return "flat", "flat", 1.00, 1.00
+
+    slope_now  = obv_ma20[-1] - obv_ma20[-4]   # 3-bar rate of change
+    slope_prev = obv_ma20[-2] - obv_ma20[-5]   # prior 3-bar window
+
+    obv_slope = ("rising"  if slope_now > 0 else
+                 "falling" if slope_now < 0 else "flat")
+
+    obv_slope_trend = ("increasing" if slope_now > slope_prev else
+                       "decreasing" if slope_now < slope_prev else "flat")
+
+    # Layer 1 — alignment between OBV pivot, slope_trend, and viewpoint
+    aligned = (
+        (viewpoint == "Bullish" and obv_dir == "Bullish"
+         and obv_slope_trend == "increasing") or
+        (viewpoint == "Bearish" and obv_dir == "Bearish"
+         and obv_slope_trend == "decreasing")
+    )
+    misaligned = (
+        (viewpoint == "Bullish" and obv_dir == "Bearish"
+         and obv_slope_trend == "decreasing") or
+        (viewpoint == "Bearish" and obv_dir == "Bullish"
+         and obv_slope_trend == "increasing")
+    )
+
+    alignment_mult = 1.20 if aligned else 0.85 if misaligned else 1.00
+
+    # Layer 2 — slope direction boost (only fires when Layer 1 aligned)
+    slope_boost = 1.00
+    if aligned:
+        if viewpoint == "Bullish" and obv_slope == "rising":
+            slope_boost = 1.17
+        elif viewpoint == "Bearish" and obv_slope == "falling":
+            slope_boost = 1.17
+
+    return obv_slope, obv_slope_trend, alignment_mult, slope_boost
 
 
 ASYMMETRIC_H_ASSET_CLASSES = {"Commodities", "Foreign Exchange"}
@@ -366,29 +445,28 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
     return lrr_warn, hrr_warn
 
 
-# ── Conviction Score (v1.7 spec §2.9) ────────────────────────────────────────
+# ── Conviction Score (v1.8+) ──────────────────────────────────────────────────
 
-def compute_conviction(h_trend: float | None,
-                       vol_signal: str, close: float,
+def compute_conviction(close: float,
                        trade_lrr: float | None, trade_hrr: float | None,
-                       trade_dir: str,
-                       db=None) -> tuple:
+                       trade_dir: str, viewpoint: str,
+                       obv_dir: str, obv_ma20: list) -> tuple:
     """
-    Conviction formula (H_trend only — single reliable H source):
-      base             = H_trend × 100
-      prox_boost       = 0.70 + 0.30 × prox   (direction-aware proximity)
-      conviction_raw   = base × prox_boost
-      conviction_obv   = conviction_raw × obv_multiplier   (1.15 / 1.00 / 0.80)
-      conviction_final = conviction_obv × vix_mult          (1.10 / 1.00 / 0.90 / 0.80)
+    Conviction formula — H removed as base (v1.8+).
+
+      base             = 50   (viewpoint alignment is the gate — trade+trend agree)
+      conviction_raw   = base × (0.70 + 0.30 × prox)   → range 35–50
+      conviction_align = conviction_raw × alignment_mult  (1.20 / 0.85 / 1.00)
+      conviction_final = conviction_align × slope_boost   (1.17 / 1.00)
                        = min(conviction_final, 100.0)
 
-    Returns (conviction_final: float | None, vix_zone: str).
+    Range: ~30 (floor) – ~70 (ceiling, current phase)
+    Deferred: VIX regime multiplier, IV regime, quad outlook (later phases)
+
+    Returns (conviction_final, obv_slope, obv_slope_trend).
     CRITICAL: caller must blank conviction when Viewpoint = Neutral.
     """
-    if h_trend is None:
-        return None, "Unknown"
-
-    base = h_trend * 100.0
+    base = 50.0
 
     prox = 0.5   # neutral default when LRR/HRR unavailable
     if (trade_lrr is not None and trade_hrr is not None
@@ -401,14 +479,16 @@ def compute_conviction(h_trend: float | None,
         prox = max(0.0, min(1.0, prox))
 
     conviction_raw = base * (0.70 + 0.30 * prox)
-    conviction_obv = conviction_raw * _volume_multiplier(vol_signal)
 
-    # Task 6.2b — VIX regime multiplier applied last
-    vix_mult, vix_zone = get_vix_regime_multiplier(db) if db is not None else (1.00, "Unknown")
-    conviction_final = conviction_obv * vix_mult
+    obv_slope, obv_slope_trend, alignment_mult, slope_boost = _obv_slope_signals(
+        obv_ma20, viewpoint, obv_dir,
+    )
+
+    conviction_align = conviction_raw * alignment_mult
+    conviction_final = conviction_align * slope_boost
     conviction_final = min(max(conviction_final, 0.0), 100.0)
 
-    return round(conviction_final, 2), vix_zone
+    return round(conviction_final, 2), obv_slope, obv_slope_trend
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -455,11 +535,13 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     ma20_regime = cache_row.ma20_regime        if cache_row else None
     atr         = float(cache_row.atr)     if (cache_row and getattr(cache_row, 'atr',     None) is not None) else None
 
-    # OBV pivot direction — compared against Trade Dir for vol_signal
+    # OBV pivot direction + MA20 slope signals
     if prices and volumes and len(prices) == len(volumes):
-        obv_dir = _obv_direction(prices, volumes, bar_window=9)
+        obv_dir   = _obv_direction(prices, volumes, bar_window=9)
+        obv_ma20  = _build_obv_ma20(prices, volumes)
     else:
-        obv_dir = "Neutral"
+        obv_dir  = "Neutral"
+        obv_ma20 = []
 
     h_map = {
         "trade": getattr(hurst_row, "h_trade", None) if hurst_row else None,
@@ -581,31 +663,34 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
     obv_confirming = vol_signal == "Confirming"
 
-    # ── VIX regime — always fetched regardless of viewpoint ─────────────────
+    # ── VIX regime — fetched for display/storage; not applied to conviction yet ─
     _, vix_zone = get_vix_regime_multiplier(db) if db is not None else (1.00, "Unknown")
 
-    # Task 6.3 — effective H: directionally-appropriate for Commodities/FX
+    # ── Effective H — still computed for display and regime classification ────
+    # H < 0.45 → mean-reverting (oscillators); H > 0.55 → trending (MAs)
+    # H is NOT used in conviction math (v1.8+)
     h_eff = get_effective_h_trend(
         asset_class, ticker, viewpoint,
         h_trend, h_trend_up, h_trend_down,
     )
 
     # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
-    conviction = None
+    conviction    = None
+    obv_slope     = "flat"
+    obv_slope_trend = "flat"
     if viewpoint != "Neutral":
         trade_lrr = timeframe_results["trade"]["lrr"]
         trade_hrr = timeframe_results["trade"]["hrr"]
-        conviction, _ = compute_conviction(
-            h_eff, vol_signal,
-            price, trade_lrr, trade_hrr, trade_dir,
-            db=db,
+        conviction, obv_slope, obv_slope_trend = compute_conviction(
+            price, trade_lrr, trade_hrr, trade_dir, viewpoint,
+            obv_dir, obv_ma20,
         )
 
-    # ── Alert flag ⚡ ────────────────────────────────────────────────────────
+    # ── Alert flag ⚡ — fires when conviction reaches near-ceiling ───────────
+    # H removed from alert condition (v1.8+); threshold 65 = ~93% of 70 ceiling
     alert = bool(
-        h_eff is not None and h_eff > 0.55 and
         viewpoint != "Neutral" and
-        conviction is not None and conviction >= 70.0
+        conviction is not None and conviction >= 65.0
     )
 
     logger.info(
