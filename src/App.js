@@ -896,7 +896,7 @@ function Dashboard() {
               <SortHdr label="DESCRIPTION" k="description" />
               {/* Change 1 — CLOSE / TREND before signal columns; ASSET CLASS / SECTOR at far right */}
               <SortHdr label="CLOSE"       k="close" align="right" />
-              <th style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" }}>TREND</th>
+              <th title="60-day price sparkline" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
                 title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Viewpoint 50 × (0.70 + 0.30 × prox) × OBV mult × OBV boost" />
@@ -1015,7 +1015,7 @@ function Dashboard() {
                              return row.riskReversal > 0 ? "#00e5a0" : row.riskReversal < -0.02 ? "#ff4d6d" : "#8899aa";
                            })(),
                            false,
-                           "25Δ Call IV − 25Δ Put IV\nPositive = forward skew = institutional call buying = bullish\nNegative = normal smirk = downside protection bid"],
+                           "25Δ Call IV − 25Δ Put IV\nPositive = calls bid over puts = bullish (market expects rally)\nNegative = puts bid over calls = normal for equities (downside protection)\nFlat (near 0) = fear has evaporated = bullish relative signal for equities\nUse Skew Rank for the actionable signal — it shows where current skew sits vs history"],
           ["Skew Rank",    row.skewRank != null ? `${row.skewRank}%` : "—",
                            (() => {
                              if (row.skewRank == null) return "#8899aa";
