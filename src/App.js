@@ -896,7 +896,7 @@ function Dashboard() {
               <SortHdr label="DESCRIPTION" k="description" />
               {/* Change 1 — CLOSE / TREND before signal columns; ASSET CLASS / SECTOR at far right */}
               <SortHdr label="CLOSE"       k="close" align="right" />
-              <th title="60-day price sparkline" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
+              <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
                 title="Conviction %: Green ≥70% · Amber 50–69% · Grey <50% · Blank when Neutral&#10;Viewpoint 50 × (0.70 + 0.30 × prox) × OBV mult × OBV boost" />
