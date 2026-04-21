@@ -101,18 +101,18 @@ def _obv_slope_signals(obv_ma20: list, viewpoint: str,
         slope_prev = obv_ma20[-2] - obv_ma20[-5]  (prior 3-bar window)
 
     Alignment (Layer 1):
-        Aligned   — OBV pivot AND slope_trend both agree with viewpoint direction
-                    Bullish: obv_dir=Bullish AND slope_trend=increasing
-                    Bearish: obv_dir=Bearish AND slope_trend=decreasing
+        Aligned   — OBV pivot direction AND OBV MA20 slope both confirm viewpoint
+                    Bullish: obv_dir=Bullish AND obv_slope=rising
+                    Bearish: obv_dir=Bearish AND obv_slope=falling
         Misaligned — both oppose viewpoint
         Neutral   — everything else
 
     alignment_mult: 1.20 (aligned) | 0.85 (misaligned) | 1.00 (neutral)
 
     Slope boost (Layer 2 — only when aligned):
-        Bullish + rising  → 1.17
-        Bearish + falling → 1.17
-        Otherwise         → 1.00
+        Bullish + slope_trend=increasing → 1.17   (acceleration — early in the move)
+        Bearish + slope_trend=decreasing → 1.17
+        Otherwise                        → 1.00
 
     Returns (obv_slope, obv_slope_trend, alignment_mult, slope_boost).
     Requires len(obv_ma20) >= 6.
@@ -129,28 +129,28 @@ def _obv_slope_signals(obv_ma20: list, viewpoint: str,
     obv_slope_trend = ("increasing" if slope_now > slope_prev else
                        "decreasing" if slope_now < slope_prev else "flat")
 
-    # Layer 1 — alignment between OBV pivot, slope_trend, and viewpoint
+    # Layer 1 — OBV pivot + MA20 slope both confirm viewpoint direction
     aligned = (
         (viewpoint == "Bullish" and obv_dir == "Bullish"
-         and obv_slope_trend == "increasing") or
+         and obv_slope == "rising") or
         (viewpoint == "Bearish" and obv_dir == "Bearish"
-         and obv_slope_trend == "decreasing")
+         and obv_slope == "falling")
     )
     misaligned = (
         (viewpoint == "Bullish" and obv_dir == "Bearish"
-         and obv_slope_trend == "decreasing") or
+         and obv_slope == "falling") or
         (viewpoint == "Bearish" and obv_dir == "Bullish"
-         and obv_slope_trend == "increasing")
+         and obv_slope == "rising")
     )
 
     alignment_mult = 1.20 if aligned else 0.85 if misaligned else 1.00
 
-    # Layer 2 — slope direction boost (only fires when Layer 1 aligned)
+    # Layer 2 — slope acceleration boost (only fires when Layer 1 aligned)
     slope_boost = 1.00
     if aligned:
-        if viewpoint == "Bullish" and obv_slope == "rising":
+        if viewpoint == "Bullish" and obv_slope_trend == "increasing":
             slope_boost = 1.17
-        elif viewpoint == "Bearish" and obv_slope == "falling":
+        elif viewpoint == "Bearish" and obv_slope_trend == "decreasing":
             slope_boost = 1.17
 
     return obv_slope, obv_slope_trend, alignment_mult, slope_boost

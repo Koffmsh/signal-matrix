@@ -311,15 +311,15 @@ Critical issues already resolved — do not reintroduce these bugs:
   ```
   where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
 
-- **OBV Alignment multiplier (Layer 1)** — OBV pivot direction + OBV slope_trend agree with viewpoint:
-  - Aligned:    OBV pivot = Bullish AND slope_trend = increasing (Bullish viewpoint)
-                OBV pivot = Bearish AND slope_trend = decreasing (Bearish viewpoint) → **× 1.20**
-  - Misaligned: OBV pivot AND slope_trend both oppose viewpoint → **× 0.85**
+- **OBV Alignment multiplier (Layer 1)** — OBV pivot direction + OBV MA20 slope both confirm viewpoint:
+  - Aligned:    OBV pivot = Bullish AND obv_slope = rising  (Bullish viewpoint)
+                OBV pivot = Bearish AND obv_slope = falling (Bearish viewpoint) → **× 1.20**
+  - Misaligned: OBV pivot AND obv_slope both oppose viewpoint → **× 0.85**
   - Neutral:    anything else → **× 1.00**
 
-- **Slope boost multiplier (Layer 2)** — only fires when Layer 1 aligned AND slope direction confirms:
-  - Bullish + aligned + obv_slope = rising  → **× 1.17**
-  - Bearish + aligned + obv_slope = falling → **× 1.17**
+- **Slope boost multiplier (Layer 2)** — only fires when Layer 1 aligned AND slope is accelerating (early in the move):
+  - Bullish + aligned + obv_slope_trend = increasing → **× 1.17**
+  - Bearish + aligned + obv_slope_trend = decreasing → **× 1.17**
   - Otherwise → **× 1.00**
 
 - **OBV signals computed:**
@@ -1043,16 +1043,16 @@ OBV Signals:
                     'increasing' | 'decreasing' | 'flat'
 
 OBV Alignment Multiplier (Layer 1):
-  Aligned:    OBV pivot=Bullish AND slope_trend=increasing  (Bullish viewpoint)
-              OBV pivot=Bearish AND slope_trend=decreasing  (Bearish viewpoint) → × 1.20
+  Aligned:    OBV pivot=Bullish AND obv_slope=rising   (Bullish viewpoint)
+              OBV pivot=Bearish AND obv_slope=falling  (Bearish viewpoint) → × 1.20
   Misaligned: both oppose viewpoint → × 0.85
   Neutral:    anything else → × 1.00
 
   conviction_align = conviction_raw × alignment_mult
 
-Slope Boost Multiplier (Layer 2 — only when Layer 1 aligned):
-  Bullish + aligned + obv_slope=rising  → × 1.17
-  Bearish + aligned + obv_slope=falling → × 1.17
+Slope Boost Multiplier (Layer 2 — only when Layer 1 aligned; acceleration = early in the move):
+  Bullish + aligned + obv_slope_trend=increasing → × 1.17
+  Bearish + aligned + obv_slope_trend=decreasing → × 1.17
   Otherwise → × 1.00
 
   conviction_final = conviction_align × slope_boost
@@ -1136,10 +1136,9 @@ Each LRR/HRR cell uses its own timeframe's direction for color — not the overa
 
 **No Diverging state.** Three states only: Bullish, Bearish, Neutral.
 
-### Alert Flag ⚡ Trigger (ALL THREE must be true)
-1. H_eff > 0.55 (effective H — asymmetric for Commodities/FX, symmetric H_trend for all others)
-2. Viewpoint = Bullish OR Bearish (never fires on Neutral)
-3. Final Conviction ≥ 70% (after all multipliers including VIX regime)
+### Alert Flag ⚡ Trigger (v1.8+ — TWO conditions, H removed)
+1. Viewpoint = Bullish OR Bearish (never fires on Neutral)
+2. Final Conviction ≥ 65 (H condition removed; 65 ≈ 93% of the ~70 ceiling)
 
 ### The Four Trading Scenarios
 
