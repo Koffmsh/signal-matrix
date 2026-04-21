@@ -1664,7 +1664,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `ad3d728` — docs: update CLAUDE.md — drop MA20_TP, add ATR, alembic SQLite fallback
   - `7f1eeda` — feat: conviction engine v1.8 — remove H, OBV slope layers, auto_adjust fix
   - `3432b45` — feat: volatility tracking — HV30/HV90, IV30, risk reversal, skew rank, P/C ratio
-  - (next) — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
+  - `8afa3d3` — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
