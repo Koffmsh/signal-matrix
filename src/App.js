@@ -149,6 +149,7 @@ function mergeRealData(mockRow, realDataMap) {
     riskReversal:   real.risk_reversal   ?? null,
     skewRank:       real.skew_rank       ?? null,
     putCallRatio:   real.put_call_ratio  ?? null,
+    vrpRank:        real.vrp_rank        ?? null,
   };
 }
 
@@ -998,7 +999,7 @@ function Dashboard() {
                            "21-day (≈30 calendar day) annualized realized volatility"],
           ["HV90",         row.hv90   != null ? `${(row.hv90   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,
                            "63-day (≈90 calendar day) annualized realized volatility"],
-          ["Vol Premium",  (() => {
+          ["VRP",          (() => {
                              if (row.iv30 == null || row.hv30 == null) return "—";
                              const vp = (row.iv30 - row.hv30) * 100;
                              return `${vp >= 0 ? "+" : ""}${vp.toFixed(1)}%`;
@@ -1008,7 +1009,14 @@ function Dashboard() {
                              return (row.iv30 - row.hv30) < 0 ? "#00e5a0" : "#f0b429";
                            })(),
                            false,
-                           "IV30 − HV30 (vol risk premium)\nNegative = IV cheap vs realized = green\nPositive = IV expensive vs realized = amber"],
+                           "Volatility Risk Premium: IV30 − HV30\nNegative = IV cheap vs realized = options underpriced = green\nPositive = IV expensive vs realized = options overpriced = amber"],
+          ["VRP Rank",     row.vrpRank != null ? `${row.vrpRank}%` : "—",
+                           (() => {
+                             if (row.vrpRank == null) return "#8899aa";
+                             return row.vrpRank < 20 ? "#00e5a0" : row.vrpRank > 80 ? "#ff4d6d" : "#8899aa";
+                           })(),
+                           false,
+                           "VRP rank within 252-day rolling history\nLow = options historically cheap vs realized vol = green\nHigh = options historically expensive = red"],
           ["Risk Reversal", row.riskReversal != null ? `${(row.riskReversal * 100).toFixed(2)}%` : "—",
                            (() => {
                              if (row.riskReversal == null) return "#8899aa";

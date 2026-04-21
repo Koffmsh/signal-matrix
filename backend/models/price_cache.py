@@ -38,3 +38,4 @@ class PriceCache(Base):
     risk_reversal      = Column(Float,  nullable=True)    # 25Δ call IV - 25Δ put IV; positive = bullish forward skew
     skew_rank          = Column(Integer, nullable=True)   # RR rank within 252-day rolling history (0-100)
     put_call_ratio     = Column(Float,  nullable=True)    # total put OI / total call OI
+    vrp_rank           = Column(Integer, nullable=True)   # VRP rank within 252-day rolling history (0-100)

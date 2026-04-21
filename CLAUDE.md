@@ -292,7 +292,10 @@ Critical issues already resolved — do not reintroduce these bugs:
   - `> 1.2` = fear/capitulation (contrarian bullish); `< 0.6` = complacency
 - **iv_history renamed columns:** `rv21` → `hv30`, `rv63` → `hv90` (migration `k1a2b3c4d5e6`)
 - **iv_history new columns:** `call_iv_25d`, `put_iv_25d`, `risk_reversal`, `put_call_ratio` (migration `k1a2b3c4d5e6`)
-- **price_cache new columns:** `hv30`, `hv90`, `iv30`, `risk_reversal`, `skew_rank` (Integer), `put_call_ratio` (migration `l2b3c4d5e6f7`)
+- **iv_history `vol_premium` renamed to `vrp`** (migration `m3c4d5e6f7g8`) — VRP = IV30 − HV30; positive = options expensive vs realized; negative = cheap
+- **price_cache new columns:** `hv30`, `hv90`, `iv30`, `risk_reversal`, `skew_rank` (Integer), `put_call_ratio` (migration `l2b3c4d5e6f7`); `vrp_rank` Integer (migration `m3c4d5e6f7g8`)
+- **VRP (Volatility Risk Premium):** `vrp = IV30 − HV30`; stored in `iv_history.vrp` daily. Positive = options expensive vs realized vol; negative = options cheap. Renamed from `vol_premium`.
+- **VRP Rank:** rank of `vrp` within its own 252-day rolling history: `(vrp - min_252) / (max_252 - min_252) × 100`. Stored in `price_cache.vrp_rank` (Integer 0–100). Low = options historically cheap vs realized = green; High = historically expensive = red. Requires `_RANK_MIN_HISTORY = 30` observations. Computed by `_compute_vrp_rank()` in `schwab_options.py` (mirrors `_compute_skew_rank`).
 - **IV30 vs Schwab "Implied Volatility":** Our IV30 is constant-maturity 30-day interpolated ATM IV (TOS methodology). Schwab's "Implied Volatility" stat in the Options Statistics panel is front-month ATM IV without maturity adjustment — will differ by ~2-4% due to term structure. Both are correct; they measure different things. Constant-maturity is methodologically cleaner for cross-asset comparison.
 - **Idempotency:** checked against `iv_history` table (not `price_cache.iv_source`) — `iv_history` must be cleared to force re-fetch: `DELETE FROM iv_history WHERE iv_date = 'YYYY-MM-DD'`
 
@@ -632,7 +635,8 @@ signal-matrix/
 │   │       ├── j7e5f3g1h2i0_price_cache_add_atr.py          ← added price_cache.atr (14-day ATR)
 │   │       ├── 13fb636fe76a_price_cache_drop_tp_columns.py  ← dropped ma20_tp, std20_tp (±7pt SPX, negligible)
 │   │       ├── k1a2b3c4d5e6_iv_history_vol_rename_and_skew.py ← rv21→hv30, rv63→hv90; added call_iv_25d, put_iv_25d, risk_reversal, put_call_ratio
-│   │       └── l2b3c4d5e6f7_price_cache_add_vol_columns.py  ← added hv30, hv90, iv30, risk_reversal, skew_rank, put_call_ratio
+│   │       ├── l2b3c4d5e6f7_price_cache_add_vol_columns.py  ← added hv30, hv90, iv30, risk_reversal, skew_rank, put_call_ratio
+│   │       └── m3c4d5e6f7g8_iv_history_rename_vol_premium_vrp_add_vrp_rank.py  ← vol_premium→vrp; added price_cache.vrp_rank
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1435,6 +1439,7 @@ price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_reg
                 risk_reversal,              ← 25Δ call IV − 25Δ put IV; decimal (migration l2b3c4d5e6f7)
                 skew_rank,                  ← Integer 0–100: RR rank within 252-day history (migration l2b3c4d5e6f7)
                 put_call_ratio,             ← total put OI / total call OI across fetched chain (migration l2b3c4d5e6f7)
+                vrp_rank,                   ← Integer 0–100: VRP rank within 252-day history (migration m3c4d5e6f7g8)
                 UNIQUE(ticker)
 # NOTE: ma20_tp and std20_tp were added (f7a3b2c1d9e6) then dropped (13fb636fe76a) —
 #       MA20_TP center improvement over MA20(close) was negligible (±7 pts on SPX)
@@ -1608,7 +1613,8 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | IV30 | 30-day constant-maturity ATM implied vol % — Schwab only, "—" on proxy |
 | HV30 | 21-day (≈30 cal day) annualized realized vol % — Schwab only |
 | HV90 | 63-day (≈90 cal day) annualized realized vol % — Schwab only |
-| Vol Premium | IV30 − HV30; negative = options cheap vs realized = green; positive = expensive = amber |
+| VRP | IV30 − HV30 (Volatility Risk Premium); negative = options cheap vs realized = green; positive = expensive = amber |
+| VRP Rank | VRP rank within 252-day rolling history; `< 20` green (options historically cheap); `> 80` red (historically expensive) |
 | Risk Reversal | 25Δ call IV − 25Δ put IV; positive = forward skew = bullish (green); negative = normal smirk |
 | Skew Rank | RR rank within 252-day history; `< 20` green (puts cheap); `> 80` red (fear/puts expensive) |
 | P/C Ratio | Total put OI ÷ call OI; `> 1.2` green (fear/contrarian bullish); `< 0.6` red (complacency) |
@@ -1658,6 +1664,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `ad3d728` — docs: update CLAUDE.md — drop MA20_TP, add ATR, alembic SQLite fallback
   - `7f1eeda` — feat: conviction engine v1.8 — remove H, OBV slope layers, auto_adjust fix
   - `3432b45` — feat: volatility tracking — HV30/HV90, IV30, risk reversal, skew rank, P/C ratio
+  - (next) — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git

@@ -312,7 +312,7 @@ def _upsert_iv_history(
     risk_reversal: float | None, put_call_ratio: float | None,
 ) -> None:
     """Write one IV observation to iv_history (no commit — batch at end)."""
-    vol_premium = round(implied_vol - hv30, 6) if (implied_vol is not None and hv30 is not None) else None
+    vrp = round(implied_vol - hv30, 6) if (implied_vol is not None and hv30 is not None) else None
 
     existing = db.query(IVHistory).filter(
         IVHistory.ticker  == ticker,
@@ -322,7 +322,7 @@ def _upsert_iv_history(
         existing.implied_vol    = implied_vol
         existing.hv30           = hv30
         existing.hv90           = hv90
-        existing.vol_premium    = vol_premium
+        existing.vrp            = vrp
         existing.call_iv_25d    = call_iv_25d
         existing.put_iv_25d     = put_iv_25d
         existing.risk_reversal  = risk_reversal
@@ -334,7 +334,7 @@ def _upsert_iv_history(
             implied_vol     = implied_vol,
             hv30            = hv30,
             hv90            = hv90,
-            vol_premium     = vol_premium,
+            vrp             = vrp,
             call_iv_25d     = call_iv_25d,
             put_iv_25d      = put_iv_25d,
             risk_reversal   = risk_reversal,
@@ -398,6 +398,34 @@ def _compute_skew_rank(db: Session, ticker: str, today_rr: float) -> int | None:
     return max(0, min(100, int(round(rank))))
 
 
+def _compute_vrp_rank(db: Session, ticker: str, today_vrp: float) -> int | None:
+    """
+    Compute VRP Rank (0-100) — vol risk premium rank within its own 252-day history.
+    High rank = IV expensive vs realized (historically elevated premium) = red.
+    Low rank  = IV cheap vs realized = green (options underpriced vs actual moves).
+    Returns None when fewer than _RANK_MIN_HISTORY observations exist.
+    Today's row must already be flushed before calling this.
+    """
+    history = (
+        db.query(IVHistory)
+        .filter(IVHistory.ticker == ticker, IVHistory.vrp.isnot(None))
+        .order_by(IVHistory.iv_date.desc())
+        .limit(252)
+        .all()
+    )
+    vrp_values = [row.vrp for row in history]
+    if len(vrp_values) < _RANK_MIN_HISTORY:
+        return None
+
+    vrp_min = min(vrp_values)
+    vrp_max = max(vrp_values)
+    if vrp_max <= vrp_min:
+        return None
+
+    rank = (today_vrp - vrp_min) / (vrp_max - vrp_min) * 100
+    return max(0, min(100, int(round(rank))))
+
+
 def _update_price_cache_iv(
     db: Session, ticker: str,
     iv_percentile: int, iv_source: str,
@@ -407,6 +435,7 @@ def _update_price_cache_iv(
     risk_reversal: float | None = None,
     skew_rank: int | None = None,
     put_call_ratio: float | None = None,
+    vrp_rank: int | None = None,
 ) -> None:
     """Overwrite all volatility fields on the price_cache row (no commit)."""
     row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
@@ -419,6 +448,7 @@ def _update_price_cache_iv(
         row.risk_reversal  = risk_reversal
         row.skew_rank      = skew_rank
         row.put_call_ratio = put_call_ratio
+        row.vrp_rank       = vrp_rank
 
 
 def _mark_proxy(db: Session, ticker: str) -> None:
@@ -496,6 +526,9 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             call_iv_25d, put_iv_25d, risk_reversal = _extract_25d_skew(data)
             put_call_ratio = _extract_put_call_ratio(data)
 
+            # Compute VRP = IV30 - HV30
+            vrp = round(implied_vol - hv30, 6) if (implied_vol is not None and hv30 is not None) else None
+
             # Write to iv_history (today's row included in rank calcs)
             _upsert_iv_history(
                 db, ticker, today, implied_vol, hv30, hv90,
@@ -503,9 +536,10 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             )
             db.flush()
 
-            # Compute IV Rank and Skew Rank
+            # Compute IV Rank, Skew Rank, and VRP Rank
             iv_pct    = _compute_iv_percentile(db, ticker, implied_vol)
             skew_rank = _compute_skew_rank(db, ticker, risk_reversal) if risk_reversal is not None else None
+            vrp_rank  = _compute_vrp_rank(db, ticker, vrp) if vrp is not None else None
 
             if iv_pct is not None:
                 _update_price_cache_iv(
@@ -513,6 +547,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
                     iv30=implied_vol, hv30=hv30, hv90=hv90,
                     risk_reversal=risk_reversal,
                     skew_rank=skew_rank, put_call_ratio=put_call_ratio,
+                    vrp_rank=vrp_rank,
                 )
             else:
                 # Warmup — fall back to Yahoo proxy for rel_iv display
@@ -529,13 +564,14 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
                     iv30=implied_vol, hv30=hv30, hv90=hv90,
                     risk_reversal=risk_reversal,
                     skew_rank=skew_rank, put_call_ratio=put_call_ratio,
+                    vrp_rank=vrp_rank,
                 )
                 logger.debug(f"IV: {ticker} warmup — using proxy rel_iv={proxy_pct}")
 
             fetched += 1
             logger.debug(
-                f"IV: {ticker} iv={implied_vol:.4f} hv30={hv30} rr={risk_reversal} "
-                f"pcr={put_call_ratio} iv_pct={iv_pct}"
+                f"IV: {ticker} iv={implied_vol:.4f} hv30={hv30} vrp={vrp} rr={risk_reversal} "
+                f"pcr={put_call_ratio} iv_pct={iv_pct} vrp_rank={vrp_rank}"
             )
 
         except Exception as e:
