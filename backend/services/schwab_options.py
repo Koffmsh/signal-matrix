@@ -92,6 +92,72 @@ def _normalize_iv(vol) -> float | None:
     return vol / 100.0 if vol > 2.0 else vol
 
 
+def _iv_from_mark(mark: float, S: float, K: float, T: float, is_call: bool) -> float | None:
+    """
+    Compute implied volatility from option mark price via BS inversion (bisection).
+    Pure Python — no scipy required. r=0 approximation (adequate for <3-month options).
+
+    Returns IV as a decimal (e.g. 0.35 = 35%), or None if computation fails.
+    Useful when Schwab omits the `volatility` field for OTM options.
+    """
+    import math
+
+    if mark <= 0 or S <= 0 or K <= 0 or T <= 0:
+        return None
+
+    # Intrinsic value floor
+    intrinsic = max(S - K, 0.0) if is_call else max(K - S, 0.0)
+    if mark < intrinsic - 0.01:
+        return None  # mark below intrinsic — bad quote
+
+    def _ncdf(x: float) -> float:
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    def _bs(sigma: float) -> float:
+        if sigma < 1e-9:
+            return intrinsic
+        sqrtT = math.sqrt(T)
+        d1 = (math.log(S / K) + 0.5 * sigma ** 2 * T) / (sigma * sqrtT)
+        d2 = d1 - sigma * sqrtT
+        if is_call:
+            return S * _ncdf(d1) - K * _ncdf(d2)
+        else:
+            return K * _ncdf(-d2) - S * _ncdf(-d1)
+
+    # Bisection over [0.001, 5.0]
+    lo, hi = 0.001, 5.0
+    if _bs(lo) > mark or _bs(hi) < mark:
+        return None  # mark out of solvable range
+
+    for _ in range(60):
+        mid = (lo + hi) * 0.5
+        if _bs(mid) < mark:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-7:
+            break
+
+    result = (lo + hi) * 0.5
+    return result if 0.005 <= result <= 4.0 else None
+
+
+def _option_iv(opt: dict, S: float, K: float, T: float, is_call: bool) -> float | None:
+    """
+    Extract IV from a single option contract dict.
+    Primary: use Schwab's pre-computed `volatility` field.
+    Fallback: compute from `mark` price via Black-Scholes inversion.
+    This handles the case where Schwab omits `volatility` for OTM options.
+    """
+    iv = _normalize_iv(opt.get("volatility"))
+    if iv is not None:
+        return iv
+    mark = opt.get("mark")
+    if mark is not None and float(mark) > 0:
+        return _iv_from_mark(float(mark), S, float(K), T, is_call)
+    return None
+
+
 def _atm_iv_for_exp(
     call_map: dict, put_map: dict, exp_key: str, underlying_price: float
 ) -> float | None:
@@ -231,7 +297,7 @@ def _extract_25d_skew(data: dict, atm_iv: float | None = None) -> tuple:
             dist = abs(float(strike) - K_call_25d)
             if dist < best_call_dist:
                 for opt in opts:
-                    iv = _normalize_iv(opt.get("volatility"))
+                    iv = _option_iv(opt, underlying_price, float(strike), T, is_call=True)
                     if iv is not None:
                         best_call_iv   = iv
                         best_call_dist = dist
@@ -241,7 +307,7 @@ def _extract_25d_skew(data: dict, atm_iv: float | None = None) -> tuple:
             dist = abs(float(strike) - K_put_25d)
             if dist < best_put_dist:
                 for opt in opts:
-                    iv = _normalize_iv(opt.get("volatility"))
+                    iv = _option_iv(opt, underlying_price, float(strike), T, is_call=False)
                     if iv is not None:
                         best_put_iv   = iv
                         best_put_dist = dist
