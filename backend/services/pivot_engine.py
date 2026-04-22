@@ -48,6 +48,15 @@ TIMEFRAMES = {
     "lt":    50,
 }
 
+# Max bars to look back when selecting A (the origin pivot of the structure).
+# Prevents the engine from anchoring to a pivot that is too old to be relevant.
+# None = no limit (LT structures are inherently long-dated).
+_MAX_A_LOOKBACK = {
+    "trade":  60,
+    "trend": 150,
+    "lt":    None,
+}
+
 
 # ── Price fetch from cache ────────────────────────────────────────────────────
 
@@ -98,72 +107,74 @@ def find_pivot_highs_lows(prices: list, bar_window: int):
 
 def _find_uptrend_abc(pivot_highs: list, pivot_lows: list):
     """
-    Uptrend: A = pivot low, B = pivot high, C = pivot low (C > A).
-    Walk backwards from the most recent pivot low as C candidate.
-    For each (C, B) pair, try all A candidates (not just the most recent)
-    so that a valid C > A match is found even when the nearest A is above C.
-    Returns dict or None.
+    Uptrend: A = lowest confirmed pivot low in the lookback window.
+             B = first confirmed pivot high after A.
+             C = first confirmed pivot low after B with C > A.
+
+    A always anchors at the most extreme low — once a lower confirmed pivot
+    exists, A advances and the older higher A is discarded.  This mirrors
+    the downtrend rule: you cannot retreat to a higher (less extreme) A.
+    update_c_dynamically walks C forward after the initial ABC is found.
     """
-    if len(pivot_lows) < 2 or len(pivot_highs) < 1:
+    if not pivot_lows or not pivot_highs:
         return None
 
-    for c_pos in range(len(pivot_lows) - 1, 0, -1):
-        c_idx, c_price = pivot_lows[c_pos]
+    # A = lowest confirmed pivot low in the window (origin of the uptrend)
+    a_idx, a_price = min(pivot_lows, key=lambda x: x[1])
 
-        # Most recent pivot high before C
-        b_candidates = [(i, p) for i, p in pivot_highs if i < c_idx]
-        if not b_candidates:
-            continue
-        b_idx, b_price = b_candidates[-1]
+    # B = first confirmed pivot high after A
+    b_candidates = [(i, p) for i, p in pivot_highs if i > a_idx]
+    if not b_candidates:
+        return None
+    b_idx, b_price = b_candidates[0]
 
-        # Try all pivot lows before B as A — newest first — stop at first C > A
-        a_candidates = [(i, p) for i, p in pivot_lows if i < b_idx]
-        if not a_candidates:
-            continue
-        for a_idx, a_price in reversed(a_candidates):
-            if c_price > a_price:   # uptrend confirmed: C higher than A
-                return dict(
-                    direction="uptrend",
-                    a=a_price, b=b_price, c=c_price,
-                    a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
-                )
+    # C = first confirmed pivot low after B with C > A
+    c_candidates = [(i, p) for i, p in pivot_lows if i > b_idx and p > a_price]
+    if not c_candidates:
+        return None
+    c_idx, c_price = c_candidates[0]
 
-    return None
+    return dict(
+        direction="uptrend",
+        a=a_price, b=b_price, c=c_price,
+        a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
+    )
 
 
 def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
     """
-    Downtrend: A = pivot high, B = pivot low, C = pivot high (C < A).
-    Walk backwards from the most recent pivot high as C candidate.
-    For each (C, B) pair, try all A candidates (not just the most recent)
-    so that a valid C < A match is found even when the nearest A is below C.
-    Returns dict or None.
+    Downtrend: A = highest confirmed pivot high in the lookback window.
+               B = first confirmed pivot low after A.
+               C = first confirmed pivot high after B with C < A.
+
+    A always anchors at the most extreme high — once a higher confirmed pivot
+    exists, A advances and the older lower A is discarded.  You cannot retreat
+    to a lower A when a higher confirmed pivot high is present in the window.
+    update_c_dynamically walks C forward after the initial ABC is found.
     """
-    if len(pivot_highs) < 2 or len(pivot_lows) < 1:
+    if not pivot_highs or not pivot_lows:
         return None
 
-    for c_pos in range(len(pivot_highs) - 1, 0, -1):
-        c_idx, c_price = pivot_highs[c_pos]
+    # A = highest confirmed pivot high in the window (origin of the downtrend)
+    a_idx, a_price = max(pivot_highs, key=lambda x: x[1])
 
-        # Most recent pivot low before C
-        b_candidates = [(i, p) for i, p in pivot_lows if i < c_idx]
-        if not b_candidates:
-            continue
-        b_idx, b_price = b_candidates[-1]
+    # B = first confirmed pivot low after A
+    b_candidates = [(i, p) for i, p in pivot_lows if i > a_idx]
+    if not b_candidates:
+        return None
+    b_idx, b_price = b_candidates[0]
 
-        # Try all pivot highs before B as A — newest first — stop at first C < A
-        a_candidates = [(i, p) for i, p in pivot_highs if i < b_idx]
-        if not a_candidates:
-            continue
-        for a_idx, a_price in reversed(a_candidates):
-            if c_price < a_price:   # downtrend confirmed: C lower than A
-                return dict(
-                    direction="downtrend",
-                    a=a_price, b=b_price, c=c_price,
-                    a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
-                )
+    # C = first confirmed pivot high after B with C < A
+    c_candidates = [(i, p) for i, p in pivot_highs if i > b_idx and p < a_price]
+    if not c_candidates:
+        return None
+    c_idx, c_price = c_candidates[0]
 
-    return None
+    return dict(
+        direction="downtrend",
+        a=a_price, b=b_price, c=c_price,
+        a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
+    )
 
 
 def _has_prior_break_confirmed(abc: dict, pivot_highs: list, pivot_lows: list,
@@ -518,13 +529,24 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
         logger.warning(f"Not enough pivots for {timeframe}: {len(pivot_highs)} highs, {len(pivot_lows)} lows")
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
-    abc = find_abc_structure(pivot_highs, pivot_lows, prices)
+    # Limit pivot candidates for A selection to the lookback window.
+    # Prevents the engine from anchoring to a pivot that is too old to be
+    # relevant while still using the full price history for D and break detection.
+    max_a_lookback = _MAX_A_LOOKBACK.get(timeframe)
+    if max_a_lookback is not None and len(prices) > max_a_lookback:
+        cutoff_idx = len(prices) - max_a_lookback
+        pivot_highs_abc = [(i, p) for i, p in pivot_highs if i >= cutoff_idx]
+        pivot_lows_abc  = [(i, p) for i, p in pivot_lows  if i >= cutoff_idx]
+    else:
+        pivot_highs_abc = pivot_highs
+        pivot_lows_abc  = pivot_lows
+
+    abc = find_abc_structure(pivot_highs_abc, pivot_lows_abc, prices)
 
     if abc is None:
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
     # Update C to the most recent confirmed structural level
-    abc = update_c_dynamically(abc, pivot_highs, pivot_lows)
 
     d_price, d_idx, state, d_extended = compute_d_and_state(abc, prices, timeframe)
 

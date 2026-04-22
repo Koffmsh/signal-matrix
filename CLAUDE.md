@@ -147,12 +147,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **States that force Neutral:** `BREAK_CONFIRMED` and `NO_STRUCTURE` only
 - **UPTREND_VALID, DOWNTREND_VALID, BREAK_OF_TRADE, BREAK_OF_TREND** all allow Bullish/Bearish direction
 
-### ABC Pivot Search — All A Candidates Tried (`pivot_engine.py`)
-- Old behavior: `_find_uptrend_abc` / `_find_downtrend_abc` used only the single nearest pivot low/high before B as A
-- When the nearest A is above C (uptrend) or below C (downtrend), a valid ABC exists with an older A — but the engine was moving to the next C candidate instead
-- **Fixed:** For each (C, B) pair, iterate all A candidates newest-first and stop at the first satisfying `C > A` (uptrend) or `C < A` (downtrend)
-- **Example:** SPX trend — engine was finding A=10/10/25 (6552.51) which is above C=11/20/25 (6538.76), causing the uptrend check to fail; correct A is 04/08/25 (4982.77); old engine fell back to a stale ABC (C=10/10/25, 111 trading days) and fired NO_STRUCTURE
-- **Rule:** Never assume the nearest A before B is the correct A — always scan all candidates
+### ABC Pivot Search — A Anchors at Most Extreme Confirmed Pivot (`pivot_engine.py`)
+- **Old behavior:** `_find_uptrend_abc` / `_find_downtrend_abc` used backward-walk (C newest-first) with all A candidates — could select a sub-extreme A when a more extreme confirmed pivot existed in the window
+- **Problem:** XLV trend — A=$158.77 (Nov 25) was selected even though $159.66 (Jan 7) and $160.20 (Feb 27) were higher confirmed pivot highs within the window. "You cannot go back to a lower A" when a higher confirmed high exists (downtrend). The correct structure was A=$160.20, B=$143.26, C=$149.67.
+- **Fixed:** Forward-walk from the most extreme confirmed pivot:
+  - Uptrend: `A = min(pivot_lows)` in window → B = first pivot high after A → C = first pivot low after B with C > A
+  - Downtrend: `A = max(pivot_highs)` in window → B = first pivot low after A → C = first pivot high after B with C < A
+  - A always anchors at the most extreme level — once a more extreme pivot exists, the older less-extreme A is discarded
+- **Rule:** A is always the most extreme confirmed pivot in the lookback window — never retreat to a less extreme A
+
+### A Lookback Window — `_MAX_A_LOOKBACK` (`pivot_engine.py`)
+- Limits how far back A can be selected, preventing the engine from anchoring to pivots irrelevant to the timeframe
+- **Values:** `trade=60 bars` (~3 months), `trend=150 bars` (~7.5 months), `lt=None` (no limit)
+- Applied in `compute_pivots_for_timeframe` by filtering `pivot_highs` / `pivot_lows` before passing to `find_abc_structure`
+- Full price history is still used for D computation and break detection — only the ABC search is constrained
+- Distinct from `_STALE_C_DAYS` (which discards a structure after C gets too old): A lookback prevents an old irrelevant A from being selected in the first place
+- **Rule:** Do not increase `_MAX_A_LOOKBACK["trade"]` above 60 bars — going back to September to anchor A for a 3-week trade timeframe is methodologically wrong
 
 ### Yahoo Finance `auto_adjust=False` — Actual Close Prices (`yahoo_finance.py`)
 - Old behavior: `yf.Ticker().history()` uses `auto_adjust=True` by default — silently adjusts all historical closes for dividends, making stored prices diverge from actual traded prices
