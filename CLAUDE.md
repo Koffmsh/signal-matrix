@@ -291,7 +291,7 @@ Critical issues already resolved — do not reintroduce these bugs:
   - Total put OI ÷ total call OI across all fetched strikes and expirations
   - `> 1.2` = fear/capitulation (contrarian bullish); `< 0.6` = complacency
 - **iv_history renamed columns:** `rv21` → `hv30`, `rv63` → `hv90` (migration `k1a2b3c4d5e6`)
-- **iv_history new columns:** `call_iv_25d`, `put_iv_25d`, `risk_reversal`, `put_call_ratio` (migration `k1a2b3c4d5e6`)
+- **iv_history new columns:** `call_iv_25d`, `put_iv_25d`, `risk_reversal`, `skew_rank`, `put_call_ratio` (migration `k1a2b3c4d5e6`; `skew_rank` added migration `08f62d15c8b7`)
 - **iv_history `vol_premium` renamed to `vrp`** (migration `m3c4d5e6f7g8`) — VRP = IV30 − HV30; positive = options expensive vs realized; negative = cheap
 - **price_cache new columns:** `hv30`, `hv90`, `iv30`, `risk_reversal`, `skew_rank` (Integer), `put_call_ratio` (migration `l2b3c4d5e6f7`); `vrp_rank` Integer (migration `m3c4d5e6f7g8`)
 - **VRP (Volatility Risk Premium):** `vrp = IV30 − HV30`; stored in `iv_history.vrp` daily. Positive = options expensive vs realized vol; negative = options cheap. Renamed from `vol_premium`.
@@ -636,7 +636,8 @@ signal-matrix/
 │   │       ├── 13fb636fe76a_price_cache_drop_tp_columns.py  ← dropped ma20_tp, std20_tp (±7pt SPX, negligible)
 │   │       ├── k1a2b3c4d5e6_iv_history_vol_rename_and_skew.py ← rv21→hv30, rv63→hv90; added call_iv_25d, put_iv_25d, risk_reversal, put_call_ratio
 │   │       ├── l2b3c4d5e6f7_price_cache_add_vol_columns.py  ← added hv30, hv90, iv30, risk_reversal, skew_rank, put_call_ratio
-│   │       └── m3c4d5e6f7g8_iv_history_rename_vol_premium_vrp_add_vrp_rank.py  ← vol_premium→vrp; added price_cache.vrp_rank
+│   │       ├── m3c4d5e6f7g8_iv_history_rename_vol_premium_vrp_add_vrp_rank.py  ← vol_premium→vrp; added price_cache.vrp_rank
+│   │       └── 08f62d15c8b7_iv_history_add_skew_rank.py                        ← added iv_history.skew_rank (Integer 0–100)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1422,6 +1423,17 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 vix_regime,                 ← Phase 6: 'Investable' | 'Edgy' | 'Choppy' | 'Danger' (from VIX at calc time)
                 calculated_at
                 UNIQUE(ticker, timeframe)
+
+iv_history:     ticker, iv_date,
+                implied_vol,                ← IV30 (30d constant-maturity ATM IV)
+                hv30, hv90,                 ← annualized realized vol (21-day, 63-day)
+                vrp,                        ← IV30 − HV30 (vol risk premium)
+                call_iv_25d, put_iv_25d,    ← raw 25Δ component IVs
+                risk_reversal,              ← call_iv_25d − put_iv_25d
+                skew_rank,                  ← Integer 0–100: RR rank within 252-day history (migration 08f62d15c8b7)
+                put_call_ratio,             ← total put OI / total call OI
+                created_at
+                UNIQUE(ticker, iv_date)
 
 price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_regime,
                 rel_iv, iv_source, data_source, cache_date,

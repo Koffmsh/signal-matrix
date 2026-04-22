@@ -15,6 +15,7 @@ class IVHistory(Base):
     call_iv_25d    = Column(Float, nullable=True)    # IV of 25Δ OTM call, 30d constant maturity
     put_iv_25d     = Column(Float, nullable=True)    # IV of 25Δ OTM put, 30d constant maturity
     risk_reversal  = Column(Float, nullable=True)    # call_iv_25d - put_iv_25d; positive = forward skew = bullish
+    skew_rank      = Column(Integer, nullable=True)  # RR rank within 252-day rolling history (0-100)
     put_call_ratio = Column(Float, nullable=True)    # total put OI / total call OI across fetched chain
     created_at     = Column(String)                  # UTC timestamp
 

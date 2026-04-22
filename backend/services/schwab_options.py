@@ -541,6 +541,15 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             skew_rank = _compute_skew_rank(db, ticker, risk_reversal) if risk_reversal is not None else None
             vrp_rank  = _compute_vrp_rank(db, ticker, vrp) if vrp is not None else None
 
+            # Write skew_rank back to iv_history row (rank requires today's row to exist first)
+            if skew_rank is not None:
+                iv_hist_row = db.query(IVHistory).filter(
+                    IVHistory.ticker  == ticker,
+                    IVHistory.iv_date == today,
+                ).first()
+                if iv_hist_row is not None:
+                    iv_hist_row.skew_rank = skew_rank
+
             if iv_pct is not None:
                 _update_price_cache_iv(
                     db, ticker, iv_pct, "schwab",
