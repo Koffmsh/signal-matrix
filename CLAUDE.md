@@ -280,10 +280,17 @@ Critical issues already resolved — do not reintroduce these bugs:
   - Computed from `price_cache.history_json` inside `_compute_hv(db, ticker)` — no additional API call needed
   - Naming convention: 21 trading days ≈ 30 calendar days; 63 trading days ≈ 90 calendar days (matches IV30 tenor)
 - **`strike_count = 20`** — raised from 1 to capture 25Δ OTM options (20 strikes each side of ATM); required for skew extraction
-- **25Δ Risk Reversal — `_extract_25d_skew(data)`:**
-  - Finds option with delta closest to +0.25 (OTM call) and -0.25 (OTM put) for each expiration
+- **25Δ Risk Reversal — `_extract_25d_skew(data, atm_iv)`:**
+  - Uses **strike-based Black-Scholes approximation** — NOT delta field. Schwab omits delta for OTM options; relying on delta caused code to land on ATM options (delta≈0.5) instead of true 25Δ options, producing near-zero risk reversals (~0.4% vs correct ~-6%)
+  - Computes expected 25Δ strikes from underlying price and ATM IV:
+    - `K_call_25d = S × exp( 0.6745 × σ × √T + 0.5 × σ² × T)` — call delta = 0.25 → N(d1)=0.25 → d1=-0.6745
+    - `K_put_25d  = S × exp(-0.6745 × σ × √T + 0.5 × σ² × T)` — put delta = -0.25 → N(d1)=0.75 → d1=+0.6745
+    - where `0.6745 = N⁻¹(0.75)`, `T = DTE/252`, `σ = ATM IV30` (or 0.30 fallback)
+  - Finds the strike in the chain closest to each computed target; reads that strike's IV
   - Interpolates to 30-day constant maturity using same near/far bracket as IV30
   - `risk_reversal = call_iv_25d - put_iv_25d`; positive = forward skew = institutional call buying = bullish; negative = normal smirk = downside protection bid (typical for equities)
+  - `atm_iv` is passed from call site: `_extract_25d_skew(data, atm_iv=implied_vol)`
+  - **Do NOT revert to delta-based selection** — Schwab's delta field is unreliable for OTM options
 - **Skew Rank — `_compute_skew_rank(db, ticker, today_rr)`:**
   - Risk reversal rank within its own 252-day rolling history: `(rr - min) / (max - min) × 100`
   - Same methodology as IV Rank; requires `_RANK_MIN_HISTORY = 30` observations before meaningful
