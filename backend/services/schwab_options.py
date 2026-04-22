@@ -217,6 +217,9 @@ def _extract_25d_skew(data: dict) -> tuple:
                 if d is None:
                     continue
                 d = float(d)
+                # Schwab may return delta as percentage (e.g. 25.0) or decimal (e.g. 0.25)
+                if abs(d) > 1.0:
+                    d = d / 100.0
                 if d <= 0 or d >= 1:
                     continue  # skip ITM or invalid
                 dist = abs(d - 0.25)
@@ -233,6 +236,9 @@ def _extract_25d_skew(data: dict) -> tuple:
                 if d is None:
                     continue
                 d = float(d)
+                # Schwab may return delta as percentage (e.g. -25.0) or decimal (e.g. -0.25)
+                if abs(d) > 1.0:
+                    d = d / 100.0
                 if d >= 0 or d <= -1:
                     continue  # skip ITM or invalid
                 dist = abs(d - (-0.25))
