@@ -179,21 +179,27 @@ def _extract_atm_iv(data: dict) -> float | None:
     return round(iv, 6) if iv is not None else None
 
 
-def _extract_25d_skew(data: dict) -> tuple:
+def _extract_25d_skew(data: dict, atm_iv: float | None = None) -> tuple:
     """
     Extract 25-delta call and put IV at 30-day constant maturity.
     Uses the same expiration interpolation as _extract_atm_iv.
 
-    25Δ call: contract with delta closest to +0.25 (OTM call)
-    25Δ put:  contract with delta closest to -0.25 (OTM put)
+    Strike-based selection: computes expected 25Δ strikes from underlying price
+    and ATM IV using Black-Scholes approximation, then reads IV at those strikes.
+    This is more robust than relying on the delta field, which Schwab often omits
+    for OTM options.
+
+    25Δ call strike: S × exp( 0.6745 × σ × √T + 0.5 × σ² × T)
+    25Δ put  strike: S × exp(-0.6745 × σ × √T + 0.5 × σ² × T)
+    where 0.6745 = N⁻¹(0.75), T = DTE/252, σ = ATM IV
 
     Risk Reversal = call_iv_25d - put_iv_25d
       Positive = forward skew = institutional call buying = bullish signal
       Negative = normal smirk = downside protection bid (typical for equities)
 
     Returns (call_iv_25d, put_iv_25d, risk_reversal) as decimals, or (None, None, None).
-    Requires strike_count >= 10 on the chain fetch to reliably find 25Δ strikes.
     """
+    import math
     underlying_price = data.get("underlyingPrice")
     if not underlying_price:
         return None, None, None
@@ -203,27 +209,28 @@ def _extract_25d_skew(data: dict) -> tuple:
     if not call_map:
         return None, None, None
 
+    # Default sigma: use atm_iv if provided, else 0.30 as fallback
+    sigma = atm_iv if (atm_iv and atm_iv > 0) else 0.30
+
     near_dte, near_key, far_dte, far_key = _select_30d_expirations(call_map)
 
-    def _25d_ivs_for_exp(exp_key: str) -> tuple:
-        """Find 25Δ call and put IVs for one expiration using delta field."""
+    def _25d_ivs_for_exp(exp_key: str, dte: int) -> tuple:
+        """Find 25Δ call and put IVs for one expiration using strike-based selection."""
         call_strikes = call_map.get(exp_key, {})
         put_strikes  = put_map.get(exp_key, {})
 
+        T = max(dte, 1) / 252.0
+        sqrt_T = math.sqrt(T)
+
+        # Expected 25Δ strikes (Black-Scholes, r≈0, 0.6745 = N⁻¹(0.75))
+        K_call_25d = underlying_price * math.exp( 0.6745 * sigma * sqrt_T + 0.5 * sigma**2 * T)
+        K_put_25d  = underlying_price * math.exp(-0.6745 * sigma * sqrt_T + 0.5 * sigma**2 * T)
+
         best_call_iv, best_call_dist = None, float("inf")
         for strike, opts in call_strikes.items():
-            for opt in opts:
-                d = opt.get("delta")
-                if d is None:
-                    continue
-                d = float(d)
-                # Schwab may return delta as percentage (e.g. 25.0) or decimal (e.g. 0.25)
-                if abs(d) > 1.0:
-                    d = d / 100.0
-                if d <= 0 or d >= 1:
-                    continue  # skip ITM or invalid
-                dist = abs(d - 0.25)
-                if dist < best_call_dist:
+            dist = abs(float(strike) - K_call_25d)
+            if dist < best_call_dist:
+                for opt in opts:
                     iv = _normalize_iv(opt.get("volatility"))
                     if iv is not None:
                         best_call_iv   = iv
@@ -231,18 +238,9 @@ def _extract_25d_skew(data: dict) -> tuple:
 
         best_put_iv, best_put_dist = None, float("inf")
         for strike, opts in put_strikes.items():
-            for opt in opts:
-                d = opt.get("delta")
-                if d is None:
-                    continue
-                d = float(d)
-                # Schwab may return delta as percentage (e.g. -25.0) or decimal (e.g. -0.25)
-                if abs(d) > 1.0:
-                    d = d / 100.0
-                if d >= 0 or d <= -1:
-                    continue  # skip ITM or invalid
-                dist = abs(d - (-0.25))
-                if dist < best_put_dist:
+            dist = abs(float(strike) - K_put_25d)
+            if dist < best_put_dist:
+                for opt in opts:
                     iv = _normalize_iv(opt.get("volatility"))
                     if iv is not None:
                         best_put_iv   = iv
@@ -251,8 +249,8 @@ def _extract_25d_skew(data: dict) -> tuple:
         return best_call_iv, best_put_iv
 
     if near_key and far_key:
-        near_call, near_put = _25d_ivs_for_exp(near_key)
-        far_call,  far_put  = _25d_ivs_for_exp(far_key)
+        near_call, near_put = _25d_ivs_for_exp(near_key, near_dte)
+        far_call,  far_put  = _25d_ivs_for_exp(far_key,  far_dte)
         span = far_dte - near_dte
         if near_call is not None and far_call is not None:
             call_iv = near_call * (far_dte - 30) / span + far_call * (30 - near_dte) / span
@@ -263,9 +261,9 @@ def _extract_25d_skew(data: dict) -> tuple:
         else:
             put_iv = near_put or far_put
     elif far_key:
-        call_iv, put_iv = _25d_ivs_for_exp(far_key)
+        call_iv, put_iv = _25d_ivs_for_exp(far_key, far_dte)
     elif near_key:
-        call_iv, put_iv = _25d_ivs_for_exp(near_key)
+        call_iv, put_iv = _25d_ivs_for_exp(near_key, near_dte)
     else:
         return None, None, None
 
@@ -529,7 +527,8 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             hv30, hv90 = _compute_hv(db, ticker)
 
             # Extract 25Δ skew and put/call ratio from same chain response
-            call_iv_25d, put_iv_25d, risk_reversal = _extract_25d_skew(data)
+            # Pass atm_iv so strike-based 25Δ selection uses correct sigma
+            call_iv_25d, put_iv_25d, risk_reversal = _extract_25d_skew(data, atm_iv=implied_vol)
             put_call_ratio = _extract_put_call_ratio(data)
 
             # Compute VRP = IV30 - HV30
