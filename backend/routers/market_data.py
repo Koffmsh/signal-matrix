@@ -79,6 +79,9 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "skew_rank":       row.skew_rank,
         "put_call_ratio":  row.put_call_ratio,
         "vrp_rank":        row.vrp_rank,
+        "vrp_1d_chg":      row.vrp_1d_chg,
+        "vrp_1w_chg":      row.vrp_1w_chg,
+        "vrp_1m_chg":      row.vrp_1m_chg,
         "updated":         row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
@@ -216,6 +219,7 @@ def refresh_data(db: Session) -> dict:
             PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d, PriceCache.vov_rank,
             PriceCache.hv30, PriceCache.hv90, PriceCache.iv30,
             PriceCache.risk_reversal, PriceCache.skew_rank, PriceCache.put_call_ratio, PriceCache.vrp_rank,
+            PriceCache.vrp_1d_chg, PriceCache.vrp_1w_chg, PriceCache.vrp_1m_chg,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()
@@ -256,6 +260,7 @@ def get_cached(db: Session = Depends(get_db)):
             PriceCache.rel_iv, PriceCache.iv_source, PriceCache.vov_30d, PriceCache.vov_rank,
             PriceCache.hv30, PriceCache.hv90, PriceCache.iv30,
             PriceCache.risk_reversal, PriceCache.skew_rank, PriceCache.put_call_ratio, PriceCache.vrp_rank,
+            PriceCache.vrp_1d_chg, PriceCache.vrp_1w_chg, PriceCache.vrp_1m_chg,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()

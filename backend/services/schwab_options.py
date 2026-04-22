@@ -92,72 +92,6 @@ def _normalize_iv(vol) -> float | None:
     return vol / 100.0 if vol > 2.0 else vol
 
 
-def _iv_from_mark(mark: float, S: float, K: float, T: float, is_call: bool) -> float | None:
-    """
-    Compute implied volatility from option mark price via BS inversion (bisection).
-    Pure Python — no scipy required. r=0 approximation (adequate for <3-month options).
-
-    Returns IV as a decimal (e.g. 0.35 = 35%), or None if computation fails.
-    Useful when Schwab omits the `volatility` field for OTM options.
-    """
-    import math
-
-    if mark <= 0 or S <= 0 or K <= 0 or T <= 0:
-        return None
-
-    # Intrinsic value floor
-    intrinsic = max(S - K, 0.0) if is_call else max(K - S, 0.0)
-    if mark < intrinsic - 0.01:
-        return None  # mark below intrinsic — bad quote
-
-    def _ncdf(x: float) -> float:
-        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
-
-    def _bs(sigma: float) -> float:
-        if sigma < 1e-9:
-            return intrinsic
-        sqrtT = math.sqrt(T)
-        d1 = (math.log(S / K) + 0.5 * sigma ** 2 * T) / (sigma * sqrtT)
-        d2 = d1 - sigma * sqrtT
-        if is_call:
-            return S * _ncdf(d1) - K * _ncdf(d2)
-        else:
-            return K * _ncdf(-d2) - S * _ncdf(-d1)
-
-    # Bisection over [0.001, 5.0]
-    lo, hi = 0.001, 5.0
-    if _bs(lo) > mark or _bs(hi) < mark:
-        return None  # mark out of solvable range
-
-    for _ in range(60):
-        mid = (lo + hi) * 0.5
-        if _bs(mid) < mark:
-            lo = mid
-        else:
-            hi = mid
-        if hi - lo < 1e-7:
-            break
-
-    result = (lo + hi) * 0.5
-    return result if 0.005 <= result <= 4.0 else None
-
-
-def _option_iv(opt: dict, S: float, K: float, T: float, is_call: bool) -> float | None:
-    """
-    Extract IV from a single option contract dict.
-    Primary: use Schwab's pre-computed `volatility` field.
-    Fallback: compute from `mark` price via Black-Scholes inversion.
-    This handles the case where Schwab omits `volatility` for OTM options.
-    """
-    iv = _normalize_iv(opt.get("volatility"))
-    if iv is not None:
-        return iv
-    mark = opt.get("mark")
-    if mark is not None and float(mark) > 0:
-        return _iv_from_mark(float(mark), S, float(K), T, is_call)
-    return None
-
-
 def _atm_iv_for_exp(
     call_map: dict, put_map: dict, exp_key: str, underlying_price: float
 ) -> float | None:
@@ -243,104 +177,6 @@ def _extract_atm_iv(data: dict) -> float | None:
         return None
 
     return round(iv, 6) if iv is not None else None
-
-
-def _extract_25d_skew(data: dict, atm_iv: float | None = None) -> tuple:
-    """
-    Extract 25-delta call and put IV at 30-day constant maturity.
-    Uses the same expiration interpolation as _extract_atm_iv.
-
-    Strike-based selection: computes expected 25Δ strikes from underlying price
-    and ATM IV using Black-Scholes approximation, then reads IV at those strikes.
-    This is more robust than relying on the delta field, which Schwab often omits
-    for OTM options.
-
-    25Δ call strike: S × exp( 0.6745 × σ × √T + 0.5 × σ² × T)
-    25Δ put  strike: S × exp(-0.6745 × σ × √T + 0.5 × σ² × T)
-    where 0.6745 = N⁻¹(0.75), T = DTE/252, σ = ATM IV
-
-    Risk Reversal = call_iv_25d - put_iv_25d
-      Positive = forward skew = institutional call buying = bullish signal
-      Negative = normal smirk = downside protection bid (typical for equities)
-
-    Returns (call_iv_25d, put_iv_25d, risk_reversal) as decimals, or (None, None, None).
-    """
-    import math
-    underlying_price = data.get("underlyingPrice")
-    if not underlying_price:
-        return None, None, None
-
-    call_map = data.get("callExpDateMap", {})
-    put_map  = data.get("putExpDateMap", {})
-    if not call_map:
-        return None, None, None
-
-    # Default sigma: use atm_iv if provided, else 0.30 as fallback
-    sigma = atm_iv if (atm_iv and atm_iv > 0) else 0.30
-
-    near_dte, near_key, far_dte, far_key = _select_30d_expirations(call_map)
-
-    def _25d_ivs_for_exp(exp_key: str, dte: int) -> tuple:
-        """Find 25Δ call and put IVs for one expiration using strike-based selection."""
-        call_strikes = call_map.get(exp_key, {})
-        put_strikes  = put_map.get(exp_key, {})
-
-        T = max(dte, 1) / 252.0
-        sqrt_T = math.sqrt(T)
-
-        # Expected 25Δ strikes (Black-Scholes, r≈0, 0.6745 = N⁻¹(0.75))
-        K_call_25d = underlying_price * math.exp( 0.6745 * sigma * sqrt_T + 0.5 * sigma**2 * T)
-        K_put_25d  = underlying_price * math.exp(-0.6745 * sigma * sqrt_T + 0.5 * sigma**2 * T)
-
-        best_call_iv, best_call_dist = None, float("inf")
-        for strike, opts in call_strikes.items():
-            dist = abs(float(strike) - K_call_25d)
-            if dist < best_call_dist:
-                for opt in opts:
-                    iv = _option_iv(opt, underlying_price, float(strike), T, is_call=True)
-                    if iv is not None:
-                        best_call_iv   = iv
-                        best_call_dist = dist
-
-        best_put_iv, best_put_dist = None, float("inf")
-        for strike, opts in put_strikes.items():
-            dist = abs(float(strike) - K_put_25d)
-            if dist < best_put_dist:
-                for opt in opts:
-                    iv = _option_iv(opt, underlying_price, float(strike), T, is_call=False)
-                    if iv is not None:
-                        best_put_iv   = iv
-                        best_put_dist = dist
-
-        return best_call_iv, best_put_iv
-
-    if near_key and far_key:
-        near_call, near_put = _25d_ivs_for_exp(near_key, near_dte)
-        far_call,  far_put  = _25d_ivs_for_exp(far_key,  far_dte)
-        span = far_dte - near_dte
-        if near_call is not None and far_call is not None:
-            call_iv = near_call * (far_dte - 30) / span + far_call * (30 - near_dte) / span
-        else:
-            call_iv = near_call or far_call
-        if near_put is not None and far_put is not None:
-            put_iv = near_put * (far_dte - 30) / span + far_put * (30 - near_dte) / span
-        else:
-            put_iv = near_put or far_put
-    elif far_key:
-        call_iv, put_iv = _25d_ivs_for_exp(far_key, far_dte)
-    elif near_key:
-        call_iv, put_iv = _25d_ivs_for_exp(near_key, near_dte)
-    else:
-        return None, None, None
-
-    if call_iv is None or put_iv is None:
-        return None, None, None
-
-    call_iv = round(call_iv, 6)
-    put_iv  = round(put_iv, 6)
-    rr      = round(call_iv - put_iv, 6)
-
-    return call_iv, put_iv, rr
 
 
 def _extract_put_call_ratio(data: dict) -> float | None:
@@ -496,6 +332,30 @@ def _compute_vrp_rank(db: Session, ticker: str, today_vrp: float) -> int | None:
     return max(0, min(100, int(round(rank))))
 
 
+def _compute_vrp_changes(db: Session, ticker: str) -> tuple:
+    """
+    Compute VRP change over 1 trading day, 1 week (5 days), 1 month (21 days).
+    Queries the last 22 iv_history rows with valid VRP (today already flushed).
+    Returns (vrp_1d_chg, vrp_1w_chg, vrp_1m_chg) as decimals — any may be None.
+    """
+    rows = (
+        db.query(IVHistory)
+        .filter(IVHistory.ticker == ticker, IVHistory.vrp.isnot(None))
+        .order_by(IVHistory.iv_date.desc())
+        .limit(22)
+        .all()
+    )
+    if not rows:
+        return None, None, None
+
+    today_vrp = rows[0].vrp
+
+    def _chg(idx: int):
+        return round(today_vrp - rows[idx].vrp, 6) if len(rows) > idx else None
+
+    return _chg(1), _chg(5), _chg(21)
+
+
 def _update_price_cache_iv(
     db: Session, ticker: str,
     iv_percentile: int, iv_source: str,
@@ -506,6 +366,9 @@ def _update_price_cache_iv(
     skew_rank: int | None = None,
     put_call_ratio: float | None = None,
     vrp_rank: int | None = None,
+    vrp_1d_chg: float | None = None,
+    vrp_1w_chg: float | None = None,
+    vrp_1m_chg: float | None = None,
 ) -> None:
     """Overwrite all volatility fields on the price_cache row (no commit)."""
     row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
@@ -519,6 +382,9 @@ def _update_price_cache_iv(
         row.skew_rank      = skew_rank
         row.put_call_ratio = put_call_ratio
         row.vrp_rank       = vrp_rank
+        row.vrp_1d_chg     = vrp_1d_chg
+        row.vrp_1w_chg     = vrp_1w_chg
+        row.vrp_1m_chg     = vrp_1m_chg
 
 
 def _mark_proxy(db: Session, ticker: str) -> None:
@@ -575,7 +441,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             resp = client.get_option_chain(
                 schwab_sym,
                 contract_type            = OC.ContractType.ALL,
-                strike_count             = 20,   # 20 strikes each side — captures 25Δ options
+                strike_count             = 5,    # ATM IV only — 5 strikes each side is sufficient
                 include_underlying_quote = False,
             )
             resp.raise_for_status()
@@ -592,9 +458,8 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             # Compute HV30/HV90 from price history
             hv30, hv90 = _compute_hv(db, ticker)
 
-            # Extract 25Δ skew and put/call ratio from same chain response
-            # Pass atm_iv so strike-based 25Δ selection uses correct sigma
-            call_iv_25d, put_iv_25d, risk_reversal = _extract_25d_skew(data, atm_iv=implied_vol)
+            # Skew dropped — always null (Option A: columns remain, data not populated)
+            call_iv_25d = put_iv_25d = risk_reversal = None
             put_call_ratio = _extract_put_call_ratio(data)
 
             # Compute VRP = IV30 - HV30
@@ -607,27 +472,20 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             )
             db.flush()
 
-            # Compute IV Rank, Skew Rank, and VRP Rank
-            iv_pct    = _compute_iv_percentile(db, ticker, implied_vol)
-            skew_rank = _compute_skew_rank(db, ticker, risk_reversal) if risk_reversal is not None else None
-            vrp_rank  = _compute_vrp_rank(db, ticker, vrp) if vrp is not None else None
+            # Compute IV Rank and VRP Rank (skew_rank dropped with skew)
+            iv_pct   = _compute_iv_percentile(db, ticker, implied_vol)
+            vrp_rank = _compute_vrp_rank(db, ticker, vrp) if vrp is not None else None
 
-            # Write skew_rank back to iv_history row (rank requires today's row to exist first)
-            if skew_rank is not None:
-                iv_hist_row = db.query(IVHistory).filter(
-                    IVHistory.ticker  == ticker,
-                    IVHistory.iv_date == today,
-                ).first()
-                if iv_hist_row is not None:
-                    iv_hist_row.skew_rank = skew_rank
+            # Compute VRP changes (1d, 1w, 1m) from iv_history
+            vrp_1d_chg, vrp_1w_chg, vrp_1m_chg = _compute_vrp_changes(db, ticker)
 
             if iv_pct is not None:
                 _update_price_cache_iv(
                     db, ticker, iv_pct, "schwab",
                     iv30=implied_vol, hv30=hv30, hv90=hv90,
-                    risk_reversal=risk_reversal,
-                    skew_rank=skew_rank, put_call_ratio=put_call_ratio,
+                    put_call_ratio=put_call_ratio,
                     vrp_rank=vrp_rank,
+                    vrp_1d_chg=vrp_1d_chg, vrp_1w_chg=vrp_1w_chg, vrp_1m_chg=vrp_1m_chg,
                 )
             else:
                 # Warmup — fall back to Yahoo proxy for rel_iv display
@@ -642,15 +500,16 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
                 _update_price_cache_iv(
                     db, ticker, proxy_pct, "proxy",
                     iv30=implied_vol, hv30=hv30, hv90=hv90,
-                    risk_reversal=risk_reversal,
-                    skew_rank=skew_rank, put_call_ratio=put_call_ratio,
+                    put_call_ratio=put_call_ratio,
                     vrp_rank=vrp_rank,
+                    vrp_1d_chg=vrp_1d_chg, vrp_1w_chg=vrp_1w_chg, vrp_1m_chg=vrp_1m_chg,
                 )
                 logger.debug(f"IV: {ticker} warmup — using proxy rel_iv={proxy_pct}")
 
             fetched += 1
             logger.debug(
-                f"IV: {ticker} iv={implied_vol:.4f} hv30={hv30} vrp={vrp} rr={risk_reversal} "
+                f"IV: {ticker} iv={implied_vol:.4f} hv30={hv30} vrp={vrp} "
+                f"vrp_1d={vrp_1d_chg} vrp_1w={vrp_1w_chg} vrp_1m={vrp_1m_chg} "
                 f"pcr={put_call_ratio} iv_pct={iv_pct} vrp_rank={vrp_rank}"
             )
 

@@ -150,6 +150,9 @@ function mergeRealData(mockRow, realDataMap) {
     skewRank:       real.skew_rank       ?? null,
     putCallRatio:   real.put_call_ratio  ?? null,
     vrpRank:        real.vrp_rank        ?? null,
+    vrp1dChg:       real.vrp_1d_chg      ?? null,
+    vrp1wChg:       real.vrp_1w_chg      ?? null,
+    vrp1mChg:       real.vrp_1m_chg      ?? null,
   };
 }
 
@@ -1017,20 +1020,18 @@ function Dashboard() {
                            })(),
                            false,
                            "VRP rank within 252-day rolling history\nLow = options historically cheap vs realized vol = green\nHigh = options historically expensive = red"],
-          ["Risk Reversal", row.riskReversal != null ? `${(row.riskReversal * 100).toFixed(2)}%` : "—",
-                           (() => {
-                             if (row.riskReversal == null) return "#8899aa";
-                             return row.riskReversal > 0 ? "#00e5a0" : row.riskReversal < -0.02 ? "#ff4d6d" : "#8899aa";
+          ["VRP Change",   (() => {
+                             const fmt = (v) => v != null ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}` : "—";
+                             const parts = [
+                               `1d ${fmt(row.vrp1dChg)}`,
+                               `1w ${fmt(row.vrp1wChg)}`,
+                               `1m ${fmt(row.vrp1mChg)}`,
+                             ];
+                             return parts.join("  ·  ");
                            })(),
+                           "#8899aa",
                            false,
-                           "25Δ Call IV − 25Δ Put IV\nPositive = calls bid over puts = bullish (market expects rally)\nNegative = puts bid over calls = normal for equities (downside protection)\nFlat (near 0) = fear has evaporated = bullish relative signal for equities\nUse Skew Rank for the actionable signal — it shows where current skew sits vs history"],
-          ["Skew Rank",    row.skewRank != null ? `${row.skewRank}%` : "—",
-                           (() => {
-                             if (row.skewRank == null) return "#8899aa";
-                             return row.skewRank < 20 ? "#00e5a0" : row.skewRank > 80 ? "#ff4d6d" : "#8899aa";
-                           })(),
-                           false,
-                           "Risk Reversal rank within 252-day rolling history\nLow = puts cheap vs calls = bullish tailwind\nHigh = puts expensive = fear / bearish signal"],
+                           "VRP change (percentage points) over 1 trading day, 1 week (5d), 1 month (21d)\nRising VRP = options getting more expensive vs realized vol\nFalling VRP = options getting cheaper vs realized vol"],
           ["P/C Ratio",    row.putCallRatio != null ? row.putCallRatio.toFixed(2) : "—",
                            (() => {
                              if (row.putCallRatio == null) return "#8899aa";
