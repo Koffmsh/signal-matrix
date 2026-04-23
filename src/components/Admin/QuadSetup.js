@@ -131,7 +131,7 @@ function MonthRow({ month, initialQuad, initialProb }) {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "5px 0", borderBottom: "1px solid #0d1a2a" }}>
-      <div style={{ width: "70px", fontSize: "10px", color: "#8899aa" }}>{month.label}</div>
+      <div style={{ width: "70px", fontSize: "10px", color: "#c8d8e8" }}>{month.label}</div>
       <div style={{ display: "flex", gap: "4px" }}>
         {[1, 2, 3, 4].map(n => (
           <QuadBtn key={n} n={n} selected={quad} onSelect={handleQuadSelect} />
@@ -200,7 +200,7 @@ function CountryRow({ country, quarters, initialData }) {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0", borderBottom: "1px solid #0d1a2a" }}>
-      <div style={{ width: "130px", fontSize: "10px", color: "#8899aa", padding: "6px 0", flexShrink: 0 }}>
+      <div style={{ width: "130px", fontSize: "10px", color: "#c8d8e8", padding: "6px 0", flexShrink: 0 }}>
         {country}
       </div>
       {quarters.map(q => (
@@ -267,7 +267,7 @@ export default function QuadSetup() {
   );
 
   const qGroupHeader = (label) => (
-    <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em", margin: "14px 0 4px" }}>
+    <div style={{ fontSize: "9px", color: "#c8d8e8", letterSpacing: "0.15em", margin: "14px 0 4px" }}>
       {label}
     </div>
   );
@@ -289,9 +289,9 @@ export default function QuadSetup() {
 
       {/* Column headers */}
       <div style={{ display: "flex", alignItems: "center", gap: "10px", paddingBottom: "6px", borderBottom: "1px solid #1a2e45", marginBottom: "4px" }}>
-        <div style={{ width: "70px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>MONTH</div>
-        <div style={{ width: "196px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>QUAD</div>
-        <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>PROB</div>
+        <div style={{ width: "70px", fontSize: "9px", color: "#c8d8e8", letterSpacing: "0.12em" }}>MONTH</div>
+        <div style={{ width: "196px", fontSize: "9px", color: "#c8d8e8", letterSpacing: "0.12em" }}>QUAD</div>
+        <div style={{ fontSize: "9px", color: "#c8d8e8", letterSpacing: "0.12em" }}>PROB</div>
       </div>
 
       {qGroups.map(group => (
@@ -317,9 +317,9 @@ export default function QuadSetup() {
 
       {/* Quarter column headers */}
       <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #1a2e45", paddingBottom: "6px", marginBottom: "4px" }}>
-        <div style={{ width: "130px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>COUNTRY</div>
+        <div style={{ width: "130px", fontSize: "9px", color: "#c8d8e8", letterSpacing: "0.12em" }}>COUNTRY</div>
         {ntmQuarters.map(q => (
-          <div key={q.key} style={{ width: "160px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em", padding: "0 8px" }}>
+          <div key={q.key} style={{ width: "160px", fontSize: "9px", color: "#c8d8e8", letterSpacing: "0.12em", padding: "0 8px" }}>
             {q.label}
           </div>
         ))}
