@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { fetchCachedMarketData, fetchBatchMarketData } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
+import Sidebar from "./components/shared/Sidebar";
+import TickerAnalysis from "./components/Analysis/TickerAnalysis";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
@@ -23,11 +25,25 @@ function tickerFromApi(r) {
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/admin" element={<AdminPanel />} />
-        <Route path="*" element={<Dashboard />} />
-      </Routes>
+      <AppLayout />
     </BrowserRouter>
+  );
+}
+
+function AppLayout() {
+  const location = useLocation();
+  const showSidebar = !location.pathname.startsWith("/admin");
+  return (
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+      {showSidebar && <Sidebar />}
+      <div style={{ flex: 1, overflow: "auto" }}>
+        <Routes>
+          <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
+          <Route path="/admin" element={<AdminPanel />} />
+          <Route path="*" element={<Dashboard />} />
+        </Routes>
+      </div>
+    </div>
   );
 }
 
