@@ -63,9 +63,9 @@ function QuadBtn({ n, selected, onSelect, disabled }) {
       onClick={() => !disabled && onSelect(n)}
       style={{
         ...mono,
-        background:    active ? `${QUAD_COLORS[n]}22` : "transparent",
+        background:    active ? `${QUAD_COLORS[n]}55` : "transparent",
         border:        `1px solid ${active ? QUAD_COLORS[n] : "#1a2e45"}`,
-        color:         active ? QUAD_COLORS[n] : disabled ? "#8899aa" : "#8899aa",
+        color:         active ? "#ffffff" : "#8899aa",
         padding:       "3px 10px",
         fontSize:      "10px",
         fontWeight:    active ? "700" : "400",
