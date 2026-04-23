@@ -65,7 +65,7 @@ function QuadBtn({ n, selected, onSelect, disabled }) {
         ...mono,
         background:    active ? `${QUAD_COLORS[n]}22` : "transparent",
         border:        `1px solid ${active ? QUAD_COLORS[n] : "#1a2e45"}`,
-        color:         active ? QUAD_COLORS[n] : disabled ? "#2a3e52" : "#556677",
+        color:         active ? QUAD_COLORS[n] : disabled ? "#8899aa" : "#8899aa",
         padding:       "3px 10px",
         fontSize:      "10px",
         fontWeight:    active ? "700" : "400",
@@ -82,7 +82,7 @@ function QuadBtn({ n, selected, onSelect, disabled }) {
 
 function SaveDot({ status }) {
   if (!status) return null;
-  if (status === "saving") return <span style={{ fontSize: "9px", color: "#445566" }}>…</span>;
+  if (status === "saving") return <span style={{ fontSize: "9px", color: "#8899aa" }}>…</span>;
   if (status === "ok")     return <span style={{ fontSize: "10px", color: "#00e5a0", fontWeight: "700" }}>✓</span>;
   return <span style={{ fontSize: "9px", color: "#ff4d6d" }} title={status}>✗</span>;
 }
@@ -157,7 +157,7 @@ function MonthRow({ month, initialQuad, initialProb }) {
             outline: "none",
           }}
         />
-        <span style={{ fontSize: "10px", color: "#445566" }}>%</span>
+        <span style={{ fontSize: "10px", color: "#8899aa" }}>%</span>
       </div>
       <SaveDot status={saveStatus} />
     </div>
@@ -267,14 +267,14 @@ export default function QuadSetup() {
   );
 
   const qGroupHeader = (label) => (
-    <div style={{ fontSize: "9px", color: "#445566", letterSpacing: "0.15em", margin: "14px 0 4px" }}>
+    <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em", margin: "14px 0 4px" }}>
       {label}
     </div>
   );
 
   if (loading) {
     return (
-      <div style={{ ...mono, padding: "32px", color: "#445566", fontSize: "10px" }}>LOADING…</div>
+      <div style={{ ...mono, padding: "32px", color: "#8899aa", fontSize: "10px" }}>LOADING…</div>
     );
   }
 
@@ -283,15 +283,15 @@ export default function QuadSetup() {
 
       {/* ── Section 1: US Monthly ── */}
       {sectionHeader("US — MONTHLY QUADS  NTM")}
-      <div style={{ fontSize: "10px", color: "#445566", marginBottom: "16px" }}>
+      <div style={{ fontSize: "10px", color: "#8899aa", marginBottom: "16px" }}>
         Current month + 11 forward · Auto-saves on selection or probability blur
       </div>
 
       {/* Column headers */}
       <div style={{ display: "flex", alignItems: "center", gap: "10px", paddingBottom: "6px", borderBottom: "1px solid #1a2e45", marginBottom: "4px" }}>
-        <div style={{ width: "70px", fontSize: "9px", color: "#445566", letterSpacing: "0.12em" }}>MONTH</div>
-        <div style={{ width: "196px", fontSize: "9px", color: "#445566", letterSpacing: "0.12em" }}>QUAD</div>
-        <div style={{ fontSize: "9px", color: "#445566", letterSpacing: "0.12em" }}>PROB</div>
+        <div style={{ width: "70px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>MONTH</div>
+        <div style={{ width: "196px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>QUAD</div>
+        <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>PROB</div>
       </div>
 
       {qGroups.map(group => (
@@ -311,15 +311,15 @@ export default function QuadSetup() {
       {/* ── Section 2: Country Quarterly ── */}
       <div style={{ borderTop: "1px solid #1a2e45", marginTop: "32px" }} />
       {sectionHeader("COUNTRY QUADS — QUARTERLY")}
-      <div style={{ fontSize: "10px", color: "#445566", marginBottom: "16px" }}>
+      <div style={{ fontSize: "10px", color: "#8899aa", marginBottom: "16px" }}>
         Dominant macro regime per country · Auto-saves on selection
       </div>
 
       {/* Quarter column headers */}
       <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #1a2e45", paddingBottom: "6px", marginBottom: "4px" }}>
-        <div style={{ width: "130px", fontSize: "9px", color: "#445566", letterSpacing: "0.12em" }}>COUNTRY</div>
+        <div style={{ width: "130px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em" }}>COUNTRY</div>
         {ntmQuarters.map(q => (
-          <div key={q.key} style={{ width: "160px", fontSize: "9px", color: "#445566", letterSpacing: "0.12em", padding: "0 8px" }}>
+          <div key={q.key} style={{ width: "160px", fontSize: "9px", color: "#8899aa", letterSpacing: "0.12em", padding: "0 8px" }}>
             {q.label}
           </div>
         ))}
