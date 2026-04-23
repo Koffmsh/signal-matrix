@@ -223,6 +223,8 @@ function mergeSignalData(row, signalMap) {
     obvDirection:   sig.obv_direction           ?? "Neutral",
     obvConfirming:  sig.obv_confirming          ?? false,
     vixRegime:      sig.vix_regime              ?? null,
+    quadAlignment:  sig.quad_alignment          ?? null,
+    quadMult:       sig.quad_mult               ?? null,
     hTrendUp:       sig.h_trend_up              ?? null,
     hTrendDown:     sig.h_trend_down            ?? null,
   };
@@ -387,6 +389,7 @@ function Dashboard() {
   const [signalsCalculatedAt, setSignalsCalculatedAt] = useState(null);
   const [schedulerStatus, setSchedulerStatus] = useState(null);
   const [schwabStatus,    setSchwabStatus]    = useState(null);
+  const [quadSettings,    setQuadSettings]    = useState(null);
 
   // Load ticker universe from DB on page load
   useEffect(() => {
@@ -434,6 +437,14 @@ function Dashboard() {
     fetch(`${API_BASE}/api/auth/schwab/status`)
       .then(r => r.json())
       .then(data => setSchwabStatus(data))
+      .catch(() => {});
+  }, []);
+
+  // Load quad settings on page load
+  useEffect(() => {
+    fetch(`${API_BASE}/api/quad/settings`)
+      .then(r => r.json())
+      .then(data => { if (data.current_quad) setQuadSettings(data); })
       .catch(() => {});
   }, []);
 
@@ -596,16 +607,7 @@ function Dashboard() {
       ? (isSelected ? "#0d1f35" : "#0a1018")
       : (isSelected ? "#0d1f35" : i % 2 === 0 ? "#080e18" : "#090f1a");
 
-    // Tightened badge style for asset class / sector
-    const badgeStyle = {
-      background: isTier2 ? "#0a1520" : "#0d1a2a",
-      border: `1px solid ${isTier2 ? "#141e2e" : "#1a2e45"}`,
-      borderRadius: "2px", padding: "1px 4px",
-      fontSize: "8px", color: isTier2 ? "#667788" : "#8899aa",
-      letterSpacing: "0.08em", display: "inline-block",
-      maxWidth: "110px", overflow: "hidden",
-      textOverflow: "ellipsis", whiteSpace: "nowrap",
-    };
+
 
     return (
       <tr
@@ -677,14 +679,6 @@ function Dashboard() {
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB, row.trendExtended)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
-        {/* Asset Class — moved to far right, tightened */}
-        <td style={{ padding: "9px 6px", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <span style={badgeStyle}>{row.assetClass}</span>
-        </td>
-        {/* Sector — moved to far right, tightened */}
-        <td style={{ padding: "9px 6px", maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <span style={badgeStyle}>{row.sector}</span>
-        </td>
       </tr>
     );
   };
@@ -739,6 +733,35 @@ function Dashboard() {
             </div>
           );
         })()}
+        {/* Quad display */}
+        {quadSettings && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
+            <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>QUAD FRAMEWORK</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "700", letterSpacing: "0.08em" }}>
+              {(() => {
+                const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
+                const q = quadSettings.current_quad;
+                const p = Math.round((quadSettings.current_prob ?? 0) * 100);
+                return (
+                  <span style={{ color: qColors[q] }}>QUAD {q}  {p}%</span>
+                );
+              })()}
+              {quadSettings.next_quad && (
+                <>
+                  <span style={{ color: "#8899aa" }}>→</span>
+                  {(() => {
+                    const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
+                    const q = quadSettings.next_quad;
+                    const p = Math.round((quadSettings.next_prob ?? 0) * 100);
+                    return (
+                      <span style={{ color: qColors[q] }}>QUAD {q}  {p}%</span>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div style={{ display: "flex", gap: "24px" }}>
           {[["BULLISH", bullish, "#00e5a0"], ["BEARISH", bearish, "#ff4d6d"], ["ALIGNED", aligned, "#0099ff"], ["ALERTS", alerts, "#f0b429"], ["ENTRY", entries, "#e8f4ff"]].map(([label, val, color]) => (
             <div key={label} style={{ textAlign: "center" }}>
@@ -927,8 +950,6 @@ function Dashboard() {
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
               <SortHdr label="TREND LEVEL" k="trendLRR" />
-              <SortHdr label="ASSET CLASS" k="assetClass" />
-              <SortHdr label="SECTOR"      k="sector" />
             </tr>
           </thead>
           <tbody>
@@ -941,7 +962,7 @@ function Dashboard() {
                 : [];
               const sep = needsSep ? [
                 <tr key={`sep-${row.assetClass}`}>
-                  <td colSpan={16} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
+                  <td colSpan={14} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
                     {row.assetClass.toUpperCase()}
                   </td>
                 </tr>
@@ -1002,6 +1023,17 @@ function Dashboard() {
           ["ΔH (20d)",     row.hTradeDelta != null ? `${row.hTradeDelta >= 0 ? "+" : ""}${row.hTradeDelta.toFixed(3)}` : "—",
                            row.hTradeDelta == null ? "#8899aa" : row.hTradeDelta >= 0 ? "#00e5a0" : row.hTradeDelta < -0.05 ? "#ff4d6d" : "#f0b429",
                            false, "Change in H_trade over ~20 trading days\nPositive — trend momentum improving (green)\n0 to −0.05 — mild deterioration (amber)\n< −0.05 — meaningful deterioration (red)"],
+          ["VIX Regime",   row.vixRegime || "—",
+                           (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Edgy" ? "#8899aa" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : r === "N/A" ? "#445566" : "#8899aa"; })(),
+                           false, "VIX regime at time of signal calculation\nInvestable (VIX < 19) — Domestic Equities × 1.10\nEdgy (19–23) — × 1.00\nChoppy (24–29) — × 0.90\nDanger (≥ 30) — × 0.80\nN/A — non-equity asset class, no multiplier applied"],
+          ...(row.quadAlignment ? [
+            ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
+                               row.quadAlignment === "Aligned" ? "#00e5a0" : row.quadAlignment === "Misaligned" ? "#ff4d6d" : "#8899aa",
+                               false, "Quad framework alignment\nAligned = macro tailwind for viewpoint direction\nMisaligned = macro headwind\nNeutral = no quad mapping for this asset/sector"],
+            ["Quad Mult",      row.quadMult != null ? `×${row.quadMult.toFixed(2)}` : "—",
+                               row.quadMult == null ? "#8899aa" : row.quadMult > 1.0 ? "#00e5a0" : row.quadMult < 1.0 ? "#ff4d6d" : "#8899aa",
+                               false, "Quad conviction multiplier applied to this ticker\nDriven by current quad, probability, and asset/sector alignment"],
+          ] : []),
           ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false, "Hurst exponent (Trend, 252-day DFA)\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
           ...(['Commodities', 'Foreign Exchange'].includes(row.assetClass) ? [
             [<span>H<span style={{fontSize:"13px"}}>↑</span> Trend</span>,   row.hTrendUp   != null ? row.hTrendUp.toFixed(3)   : "—",  hurstColor(row.hTrendUp),               false, "Asymmetric Hurst — uptrend DFA (Commodities/FX only)\nUsed as H_eff when viewpoint is Bullish\n≥ 0.60 — Trending (green) · < 0.50 — Mean-reverting (red)"],
@@ -1056,6 +1088,8 @@ function Dashboard() {
                            false,
                            "Total put OI ÷ total call OI\n> 1.2 = extreme fear / capitulation = contrarian bullish\n< 0.6 = complacency = potential top signal"],
           ["Updated",      row.updated,                                                                    "#667788",                              false],
+          ["Asset Class",  row.assetClass || "—",                                                          "#8899aa",                              false],
+          ["Sector",       row.sector     || "—",                                                          "#8899aa",                              false],
         ];
 
         return (

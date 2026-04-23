@@ -32,6 +32,8 @@ class SignalOutput(Base):
     d_extended       = Column(Boolean, nullable=True)   # True when D > B + abs(B-C); B becomes break level
     h_trade_delta    = Column(Float,   nullable=True)   # H_trade change over ~20 trading days; NULL if insufficient history
     vix_regime       = Column(String(20), nullable=True)  # VIX regime zone: Investable|Edgy|Choppy|Danger
+    quad_alignment   = Column(String(20), nullable=True)  # Aligned | Misaligned | Neutral
+    quad_mult        = Column(Float,      nullable=True)  # stored for debugging and popup display
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

@@ -6,6 +6,7 @@ from routers import market_data, signals
 from routers.scheduler import router as scheduler_router
 from routers.tickers import router as tickers_router, seed_tickers_if_empty
 from routers.auth import router as auth_router
+from routers.quad import router as quad_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from database import SessionLocal
@@ -17,6 +18,7 @@ import models.signal_history  # Task 4.3 — signal_history table
 import models.ticker          # Task 4.6 — tickers table
 import models.schwab_tokens   # Task 5.1 — schwab_tokens table
 import models.iv_history      # Task 5.1 — iv_history table
+import models.quad_settings   # v1.9 — quad_settings table
 import services.scheduler as scheduler_svc
 import logging
 
@@ -102,6 +104,7 @@ app.include_router(signals.router)
 app.include_router(scheduler_router)
 app.include_router(tickers_router)
 app.include_router(auth_router)
+app.include_router(quad_router)
 
 
 @app.get("/health")

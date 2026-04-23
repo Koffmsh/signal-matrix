@@ -6,6 +6,7 @@ from models.signal_pivots import SignalPivots
 from models.signal_output import SignalOutput
 from models.signal_history import SignalHistory
 from models.ticker import Ticker
+from models.quad_settings import QuadSettings
 from services.signal_engine import (compute_hurst, compute_h_trade_delta,
                                     compute_asymmetric_h, get_prices_from_cache,
                                     WINDOW_TREND)
@@ -147,9 +148,17 @@ def run_output(db: Session) -> dict:
     results = []
     errors  = []
 
-    # Fetch asset_class for all active tickers — needed for asymmetric H in compute_output
-    ticker_rows_out  = db.query(Ticker).filter(Ticker.active == True).all()
+    # Fetch asset_class + sector for all active tickers
+    ticker_rows_out = db.query(Ticker).filter(Ticker.active == True).all()
     asset_class_map_out = {t.ticker: (t.asset_class or "") for t in ticker_rows_out}
+    sector_map_out      = {t.ticker: (t.sector      or "") for t in ticker_rows_out}
+
+    # Fetch active quad settings (most recent effective_date)
+    quad_row     = db.query(QuadSettings)\
+                     .order_by(QuadSettings.effective_date.desc())\
+                     .first()
+    quad_current = quad_row.current_quad if quad_row else None
+    quad_prob    = quad_row.current_prob if quad_row else 0.0
 
     for ticker in get_active_tickers(db):
         try:
@@ -166,8 +175,14 @@ def run_output(db: Session) -> dict:
                     "prior_lrr": row.lrr if row else None,
                 }
 
-            data = compute_output(ticker, db, prior_ranges=prior_ranges,
-                                  asset_class=asset_class_map_out.get(ticker, ""))
+            data = compute_output(
+                ticker, db,
+                prior_ranges  = prior_ranges,
+                asset_class   = asset_class_map_out.get(ticker, ""),
+                sector        = sector_map_out.get(ticker, ""),
+                quad_current  = quad_current,
+                quad_prob     = quad_prob,
+            )
             now  = datetime.utcnow()
 
             # Task 6.1 — h_trade_delta: change in H_trade over ~20 trading days
@@ -223,6 +238,8 @@ def run_output(db: Session) -> dict:
                     obv_confirming   = data.get("obv_confirming"),
                     h_trade_delta    = h_trade_delta if tf == "trade" else None,
                     vix_regime       = data.get("vix_regime"),
+                    quad_alignment   = data.get("quad_alignment"),
+                    quad_mult        = data.get("quad_mult"),
                     calculated_at    = now,
                 )
 
@@ -391,6 +408,8 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "obv_confirming":  bool(row.obv_confirming) if row.obv_confirming is not None else False,
                 "alert":           bool(row.alert) if row.alert is not None else False,
                 "vix_regime":      row.vix_regime,
+                "quad_alignment":  row.quad_alignment,
+                "quad_mult":       row.quad_mult,
                 "h_trend_up":      getattr(h_row, "h_trend_up",   None) if h_row else None,
                 "h_trend_down":    getattr(h_row, "h_trend_down",  None) if h_row else None,
                 "trade": None, "trend": None, "lt": None,

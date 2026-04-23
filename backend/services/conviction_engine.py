@@ -1,5 +1,5 @@
 """
-Conviction Engine — v1.8
+Conviction Engine — v1.9
 LRR / HRR calculation + Conviction Score for each ticker / timeframe.
 
 Trade timeframe:  Bollinger Band framework (MA20 ± k×STD20).
@@ -149,9 +149,9 @@ def _obv_slope_signals(obv_ma20: list, viewpoint: str,
     slope_boost = 1.00
     if aligned:
         if viewpoint == "Bullish" and obv_slope_trend == "increasing":
-            slope_boost = 1.17
+            slope_boost = 1.20
         elif viewpoint == "Bearish" and obv_slope_trend == "decreasing":
-            slope_boost = 1.17
+            slope_boost = 1.20
 
     return obv_slope, obv_slope_trend, alignment_mult, slope_boost
 
@@ -177,29 +177,244 @@ def get_effective_h_trend(asset_class: str, ticker: str, viewpoint: str,
     return h_trend  # fallback — insufficient directional history
 
 
-def get_vix_regime_multiplier(db) -> tuple:
-    """
-    Returns (multiplier, zone_label) based on current VIX close.
-    Falls back to 1.00 / 'Unknown' if VIX not in cache.
+VIX_REGIME_ASSET_CLASSES = {"Domestic Equities"}
 
-    Multiplier table (locked):
-      Investable  VIX < 19   × 1.10 — VCFs mechanically adding, trend signals reliable
-      Edgy        19–23      × 1.00 — elevated but tradeable
-      Choppy      24–29      × 0.90 — signal degradation, whipsaws likely
-      Danger      ≥ 30       × 0.80 — sit on hands
+
+def get_vix_mult(vix_close: float | None, asset_class: str) -> tuple:
     """
-    vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
-    if vix_row is None or vix_row.close is None:
+    Layer 4 — VIX regime multiplier, asset-class gated.
+    Only applies to Domestic Equities; all other asset classes return (1.00, 'N/A').
+
+    Thresholds (locked):
+      Investable  VIX < 19   × 1.10
+      Edgy        19–23      × 1.00
+      Choppy      24–29      × 0.90
+      Danger      ≥ 30       × 0.80
+    """
+    if asset_class not in VIX_REGIME_ASSET_CLASSES:
+        return 1.00, "N/A"
+    if vix_close is None:
         return 1.00, "Unknown"
-    vix = vix_row.close
-    if vix < 19:
+    if vix_close < 19:
         return 1.10, "Investable"
-    elif vix < 24:
+    elif vix_close < 24:
         return 1.00, "Edgy"
-    elif vix < 30:
+    elif vix_close < 30:
         return 0.90, "Choppy"
     else:
         return 0.80, "Danger"
+
+
+def get_vix_regime_multiplier(db) -> tuple:
+    """Legacy helper — returns (multiplier, zone_label) for non-gated VIX display."""
+    vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
+    vix_close = float(vix_row.close) if (vix_row and vix_row.close is not None) else None
+    if vix_close is None:
+        return 1.00, "Unknown"
+    if vix_close < 19:
+        return 1.10, "Investable"
+    elif vix_close < 24:
+        return 1.00, "Edgy"
+    elif vix_close < 30:
+        return 0.90, "Choppy"
+    else:
+        return 0.80, "Danger"
+
+
+# ── Quad Alignment ────────────────────────────────────────────────────────────
+
+ALWAYS_NEUTRAL_SECTORS = {"Index"}   # VIX, VVIX only — always ×1.00
+
+QUAD_ALIGNMENT = {
+
+    1: {  # Goldilocks — growth ↑, inflation ↓
+        "best": {
+            "asset_class": [
+                "Domestic Equities",
+                "International Equities",
+                "Commodities",
+                "Foreign Exchange",
+            ],
+            "sector": [
+                "Technology", "Consumer Discretionary",
+                "Communication Services", "Industrials",
+                "Materials", "Real Estate", "Financials",
+                "Equities", "Small Caps",
+                "High Beta", "Momentum", "Secular Growth",
+                "Mid Caps", "Leverage", "Cyclical Growth",
+                "High Yield", "Convertibles", "EM Credit",
+                "Leveraged Loans", "BDCs",
+            ],
+        },
+        "worst": {
+            "asset_class": [
+                "Domestic Fixed Income",
+            ],
+            "sector": [
+                "USD",
+                "Utilities", "Consumer Staples", "Health Care",
+                "Low Beta", "Defensives", "Value", "Dividend Yield",
+                "Treasury", "Long Bond", "MBS", "TIPS",
+            ],
+        },
+    },
+
+    2: {  # Reflation — growth ↑, inflation ↑
+        "best": {
+            "asset_class": [
+                "Commodities",
+                "Domestic Equities",
+                "International Equities",
+                "Foreign Exchange",
+            ],
+            "sector": [
+                "Technology", "Industrials", "Financials",
+                "Energy", "Consumer Discretionary",
+                "Equities", "Small Caps",
+                "Secular Growth", "High Beta", "Cyclical Growth", "Momentum",
+                "Convertibles", "BDCs", "Preferreds",
+                "Leveraged Loans", "High Yield",
+            ],
+        },
+        "worst": {
+            "asset_class": [
+                "Domestic Fixed Income",
+            ],
+            "sector": [
+                "USD",
+                "Utilities", "Communication Services",
+                "Consumer Staples", "Real Estate", "Health Care",
+                "Low Beta", "Dividend Yield", "Value", "Defensives",
+                "Long Bond", "Treasury", "Munis", "MBS", "IG Credit",
+            ],
+        },
+    },
+
+    3: {  # Stagflation — growth ↓, inflation ↑
+        "best": {
+            "asset_class": [
+                "Commodities",
+                "Domestic Fixed Income",
+            ],
+            "sector": [
+                "Gold",
+                "Utilities", "Energy", "Real Estate",
+                "Technology", "Consumer Staples", "Health Care",
+                "Secular Growth", "Momentum", "Mid Caps",
+                "Low Beta", "Quality",
+                "Munis", "EM Credit", "Long Bond", "TIPS", "Treasury",
+            ],
+        },
+        "worst": {
+            "asset_class": [
+                "Domestic Equities",
+                "International Equities",
+                "Digital Assets",
+            ],
+            "sector": [
+                "Communication Services", "Financials",
+                "Consumer Discretionary", "Industrials", "Materials",
+                "Equities", "Small Caps",
+                "Dividend Yield", "Value", "Defensives",
+                "BDCs", "Preferreds", "Convertibles",
+                "High Yield", "Leveraged Loans",
+            ],
+        },
+    },
+
+    4: {  # Deflation — growth ↓, inflation ↓
+        "best": {
+            "asset_class": [
+                "Domestic Fixed Income",
+            ],
+            "sector": [
+                "Gold", "USD",
+                "Consumer Staples", "Health Care", "Utilities",
+                "Low Beta", "Dividend Yield", "Quality",
+                "Defensives", "Value",
+                "Long Bond", "Treasury", "IG Credit", "Munis", "MBS",
+            ],
+        },
+        "worst": {
+            "asset_class": [
+                "Commodities",
+                "Domestic Equities",
+                "International Equities",
+                "Foreign Exchange",
+                "Digital Assets",
+            ],
+            "sector": [
+                "Energy", "Technology", "Financials",
+                "Industrials", "Consumer Discretionary",
+                "Equities", "Small Caps",
+                "High Beta", "Momentum", "Leverage",
+                "Secular Growth", "Cyclical Growth",
+                "Preferreds", "EM Local Currency",
+                "BDCs", "Leveraged Loans", "TIPS",
+            ],
+        },
+    },
+}
+
+
+def get_quad_alignment(asset_class: str, sector: str, quad: int) -> float:
+    """
+    Returns:
+      +1.0 = Best (Quad tailwind)
+       0.0 = Neutral (not listed)
+      -1.0 = Worst (Quad headwind)
+
+    Sector takes priority over asset class.
+    """
+    if not sector or sector in ALWAYS_NEUTRAL_SECTORS:
+        return 0.0
+
+    q = QUAD_ALIGNMENT.get(quad)
+    if q is None:
+        return 0.0
+
+    if sector in q["best"]["sector"]:
+        return 1.0
+    if sector in q["worst"]["sector"]:
+        return -1.0
+    if asset_class in q["best"]["asset_class"]:
+        return 1.0
+    if asset_class in q["worst"]["asset_class"]:
+        return -1.0
+
+    return 0.0
+
+
+def get_quad_multiplier(viewpoint: str, asset_class: str, sector: str,
+                        current_quad: int | None,
+                        current_prob: float) -> tuple:
+    """
+    Layer 5 — Quad multiplier.
+    Returns (multiplier, label).
+
+    Aligned:    viewpoint matches quad tailwind  → boost
+    Misaligned: viewpoint fights quad headwind   → dampen
+    Floor: 0.50 (never below)
+    Ceiling: 1.25 (at 100% prob, best alignment)
+    """
+    if viewpoint == "Neutral" or current_quad is None:
+        return 1.00, "Neutral"
+
+    alignment = get_quad_alignment(asset_class, sector, current_quad)
+
+    if alignment == 0.0:
+        return 1.00, "Neutral"
+
+    bullish_best  = (viewpoint == "Bullish" and alignment > 0)
+    bearish_worst = (viewpoint == "Bearish" and alignment < 0)
+    aligned = bullish_best or bearish_worst
+
+    direction = 1.0 if aligned else -1.0
+    magnitude = abs(alignment) * current_prob * 0.25
+    mult = max(0.50, round(1.00 + (direction * magnitude), 4))
+
+    label = "Aligned" if aligned else "Misaligned"
+    return mult, label
 
 
 # ── Direction inference from pivot row ────────────────────────────────────────
@@ -452,18 +667,15 @@ def compute_conviction(close: float,
                        trade_dir: str, viewpoint: str,
                        obv_dir: str, obv_ma20: list) -> tuple:
     """
-    Conviction formula — H removed as base (v1.8+).
+    Conviction Layers 1–3 (proximity + OBV alignment + slope boost).
+    Layers 4 (VIX) and 5 (Quad) are applied in compute_output after this call.
 
-      base             = 50   (viewpoint alignment is the gate — trade+trend agree)
-      conviction_raw   = base × (0.70 + 0.30 × prox)   → range 35–50
-      conviction_align = conviction_raw × alignment_mult  (1.20 / 0.85 / 1.00)
-      conviction_final = conviction_align × slope_boost   (1.17 / 1.00)
-                       = min(conviction_final, 100.0)
+      base             = 50
+      conviction_raw   = 50 × (0.70 + 0.30 × prox)   → 35–50
+      conviction_vol   = conviction_raw × obv_mult      (1.20 / 0.85 / 1.00)
+      conviction_slope = conviction_vol × slope_boost   (1.20 / 1.00)
 
-    Range: ~30 (floor) – ~70 (ceiling, current phase)
-    Deferred: VIX regime multiplier, IV regime, quad outlook (later phases)
-
-    Returns (conviction_final, obv_slope, obv_slope_trend).
+    Returns (conviction_slope, obv_slope, obv_slope_trend).
     CRITICAL: caller must blank conviction when Viewpoint = Neutral.
     """
     base = 50.0
@@ -484,17 +696,18 @@ def compute_conviction(close: float,
         obv_ma20, viewpoint, obv_dir,
     )
 
-    conviction_align = conviction_raw * alignment_mult
-    conviction_final = conviction_align * slope_boost
-    conviction_final = min(max(conviction_final, 0.0), 100.0)
+    conviction_vol   = conviction_raw * alignment_mult
+    conviction_slope = conviction_vol * slope_boost
 
-    return round(conviction_final, 2), obv_slope, obv_slope_trend
+    return round(conviction_slope, 4), obv_slope, obv_slope_trend
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def compute_output(ticker: str, db, prior_ranges: dict = None,
-                   asset_class: str = "") -> dict:
+                   asset_class: str = "", sector: str = "",
+                   quad_current: int | None = None,
+                   quad_prob: float = 0.0) -> dict:
     """
     Compute full signal output for all three timeframes for one ticker.
 
@@ -663,31 +876,47 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
     obv_confirming = vol_signal == "Confirming"
 
-    # ── VIX regime — fetched for display/storage; not applied to conviction yet ─
-    _, vix_zone = get_vix_regime_multiplier(db) if db is not None else (1.00, "Unknown")
+    # ── VIX close — read once; used for Layer 4 and display ─────────────────
+    vix_row   = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first() if db else None
+    vix_close = float(vix_row.close) if (vix_row and vix_row.close is not None) else None
 
-    # ── Effective H — still computed for display and regime classification ────
-    # H < 0.45 → mean-reverting (oscillators); H > 0.55 → trending (MAs)
-    # H is NOT used in conviction math (v1.8+)
+    # ── Effective H — display + regime classification only (not in conviction) ─
     h_eff = get_effective_h_trend(
         asset_class, ticker, viewpoint,
         h_trend, h_trend_up, h_trend_down,
     )
 
     # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
-    conviction    = None
-    obv_slope     = "flat"
-    obv_slope_trend = "flat"
+    conviction      = None
+    quad_align_label = "Neutral"
+    quad_mult_val    = 1.00
+    vix_zone         = "N/A"
+    obv_slope        = "flat"
+    obv_slope_trend  = "flat"
+
     if viewpoint != "Neutral":
         trade_lrr = timeframe_results["trade"]["lrr"]
         trade_hrr = timeframe_results["trade"]["hrr"]
-        conviction, obv_slope, obv_slope_trend = compute_conviction(
+
+        # Layers 1–3: proximity + OBV alignment + slope boost
+        conviction_slope, obv_slope, obv_slope_trend = compute_conviction(
             price, trade_lrr, trade_hrr, trade_dir, viewpoint,
             obv_dir, obv_ma20,
         )
 
-    # ── Alert flag ⚡ — fires when conviction reaches near-ceiling ───────────
-    # H removed from alert condition (v1.8+); threshold 65 = ~93% of 70 ceiling
+        # Layer 4: VIX regime (Domestic Equities only)
+        vix_mult, vix_zone = get_vix_mult(vix_close, asset_class)
+        conviction_vix = conviction_slope * vix_mult
+
+        # Layer 5: Quad multiplier
+        quad_mult_val, quad_align_label = get_quad_multiplier(
+            viewpoint, asset_class, sector, quad_current, quad_prob,
+        )
+        conviction_quad = conviction_vix * quad_mult_val
+
+        conviction = round(min(conviction_quad, 100.0), 2)
+
+    # ── Alert flag ⚡ ────────────────────────────────────────────────────────
     alert = bool(
         viewpoint != "Neutral" and
         conviction is not None and conviction >= 65.0
@@ -699,15 +928,17 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     )
 
     return {
-        "ticker":         ticker,
-        "viewpoint":      viewpoint,
-        "conviction":     conviction,
-        "vix_regime":     vix_zone,
-        "vol_signal":     vol_signal,
-        "obv_direction":  obv_dir,
-        "obv_confirming": obv_confirming,
-        "alert":          alert,
-        "trade":          timeframe_results["trade"],
-        "trend":          timeframe_results["trend"],
-        "lt":             timeframe_results["lt"],
+        "ticker":          ticker,
+        "viewpoint":       viewpoint,
+        "conviction":      conviction,
+        "vix_regime":      vix_zone,
+        "quad_alignment":  quad_align_label,
+        "quad_mult":       quad_mult_val,
+        "vol_signal":      vol_signal,
+        "obv_direction":   obv_dir,
+        "obv_confirming":  obv_confirming,
+        "alert":           alert,
+        "trade":           timeframe_results["trade"],
+        "trend":           timeframe_results["trend"],
+        "lt":              timeframe_results["lt"],
     }

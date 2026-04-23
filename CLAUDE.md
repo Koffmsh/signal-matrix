@@ -7,6 +7,7 @@ Readable `.txt` copies exist:
 - `Docs/SignalMatrix_Spec_v1.6.txt` — **superseded** by v1.7 (Phases 1–5 complete, OBV, VIX gauge, futures — retained for reference)
 - `Docs/SignalMatrix_Spec_v1.5.txt` — prior version (Phase 4 era — superseded by v1.6)
 - `Docs/SignalMatrix_Phase5_Spec_v1.0.txt` — Phase 5 spec (Supabase, Fly.io, Schwab OAuth, IV)
+- `Docs/SignalMatrix_ConvictionEngine_v1_9_Spec.md` — v1.9 spec (Quad Multiplier, VIX gate, 5-layer conviction formula) ✅ Implemented
 Neo should read the relevant spec before making methodology or architecture changes.
 CLAUDE.md remains the authoritative source for rules and current state.
 
@@ -331,15 +332,26 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **IV30 vs Schwab "Implied Volatility":** Our IV30 is constant-maturity 30-day interpolated ATM IV (TOS methodology). Schwab's "Implied Volatility" stat in the Options Statistics panel is front-month ATM IV without maturity adjustment — will differ by ~2-4% due to term structure. Both are correct; they measure different things. Constant-maturity is methodologically cleaner for cross-asset comparison.
 - **Idempotency:** checked against `iv_history` table (not `price_cache.iv_source`) — `iv_history` must be cleared to force re-fetch: `DELETE FROM iv_history WHERE iv_date = 'YYYY-MM-DD'`
 
-### Conviction Score — Base 50 + Proximity + OBV Alignment + Slope Boost (v1.8+)
+### Conviction Score — 5-Layer Formula (v1.9)
 - **H completely removed from conviction formula** — H is still calculated and stored for regime classification display only (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT affect conviction score.
-- **Current formula:**
+- **Current formula (5 layers):**
   ```
-  base             = 50   (viewpoint alignment is the gate — trade+trend both agree)
-  conviction_raw   = base × (0.70 + 0.30 × prox)        → range 35–50
-  conviction_align = conviction_raw × alignment_mult      → 1.20 / 0.85 / 1.00
-  conviction_final = conviction_align × slope_boost       → 1.17 / 1.00
-                   = min(conviction_final, 100.0)
+  Layer 0 — Base + Prox:
+    base             = 50   (viewpoint alignment is the gate — trade+trend both agree)
+    conviction_raw   = base × (0.70 + 0.30 × prox)        → range 35–50
+
+  Layer 1 — OBV Alignment multiplier:
+    conviction_align = conviction_raw × alignment_mult      → 1.20 / 0.85 / 1.00
+
+  Layer 2 — OBV Slope Boost:
+    conviction_slope = conviction_align × slope_boost       → 1.20 / 1.00
+
+  Layer 3 — VIX Regime multiplier (Domestic Equities only):
+    conviction_vix   = conviction_slope × vix_mult          → 1.10 / 1.00 / 0.90 / 0.80
+
+  Layer 4 — Quad Multiplier:
+    conviction_final = conviction_vix × quad_mult           → 1.25 / 1.00 / 0.80
+                     = min(conviction_final, 100.0)
   ```
   where `prox` peaks at 1.0 when close is at the entry zone (LRR for Bullish, HRR for Bearish)
 
@@ -350,9 +362,26 @@ Critical issues already resolved — do not reintroduce these bugs:
   - Neutral:    anything else → **× 1.00**
 
 - **Slope boost multiplier (Layer 2)** — only fires when Layer 1 aligned AND slope is accelerating (early in the move):
-  - Bullish + aligned + obv_slope_trend = increasing → **× 1.17**
-  - Bearish + aligned + obv_slope_trend = decreasing → **× 1.17**
+  - Bullish + aligned + obv_slope_trend = increasing → **× 1.20**
+  - Bearish + aligned + obv_slope_trend = decreasing → **× 1.20**
   - Otherwise → **× 1.00**
+
+- **VIX Regime multiplier (Layer 3) — Domestic Equities only:**
+  - VIX < 19 (Investable) → **× 1.10**; 19–23 (Edgy) → **× 1.00**
+  - 24–29 (Choppy) → **× 0.90**; ≥ 30 (Danger) → **× 0.80**
+  - All other asset classes: multiplier = 1.00, regime label = "N/A"
+
+- **Quad Multiplier (Layer 4)** — probability-weighted macro alignment:
+  - `quad_mult = 1.0 + alignment × 0.25 × current_prob`
+  - `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0 / 0.0 / -1.0
+  - Best case (aligned, prob=1.0): **× 1.25**; Worst case (misaligned, prob=1.0): **× 0.80**
+  - Neutral viewpoint → quad_mult = 1.00 (never adjusts neutral signals)
+  - Tickers with `sector = "Index"` → quad_mult = 1.00 (indices are always neutral)
+
+- **Quad Alignment lookup (`get_quad_alignment`):**
+  - Sector takes priority over asset_class (USD, Gold, Yen, British Pound, Euro, etc. use sector key)
+  - Returns +1.0 (Best), 0.0 (Neutral), -1.0 (Worst) for current quad
+  - See `QUAD_ALIGNMENT` dict in `conviction_engine.py` for full quad×category matrix
 
 - **OBV signals computed:**
   - `obv_dir`: pivot-based OBV direction (bar_window=9) — existing, drives vol_signal display
@@ -362,15 +391,13 @@ Critical issues already resolved — do not reintroduce these bugs:
   - `obv_slope_trend`: acceleration — `increasing` | `decreasing` | `flat`
     `slope_prev = obv_ma20[-2] - obv_ma20[-5]`; compare slope_now vs slope_prev
 
-- **Range: ~30 (floor) – ~70 (ceiling)** — current phase
-  - Floor: `50 × 0.70 × 0.85 × 1.00 = 29.75`
-  - Ceiling: `50 × 1.00 × 1.20 × 1.17 = 70.2`
+- **Range: ~24 (floor) – ~99 (ceiling)** — v1.9 full range
+  - Floor: `50 × 0.70 × 0.85 × 1.00 × 0.80 × 0.80 = 23.8`
+  - Ceiling: `50 × 1.00 × 1.20 × 1.20 × 1.10 × 1.25 = 99.0`
 
-- **Alert threshold: conviction ≥ 65** (≈ 93% of ceiling; H condition removed)
-
-- **Deferred to later phases:** VIX regime multiplier, IV vs realized vol / option skew (per asset class), quad outlook
+- **Alert threshold: conviction ≥ 65** (H condition removed)
 - **`vol_signal`** (Confirming/Diverging/Neutral) still computed and stored for popup display — no longer drives a multiplier
-- Old weights history: v1.6: H_trade×0.65 + H_trend×0.35; v1.7: H_eff×100 + prox boost + OBV mult + VIX mult — all superseded
+- Old weights history: v1.6: H_trade×0.65 + H_trend×0.35; v1.7: H_eff×100 + prox boost + OBV mult + VIX mult; v1.8: base50 + prox + OBV align + slope boost — all superseded
 
 ### Bollinger Band LRR/HRR — v1.8 Formula (MA20 close center + close STD + ATR buffer)
 - **Supersedes:** v1.7 H-modulated k_tight formula and v1.8-interim TP-center formula. All prior sigma/anchor/bc_range/MA20_TP formulas obsolete.
@@ -1478,8 +1505,21 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 obv_confirming,             ← True when Vol Direction aligns with Trade Dir (not Viewpoint)
                 h_trade_delta,              ← Phase 6: change in H_trade over ~20 trading days (display only)
                 vix_regime,                 ← Phase 6: 'Investable' | 'Edgy' | 'Choppy' | 'Danger' (from VIX at calc time)
+                quad_alignment,             ← v1.9: 'Best' | 'Worst' | 'Neutral' — asset class/sector alignment to current quad
+                quad_mult,                  ← v1.9: Float — quad multiplier applied to conviction (stored for popup/debug)
                 calculated_at
                 UNIQUE(ticker, timeframe)
+
+quad_settings:  id (INTEGER PRIMARY KEY),
+                current_quad (INTEGER 1-4, NOT NULL),
+                current_prob (FLOAT 0.0-1.0, NOT NULL),
+                next_quad (INTEGER 1-4, nullable),
+                next_prob (FLOAT 0.0-1.0, nullable),
+                effective_date (STRING YYYY-MM-DD, NOT NULL),
+                notes (TEXT, nullable),
+                created_at (STRING UTC)
+                -- Append-only: never update rows; most recent effective_date is always active
+                -- Alembic migration: d352e36b3876
 
 iv_history:     ticker, iv_date,
                 implied_vol,                ← IV30 (30d constant-maturity ATM IV)
@@ -1826,7 +1866,11 @@ git checkout -- .   # roll back if needed
 58. **BREAK_OF_TRADE / BREAK_OF_TREND do NOT change direction to Neutral** — direction holds (Bullish/Bearish) during provisional break; only BREAK_CONFIRMED flips direction to Neutral
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
-61. **VIX regime multiplier tiers are locked (Phase 6)** — Investable (VIX < 19) × 1.10 · Edgy (19–23) × 1.00 · Choppy (24–29) × 0.90 · Danger (≥ 30) × 0.80. Applied last in conviction chain after OBV multiplier. Final conviction capped at 100. Do not change these thresholds without explicit instruction.
+61. **VIX regime multiplier tiers are locked (v1.9)** — Investable (VIX < 19) × 1.10 · Edgy (19–23) × 1.00 · Choppy (24–29) × 0.90 · Danger (≥ 30) × 0.80. **Applies to Domestic Equities only** — all other asset classes return multiplier = 1.00 and regime label "N/A". Applied as Layer 3 in conviction chain. Do not change these thresholds without explicit instruction.
+66. **Quad multiplier (Layer 4) is probability-weighted** — `quad_mult = 1.0 + alignment × 0.25 × current_prob`. Best (aligned, prob=1.0) = 1.25; Worst (misaligned, prob=1.0) = 0.75 → clamped to 0.80 minimum. Neutral viewpoint always returns 1.00. Index sectors always return 1.00.
+67. **Quad settings are append-only** — never UPDATE or DELETE rows from `quad_settings`. Always INSERT a new row. Most recent `effective_date` row is active. Use the Admin Panel → QUAD SETUP tab to manage.
+68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.
+69. **Slope boost changed to × 1.20 in v1.9** (was × 1.17 in v1.8). Do not revert to 1.17.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
 64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched.
@@ -1950,6 +1994,7 @@ Only commit after production is confirmed healthy.
 | Phase 4 | Backend & Database | ✅ Complete — all tasks 4.1–4.13 done |
 | Phase 5 | Schwab API + Cloud Deployment | ✅ Complete — all tasks 5.1–5.6 done |
 | Phase 6 | Conviction Engine Enhancements | ✅ Complete — tasks 6.1–6.3 done |
+| v1.9 | Quad Multiplier + VIX gate + 5-layer conviction | ✅ Complete |
 
 ### Phase 6 Build Sequence
 
@@ -1959,6 +2004,21 @@ Only commit after production is confirmed healthy.
 | 6.2a | VoV percentile rank — 30-day VIX volatility-of-volatility + 252-day rank | ✅ Complete |
 | 6.2b | VIX regime multiplier — Investable/Edgy/Choppy/Danger tiers applied to conviction | ✅ Complete |
 | 6.3 | Asymmetric H (H_eff) — directional Hurst for Commodities/FX; symmetric for all others | ✅ Complete |
+
+### v1.9 Build Sequence
+
+| Task | Deliverable | Status |
+|---|---|---|
+| v1.9-1 | `quad_settings` table + model + Alembic migration | ✅ Complete |
+| v1.9-2 | `signal_output.quad_alignment` + `quad_mult` columns + migration | ✅ Complete |
+| v1.9-3 | `backend/routers/quad.py` — GET/POST `/api/quad/settings` | ✅ Complete |
+| v1.9-4 | VIX Layer 3: asset-class gate (Domestic Equities only) | ✅ Complete |
+| v1.9-5 | Slope boost 1.17 → 1.20; QUAD_ALIGNMENT dict + helpers | ✅ Complete |
+| v1.9-6 | Quad Layer 4 wired into `compute_output()` in `conviction_engine.py` | ✅ Complete |
+| v1.9-7 | `signals.py`: quad_settings fetch, sector_map, pass to compute_output | ✅ Complete |
+| v1.9-8 | `App.js`: quad header display, Asset Class/Sector removed from table, popup additions | ✅ Complete |
+| v1.9-9 | `QuadSetup.js`: full admin quad settings form (fetch/save/display) | ✅ Complete |
+| v1.9-10 | Deploy: Supabase migrations + Fly.io API + web | ✅ Complete |
 
 ---
 
