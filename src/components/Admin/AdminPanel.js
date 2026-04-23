@@ -85,7 +85,7 @@ function TabNav() {
         return (
           <button
             key={tab.path}
-            onClick={() => navigate(tab.path)}
+            onClick={() => navigate(`/admin/${tab.path}`)}
             style={{
               background: "transparent",
               border: "none",
