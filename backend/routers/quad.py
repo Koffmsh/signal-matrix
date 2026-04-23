@@ -1,69 +1,138 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from database import get_db
 from models.quad_settings import QuadSettings
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 router = APIRouter(prefix="/api/quad", tags=["quad"])
 
+_ET = ZoneInfo("America/New_York")
 
-class QuadSettingsCreate(BaseModel):
-    current_quad:   int
-    current_prob:   float        # 0.0–1.0
-    next_quad:      Optional[int]   = None
-    next_prob:      Optional[float] = None
-    effective_date: str          # YYYY-MM-DD ET
-    notes:          Optional[str]   = None
+
+class QuadSettingsUpsert(BaseModel):
+    country:        str   = "US"
+    forecast_month: str           # YYYY-MM (monthly) | YYYY-QN (quarterly)
+    quad:           int           # 1–4
+    probability:    float         # 0.0–1.0
+    quad_type:      str   = "monthly"   # monthly | quarterly
+    notes:          Optional[str] = None
+
+
+def _next_calendar_month(ym: str) -> str:
+    year, month = int(ym[:4]), int(ym[5:7])
+    month += 1
+    if month > 12:
+        month = 1
+        year += 1
+    return f"{year:04d}-{month:02d}"
 
 
 @router.get("/settings")
-def get_quad_settings(db: Session = Depends(get_db)):
-    row = db.query(QuadSettings)\
-            .order_by(QuadSettings.effective_date.desc())\
-            .first()
-    if row is None:
-        return {}
+def get_quad_settings(
+    country: str = "US",
+    type: str = "monthly",
+    db: Session = Depends(get_db),
+):
+    if country.upper() == "ALL":
+        rows = (
+            db.query(QuadSettings)
+            .filter(QuadSettings.quad_type == type)
+            .order_by(QuadSettings.country.asc(), QuadSettings.forecast_month.asc())
+            .all()
+        )
+    else:
+        rows = (
+            db.query(QuadSettings)
+            .filter(
+                QuadSettings.country == country,
+                QuadSettings.quad_type == type,
+            )
+            .order_by(QuadSettings.forecast_month.asc())
+            .all()
+        )
+    return [
+        {
+            "country":        r.country,
+            "forecast_month": r.forecast_month,
+            "quad":           r.quad,
+            "probability":    r.probability,
+            "quad_type":      r.quad_type,
+            "notes":          r.notes,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/current")
+def get_quad_current(db: Session = Depends(get_db)):
+    current_month = datetime.now(_ET).strftime("%Y-%m")
+    next_month = _next_calendar_month(current_month)
+
+    def _fetch(month: str):
+        row = db.query(QuadSettings).filter(
+            QuadSettings.country == "US",
+            QuadSettings.forecast_month == month,
+            QuadSettings.quad_type == "monthly",
+        ).first()
+        if row is None:
+            return None
+        return {
+            "forecast_month": row.forecast_month,
+            "quad":           row.quad,
+            "probability":    row.probability,
+        }
+
     return {
-        "current_quad":   row.current_quad,
-        "current_prob":   row.current_prob,
-        "next_quad":      row.next_quad,
-        "next_prob":      row.next_prob,
-        "effective_date": row.effective_date,
-        "notes":          row.notes,
+        "monthly":      _fetch(current_month),
+        "next_monthly": _fetch(next_month),
     }
 
 
 @router.post("/settings")
-def post_quad_settings(body: QuadSettingsCreate, db: Session = Depends(get_db)):
-    if not 1 <= body.current_quad <= 4:
-        raise HTTPException(status_code=400, detail="current_quad must be 1–4")
-    if not 0.0 <= body.current_prob <= 1.0:
-        raise HTTPException(status_code=400, detail="current_prob must be 0.0–1.0")
-    if body.next_quad is not None and not 1 <= body.next_quad <= 4:
-        raise HTTPException(status_code=400, detail="next_quad must be 1–4")
-    if body.next_prob is not None and not 0.0 <= body.next_prob <= 1.0:
-        raise HTTPException(status_code=400, detail="next_prob must be 0.0–1.0")
+def post_quad_settings(body: QuadSettingsUpsert, db: Session = Depends(get_db)):
+    if not 1 <= body.quad <= 4:
+        raise HTTPException(status_code=400, detail="quad must be 1–4")
+    if not 0.0 <= body.probability <= 1.0:
+        raise HTTPException(status_code=400, detail="probability must be 0.0–1.0")
 
-    row = QuadSettings(
-        current_quad   = body.current_quad,
-        current_prob   = body.current_prob,
-        next_quad      = body.next_quad,
-        next_prob      = body.next_prob,
-        effective_date = body.effective_date,
-        notes          = body.notes,
-        created_at     = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
+    existing = db.query(QuadSettings).filter(
+        QuadSettings.country        == body.country,
+        QuadSettings.forecast_month == body.forecast_month,
+        QuadSettings.quad_type      == body.quad_type,
+    ).first()
+
+    now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    if existing:
+        existing.quad        = body.quad
+        existing.probability = body.probability
+        existing.notes       = body.notes
+        db.commit()
+        db.refresh(existing)
+        row = existing
+    else:
+        row = QuadSettings(
+            country        = body.country,
+            forecast_month = body.forecast_month,
+            quad           = body.quad,
+            probability    = body.probability,
+            quad_type      = body.quad_type,
+            notes          = body.notes,
+            created_at     = now_str,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
     return {
         "id":             row.id,
-        "current_quad":   row.current_quad,
-        "current_prob":   row.current_prob,
-        "next_quad":      row.next_quad,
-        "next_prob":      row.next_prob,
-        "effective_date": row.effective_date,
+        "country":        row.country,
+        "forecast_month": row.forecast_month,
+        "quad":           row.quad,
+        "probability":    row.probability,
+        "quad_type":      row.quad_type,
         "notes":          row.notes,
     }

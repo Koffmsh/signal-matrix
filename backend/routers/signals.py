@@ -153,12 +153,17 @@ def run_output(db: Session) -> dict:
     asset_class_map_out = {t.ticker: (t.asset_class or "") for t in ticker_rows_out}
     sector_map_out      = {t.ticker: (t.sector      or "") for t in ticker_rows_out}
 
-    # Fetch active quad settings (most recent effective_date)
-    quad_row     = db.query(QuadSettings)\
-                     .order_by(QuadSettings.effective_date.desc())\
-                     .first()
-    quad_current = quad_row.current_quad if quad_row else None
-    quad_prob    = quad_row.current_prob if quad_row else 0.0
+    # Fetch US monthly quad for current ET month
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/New_York")
+    current_month = datetime.now(_ET).strftime("%Y-%m")
+    quad_row = db.query(QuadSettings).filter(
+        QuadSettings.country        == "US",
+        QuadSettings.forecast_month == current_month,
+        QuadSettings.quad_type      == "monthly",
+    ).first()
+    quad_current = quad_row.quad        if quad_row else None
+    quad_prob    = quad_row.probability if quad_row else 0.0
 
     for ticker in get_active_tickers(db):
         try:

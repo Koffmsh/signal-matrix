@@ -442,9 +442,9 @@ function Dashboard() {
 
   // Load quad settings on page load
   useEffect(() => {
-    fetch(`${API_BASE}/api/quad/settings`)
+    fetch(`${API_BASE}/api/quad/current`)
       .then(r => r.json())
-      .then(data => { if (data.current_quad) setQuadSettings(data); })
+      .then(data => { if (data.monthly) setQuadSettings(data); })
       .catch(() => {});
   }, []);
 
@@ -734,25 +734,28 @@ function Dashboard() {
           );
         })()}
         {/* Quad display */}
-        {quadSettings && (
+        {quadSettings && quadSettings.monthly && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
             <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>QUAD FRAMEWORK</div>
             <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "700", letterSpacing: "0.08em" }}>
               {(() => {
                 const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
-                const q = quadSettings.current_quad;
-                const p = Math.round((quadSettings.current_prob ?? 0) * 100);
+                const q = quadSettings.monthly.quad;
+                const p = Math.round((quadSettings.monthly.probability ?? 0) * 100);
+                const [yr, mo] = quadSettings.monthly.forecast_month.split("-");
+                const monthLabel = new Date(parseInt(yr), parseInt(mo) - 1, 1)
+                  .toLocaleString("en-US", { month: "short" }).toUpperCase() + " " + yr;
                 return (
-                  <span style={{ color: qColors[q] }}>QUAD {q}  {p}%</span>
+                  <span style={{ color: qColors[q] }}>QUAD {q}  {p}%  <span style={{ fontSize: "9px", opacity: 0.75 }}>{monthLabel}</span></span>
                 );
               })()}
-              {quadSettings.next_quad && (
+              {quadSettings.next_monthly && (
                 <>
                   <span style={{ color: "#8899aa" }}>→</span>
                   {(() => {
                     const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
-                    const q = quadSettings.next_quad;
-                    const p = Math.round((quadSettings.next_prob ?? 0) * 100);
+                    const q = quadSettings.next_monthly.quad;
+                    const p = Math.round((quadSettings.next_monthly.probability ?? 0) * 100);
                     return (
                       <span style={{ color: qColors[q] }}>QUAD {q}  {p}%</span>
                     );
