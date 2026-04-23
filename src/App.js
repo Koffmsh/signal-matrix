@@ -945,7 +945,7 @@ function Dashboard() {
               <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Conviction % — 4 layers · blank when Viewpoint = Neutral&#10;&#10;L1 Price:   base 50 × (0.70 + 0.30 × prox)  →  35–50&#10;    prox peaks at 1.0 at entry zone (LRR for Bullish · HRR for Bearish)&#10;&#10;L2 Volume:  × OBV align  ×  slope boost&#10;    Aligned (pivot + slope confirm viewpoint): ×1.20&#10;    Misaligned (both oppose): ×0.85 · Neutral: ×1.00&#10;    Slope boost (aligned + accelerating): ×1.20&#10;&#10;L3 Volatility — Domestic Equities only:&#10;    VIX < 19 Investable ×1.10 · 19–23 Edgy ×1.00&#10;    24–29 Choppy ×0.90 · ≥30 Danger ×0.80&#10;    All other asset classes: ×1.00&#10;&#10;L4 Quad alignment (probability-weighted):&#10;    1.0 + align × 0.25 × prob&#10;    Aligned ×1.25 · Neutral ×1.00 · Misaligned ×0.80&#10;    Index sector: always ×1.00&#10;&#10;Range ~24–99 · ⚡ alert ≥ 65&#10;Green ≥70% · Amber 50–69% · Grey &lt;50%" />
+                title="Price (base, prox) → Volume (OBV align, slope) → Volatility (VIX regime) → Quad → cap 100&#10;Green ≥70% · Amber 50–69% · Grey &lt;50% · Blank = Neutral · ⚡ ≥ 65" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
