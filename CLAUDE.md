@@ -162,7 +162,22 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Applied in `compute_pivots_for_timeframe` by filtering `pivot_highs` / `pivot_lows` before passing to `find_abc_structure`
 - Full price history is still used for D computation and break detection — only the ABC search is constrained
 - Distinct from `_STALE_C_DAYS` (which discards a structure after C gets too old): A lookback prevents an old irrelevant A from being selected in the first place
+- When A eventually drops outside the lookback window (e.g. a long-running uptrend), the engine naturally re-anchors to the next most extreme pivot in the window — A advances to a higher low (uptrend) or lower high (downtrend) automatically
 - **Rule:** Do not increase `_MAX_A_LOOKBACK["trade"]` above 60 bars — going back to September to anchor A for a 3-week trade timeframe is methodologically wrong
+
+### B Advancement — `update_b_dynamically` (`pivot_engine.py`)
+- B was historically fixed at the first confirmed pivot after A and never updated, making the BC range and d_extended threshold stale for the lifetime of the structure
+- **Fixed:** After `update_c_dynamically` finalizes C, `update_b_dynamically` advances B to the **most recent** confirmed pivot high (uptrend) or pivot low (downtrend) between A_idx and C_idx
+- B can advance to a higher OR lower price than the initial B — it always reflects the most recent structural reference point before C
+- B is between A and C in **time** (index), not necessarily in price direction — A < C < B in price for uptrend; B < C < A in price for downtrend
+- **D re-computes against new B:** if B advances past the previously established D level, D temporarily un-establishes until price closes through the new B — correct behavior since D must prove the trend beyond the new structural reference
+- **d_extended uses updated B and BC range:** `bc_range = abs(new_B - new_C)`; d_extended fires when D > new_B + bc_range (uptrend) or D < new_B - bc_range (downtrend)
+- **Warn flags use updated B:** `hrr_warn = hrr < b` (uptrend) compares HRR against the most recent swing high, not a stale first pivot after A
+- **Execution order in `compute_pivots_for_timeframe`:**
+  1. `update_c_dynamically` — walks C to most recent valid structural level
+  2. `update_b_dynamically` — advances B to most recent pivot between A and updated C
+  3. `compute_d_and_state` — uses updated B + C for D, d_extended, and state
+- **Rule:** Do not remove `update_b_dynamically` or swap its order with `update_c_dynamically` — C must be finalized before B can be correctly advanced
 
 ### Yahoo Finance `auto_adjust=False` — Actual Close Prices (`yahoo_finance.py`)
 - Old behavior: `yf.Ticker().history()` uses `auto_adjust=True` by default — silently adjusts all historical closes for dividends, making stored prices diverge from actual traded prices
