@@ -346,6 +346,38 @@ def update_c_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict
     return {**abc, "c": c_price, "c_idx": c_idx}
 
 
+def update_b_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict:
+    """
+    After C is finalized, advance B to the most recent confirmed pivot between
+    A and C:
+
+    Uptrend:   most recent confirmed pivot HIGH with a_idx < idx < c_idx
+    Downtrend: most recent confirmed pivot LOW  with a_idx < idx < c_idx
+
+    B can advance to a higher OR lower price than the initial B — it always
+    reflects the most recent structural reference point before the current C.
+    This keeps the BC range and d_extended threshold current rather than
+    anchored to the first pivot found after A.
+
+    Returns updated abc dict (or original if no candidate is found).
+    """
+    direction = abc["direction"]
+    a_idx     = abc["a_idx"]
+    c_idx     = abc["c_idx"]
+
+    if direction == "uptrend":
+        candidates = [(i, p) for i, p in pivot_highs if a_idx < i < c_idx]
+    else:
+        candidates = [(i, p) for i, p in pivot_lows if a_idx < i < c_idx]
+
+    if not candidates:
+        return abc
+
+    # Pivots are ordered oldest→newest; last entry is most recent
+    new_b_idx, new_b_price = candidates[-1]
+    return {**abc, "b": new_b_price, "b_idx": new_b_idx}
+
+
 # ── Confirmed break detection ─────────────────────────────────────────────────
 
 def _check_break_confirmed(prices: list, c_idx: int, c_price: float,
@@ -546,7 +578,10 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
     if abc is None:
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
-    # Update C to the most recent confirmed structural level
+    # Walk C to the most recent confirmed structural level, then advance B to
+    # the most recent confirmed pivot between A and the updated C.
+    abc = update_c_dynamically(abc, pivot_highs, pivot_lows)
+    abc = update_b_dynamically(abc, pivot_highs, pivot_lows)
 
     d_price, d_idx, state, d_extended = compute_d_and_state(abc, prices, timeframe)
 
