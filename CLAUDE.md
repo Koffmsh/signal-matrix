@@ -649,7 +649,9 @@ signal-matrix/
 ├── src/
 │   ├── components/
 │   │   ├── Admin/
-│   │   │   └── AdminPanel.js              ← Tasks 4.6/4.7 — ticker CRUD + yfinance lookup
+│   │   │   ├── AdminPanel.js              ← admin shell: password gate + header + tab nav + nested Routes
+│   │   │   ├── TickerList.js              ← ticker CRUD tab (/admin/tickers) — extracted from AdminPanel
+│   │   │   └── QuadSetup.js              ← quad config tab (/admin/quad) — stub, ready for spec
 │   │   ├── Analysis/
 │   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
@@ -1732,6 +1734,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `3432b45` — feat: volatility tracking — HV30/HV90, IV30, risk reversal, skew rank, P/C ratio
   - `8afa3d3` — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
   - `f2ec28b` — feat: left sidebar navigation + /ticker/:symbol stub route (AppLayout pattern, NAV_ITEMS array)
+  - `8463a95` — feat: admin shell with horizontal tab nav — AdminPanel→shell, TickerList extracted, QuadSetup stub
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -1746,11 +1749,16 @@ git checkout -- .   # roll back if needed
 ---
 
 ## Admin Panel
-- **Route:** `localhost:3000/admin` — hidden, not in main nav
-- **Access:** Password from `.env` → `REACT_APP_ADMIN_PASSWORD`
+- **Route:** `localhost:3000/admin` (redirects to `/admin/tickers`) — hidden, not in main nav or sidebar
+- **Access:** Password from `.env` → `REACT_APP_ADMIN_PASSWORD` — gate is in `AdminPanel.js` shell
+- **Tab nav:** Horizontal tabs below the header — [TICKERS] [QUAD SETUP] — add new tabs by extending `TABS` array in `AdminPanel.js`
+- **Sub-routes:** `/admin/tickers` → `TickerList.js` · `/admin/quad` → `QuadSetup.js` · unknown paths redirect to tickers
+- **App.js route:** `/admin/*` (wildcard required for nested routing)
+- **Sidebar:** Hidden on all `/admin/*` paths via `showSidebar` check in `AppLayout`
 - **After changing `.env`:** Must restart Docker container
 - **Never hardcode the password in source code**
 - **Never hard delete tickers** — use `active: false` via DELETE endpoint
+- **Adding a new admin tab:** (1) create the component, (2) add `{ label, path }` to `TABS` in `AdminPanel.js`, (3) add `<Route path="x" element={<X />} />` inside `AdminPanel`'s `<Routes>`
 
 ---
 
