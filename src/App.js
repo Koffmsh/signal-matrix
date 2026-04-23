@@ -39,7 +39,7 @@ function AppLayout() {
       <div style={{ flex: 1, overflow: "auto" }}>
         <Routes>
           <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
-          <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/admin/*" element={<AdminPanel />} />
           <Route path="*" element={<Dashboard />} />
         </Routes>
       </div>
