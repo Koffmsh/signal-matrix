@@ -332,24 +332,23 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **IV30 vs Schwab "Implied Volatility":** Our IV30 is constant-maturity 30-day interpolated ATM IV (TOS methodology). Schwab's "Implied Volatility" stat in the Options Statistics panel is front-month ATM IV without maturity adjustment — will differ by ~2-4% due to term structure. Both are correct; they measure different things. Constant-maturity is methodologically cleaner for cross-asset comparison.
 - **Idempotency:** checked against `iv_history` table (not `price_cache.iv_source`) — `iv_history` must be cleared to force re-fetch: `DELETE FROM iv_history WHERE iv_date = 'YYYY-MM-DD'`
 
-### Conviction Score — 5-Layer Formula (v1.9)
+### Conviction Score — 4-Layer Formula (v1.9)
 - **H completely removed from conviction formula** — H is still calculated and stored for regime classification display only (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT affect conviction score.
-- **Current formula (5 layers):**
+- **4 conceptual layers (Price → Volume → Volatility → Quad):**
   ```
-  Layer 0 — Base + Prox:
+  Layer 1 — PRICE (base + proximity):
     base             = 50   (viewpoint alignment is the gate — trade+trend both agree)
     conviction_raw   = base × (0.70 + 0.30 × prox)        → range 35–50
+    prox peaks at 1.0 at entry zone (LRR for Bullish, HRR for Bearish)
 
-  Layer 1 — OBV Alignment multiplier:
+  Layer 2 — VOLUME (OBV alignment × slope boost):
     conviction_align = conviction_raw × alignment_mult      → 1.20 / 0.85 / 1.00
-
-  Layer 2 — OBV Slope Boost:
     conviction_slope = conviction_align × slope_boost       → 1.20 / 1.00
 
-  Layer 3 — VIX Regime multiplier (Domestic Equities only):
+  Layer 3 — VOLATILITY (VIX regime — Domestic Equities only):
     conviction_vix   = conviction_slope × vix_mult          → 1.10 / 1.00 / 0.90 / 0.80
 
-  Layer 4 — Quad Multiplier:
+  Layer 4 — QUAD ALIGNMENT (probability-weighted macro regime):
     conviction_final = conviction_vix × quad_mult           → 1.25 / 1.00 / 0.80
                      = min(conviction_final, 100.0)
   ```
@@ -678,7 +677,7 @@ signal-matrix/
 │   │   ├── Admin/
 │   │   │   ├── AdminPanel.js              ← admin shell: password gate + header + tab nav + nested Routes
 │   │   │   ├── TickerList.js              ← ticker CRUD tab (/admin/tickers) — extracted from AdminPanel
-│   │   │   └── QuadSetup.js              ← quad config tab (/admin/quad) — stub, ready for spec
+│   │   │   └── QuadSetup.js              ← quad config tab (/admin/quad) — US monthly NTM grid (12 rows, auto-save) + country quarterly table (16 countries × 4 quarters)
 │   │   ├── Analysis/
 │   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
@@ -1511,15 +1510,19 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 UNIQUE(ticker, timeframe)
 
 quad_settings:  id (INTEGER PRIMARY KEY),
-                current_quad (INTEGER 1-4, NOT NULL),
-                current_prob (FLOAT 0.0-1.0, NOT NULL),
-                next_quad (INTEGER 1-4, nullable),
-                next_prob (FLOAT 0.0-1.0, nullable),
-                effective_date (STRING YYYY-MM-DD, NOT NULL),
+                country        (STRING(10) NOT NULL, DEFAULT 'US')       -- 'US', 'JP', 'CN', etc.
+                forecast_month (STRING(7)  NOT NULL)                     -- 'YYYY-MM' monthly | 'YYYY-QN' quarterly
+                quad           (INTEGER    NOT NULL)                     -- 1–4
+                probability    (FLOAT      NOT NULL)                     -- 0.0–1.0 (1.0 for country quarterly rows)
+                quad_type      (STRING(20) NOT NULL, DEFAULT 'monthly')  -- 'monthly' | 'quarterly'
                 notes (TEXT, nullable),
                 created_at (STRING UTC)
-                -- Append-only: never update rows; most recent effective_date is always active
-                -- Alembic migration: d352e36b3876
+                UNIQUE(country, forecast_month, quad_type)
+                -- Upsert semantics: POST checks UNIQUE key → update if exists, insert if not
+                -- Conviction reads US monthly quad for current ET month
+                -- GET /api/quad/settings?country=US&type=monthly → list ordered by forecast_month ASC
+                -- GET /api/quad/current → {monthly, next_monthly} for current + next ET month
+                -- Alembic migration: e6d00527381b (drops old single-row schema, recreates)
 
 iv_history:     ticker, iv_date,
                 implied_vol,                ← IV30 (30d constant-maturity ATM IV)
@@ -1775,6 +1778,9 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `8afa3d3` — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
   - `f2ec28b` — feat: left sidebar navigation + /ticker/:symbol stub route (AppLayout pattern, NAV_ITEMS array)
   - `8463a95` — feat: admin shell with horizontal tab nav — AdminPanel→shell, TickerList extracted, QuadSetup stub
+  - `ae066f3` — feat: redesign quad settings — monthly NTM grid + country quarterly table (migration e6d00527381b, upsert API, QuadSetup full rewrite)
+  - `a736d6e` — fix: QuadSetup text hierarchy — #c8d8e8 for headers/labels, #8899aa for descriptive text
+  - `af7fce3` — fix: QuadSetup active quad button — 33% opacity fill + white text (matches Hedgeye colored box style)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -1868,13 +1874,14 @@ git checkout -- .   # roll back if needed
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
 61. **VIX regime multiplier tiers are locked (v1.9)** — Investable (VIX < 19) × 1.10 · Edgy (19–23) × 1.00 · Choppy (24–29) × 0.90 · Danger (≥ 30) × 0.80. **Applies to Domestic Equities only** — all other asset classes return multiplier = 1.00 and regime label "N/A". Applied as Layer 3 in conviction chain. Do not change these thresholds without explicit instruction.
 66. **Quad multiplier (Layer 4) is probability-weighted** — `quad_mult = 1.0 + alignment × 0.25 × current_prob`. Best (aligned, prob=1.0) = 1.25; Worst (misaligned, prob=1.0) = 0.75 → clamped to 0.80 minimum. Neutral viewpoint always returns 1.00. Index sectors always return 1.00.
-67. **Quad settings are append-only** — never UPDATE or DELETE rows from `quad_settings`. Always INSERT a new row. Most recent `effective_date` row is active. Use the Admin Panel → QUAD SETUP tab to manage.
+67. **Quad settings use upsert semantics** — POST to `/api/quad/settings` checks `UNIQUE(country, forecast_month, quad_type)`: updates existing row if found, inserts new row otherwise. `forecast_month` replaces the old `effective_date` key. Conviction reads the US monthly row whose `forecast_month` = current ET month (not most-recent-row). Admin Panel → QUAD SETUP manages this.
 68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.
 69. **Slope boost changed to × 1.20 in v1.9** (was × 1.17 in v1.8). Do not revert to 1.17.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
 64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched.
 65. **Proactive spec review** — when reading a spec or reviewing methodology, flag any inconsistencies with existing code or other parts of the spec before implementing. Do not implement silently when something looks wrong or contradictory.
+70. **UI text contrast — 3-level hierarchy** — Never use `#445566` or darker for readable text. Three levels: (1) `#00e5a0` green for section titles/headers; (2) `#c8d8e8` for column headers, data labels, group separators; (3) `#8899aa` for descriptive/secondary text (subtitles, inactive controls, units). Reserve `#445566` and darker for decorative borders only.
 
 ---
 
