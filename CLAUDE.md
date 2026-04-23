@@ -554,6 +554,26 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - Dashboard still remounts on navigation (Routes unmounts inactive routes) but with `/cached` the re-fetch is instant (pure DB read)
 - nginx `try_files` config already handles SPA routing in production — no nginx changes needed
 
+### Left Sidebar Navigation (`src/components/shared/Sidebar.js`)
+- Collapsible icon rail: **48px collapsed** (icon only), **180px expanded** (icon + label) on `onMouseEnter`/`onMouseLeave`; `transition: width 200ms ease`
+- Active item: `3px solid #00e5a0` left border + `rgba(0,229,160,0.07)` background; detected via `useLocation()` (exact match for `/`, prefix for sub-routes)
+- **NAV_ITEMS array** in `Sidebar.js` is the single place to add future dashboards — each entry is `{ icon, label, path, exact }`
+- **Admin is NOT in the sidebar** — admin remains accessible only by direct URL (`/admin`); settings gear icon (deferred) will be the future password gate
+- **AppLayout pattern in `App.js`:** `App` renders `<BrowserRouter><AppLayout />` — `AppLayout` uses `useLocation()` to conditionally show Sidebar (hidden when path starts with `/admin`), then renders `<Routes>` in a flex container
+- **Routes defined:**
+  - `/ticker/:symbol` → `TickerAnalysis` stub (future ticker drill-down analysis page)
+  - `/admin` → `AdminPanel` (no sidebar)
+  - `*` → `Dashboard` (catch-all)
+- **Sidebar is sticky** (`position: sticky; top: 0`) — stays visible while dashboard table scrolls
+- **Rule:** Add new dashboards by appending to `NAV_ITEMS` in `Sidebar.js` — no other files need changing for basic nav items
+
+### Ticker Analysis Page — Stub (`src/components/Analysis/TickerAnalysis.js`)
+- Route: `/ticker/:symbol` — reads symbol from `useParams()`
+- Has a ticker input form: submit navigates to `/ticker/{SYMBOL}` (uppercased, trimmed)
+- Placeholder "COMING SOON" body — full charts/IV/structure/regime content is future scope
+- Sidebar is present (rendered by AppLayout for all non-admin routes)
+- **Rule:** Dashboard row-click behavior is unchanged (popup still fires) — when the full analysis page is built, wire it by replacing the row-click handler in `App.js`
+
 ### N+1 Query Fix — Batch Read Path (`market_data.py`)
 - **Root problem:** `refresh_data()` read cache results with a per-ticker loop: `for ticker in tickers: db.query(PriceCache).filter(ticker == t).first()` — 51 round trips to Supabase to build a single page load response
 - **Fix:** Single `IN` query with `load_only` — fetches only the columns needed for `serialize_cache_row`, skips `history_json` and `volume_history_json` blobs (252-756 data points each, never used in page load response)
@@ -630,8 +650,11 @@ signal-matrix/
 │   ├── components/
 │   │   ├── Admin/
 │   │   │   └── AdminPanel.js              ← Tasks 4.6/4.7 — ticker CRUD + yfinance lookup
+│   │   ├── Analysis/
+│   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
-│   │   └── shared/                        ← placeholder
+│   │   └── shared/
+│   │       └── Sidebar.js                 ← collapsible left sidebar (48px→180px on hover); NAV_ITEMS array
 │   ├── data/
 │   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is SQLite tickers table
 │   ├── hooks/                             ← placeholder
@@ -1708,6 +1731,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `7f1eeda` — feat: conviction engine v1.8 — remove H, OBV slope layers, auto_adjust fix
   - `3432b45` — feat: volatility tracking — HV30/HV90, IV30, risk reversal, skew rank, P/C ratio
   - `8afa3d3` — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
+  - `f2ec28b` — feat: left sidebar navigation + /ticker/:symbol stub route (AppLayout pattern, NAV_ITEMS array)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
