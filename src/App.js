@@ -1068,9 +1068,6 @@ function Dashboard() {
             ["Tail Level",  fmtPrice(row.ltLRR),                                                           dirColor(row.ltDir),                                       false],
           ] : []),
           ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false, "Hurst exponent (Trade, 63-day DFA)\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
-          ["ΔH (20d)",     row.hTradeDelta != null ? `${row.hTradeDelta >= 0 ? "+" : ""}${row.hTradeDelta.toFixed(3)}` : "—",
-                           row.hTradeDelta == null ? "#8899aa" : row.hTradeDelta >= 0 ? "#00e5a0" : row.hTradeDelta < -0.05 ? "#ff4d6d" : "#f0b429",
-                           false, "Change in H_trade over ~20 trading days\nPositive — trend momentum improving (green)\n0 to −0.05 — mild deterioration (amber)\n< −0.05 — meaningful deterioration (red)"],
           ["VIX Regime",   row.vixRegime || "—",
                            (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Edgy" ? "#8899aa" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : r === "N/A" ? "#445566" : "#8899aa"; })(),
                            false, "VIX regime at time of signal calculation\nInvestable (VIX < 19) — Domestic Equities × 1.10\nEdgy (19–23) — × 1.00\nChoppy (24–29) — × 0.90\nDanger (≥ 30) — × 0.80\nN/A — non-equity asset class, no multiplier applied"],
@@ -1116,25 +1113,6 @@ function Dashboard() {
                            })(),
                            false,
                            "VRP rank within 252-day rolling history\nLow = options historically cheap vs realized vol = green\nHigh = options historically expensive = red"],
-          ["VRP Change",   (() => {
-                             const fmt = (v) => v != null ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}` : "—";
-                             const parts = [
-                               `1d ${fmt(row.vrp1dChg)}`,
-                               `1w ${fmt(row.vrp1wChg)}`,
-                               `1m ${fmt(row.vrp1mChg)}`,
-                             ];
-                             return parts.join("  ·  ");
-                           })(),
-                           "#8899aa",
-                           false,
-                           "VRP change (percentage points) over 1 trading day, 1 week (5d), 1 month (21d)\nRising VRP = options getting more expensive vs realized vol\nFalling VRP = options getting cheaper vs realized vol"],
-          ["P/C Ratio",    row.putCallRatio != null ? row.putCallRatio.toFixed(2) : "—",
-                           (() => {
-                             if (row.putCallRatio == null) return "#8899aa";
-                             return row.putCallRatio > 1.2 ? "#00e5a0" : row.putCallRatio < 0.6 ? "#ff4d6d" : "#8899aa";
-                           })(),
-                           false,
-                           "Total put OI ÷ total call OI\n> 1.2 = extreme fear / capitulation = contrarian bullish\n< 0.6 = complacency = potential top signal"],
           ["Updated",      row.updated,                                                                    "#667788",                              false],
           ["Asset Class",  row.assetClass || "—",                                                          "#8899aa",                              false],
           ["Sector",       row.sector     || "—",                                                          "#8899aa",                              false],
