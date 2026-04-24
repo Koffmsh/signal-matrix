@@ -679,6 +679,32 @@ function Dashboard() {
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB, row.trendExtended)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
+        {/* Quad Now */}
+        {(() => {
+          const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
+          if (!quadSettings?.monthly) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
+          const q = quadSettings.monthly.quad;
+          const p = Math.round((quadSettings.monthly.probability ?? 0) * 100);
+          return (
+            <td style={{ padding: "9px 8px", textAlign: "center" }}>
+              <span style={{ color: qColors[q], fontWeight: "700", fontSize: "11px", letterSpacing: "0.05em" }}>Q{q}</span>
+              <span style={{ color: "#8899aa", fontSize: "9px" }}> {p}%</span>
+            </td>
+          );
+        })()}
+        {/* Quad Next */}
+        {(() => {
+          const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
+          if (!quadSettings?.next_monthly) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
+          const q = quadSettings.next_monthly.quad;
+          const p = Math.round((quadSettings.next_monthly.probability ?? 0) * 100);
+          return (
+            <td style={{ padding: "9px 8px", textAlign: "center" }}>
+              <span style={{ color: qColors[q], fontWeight: "700", fontSize: "11px", letterSpacing: "0.05em" }}>Q{q}</span>
+              <span style={{ color: "#8899aa", fontSize: "9px" }}> {p}%</span>
+            </td>
+          );
+        })()}
       </tr>
     );
   };
@@ -953,6 +979,24 @@ function Dashboard() {
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
               <SortHdr label="TREND LEVEL" k="trendLRR" />
+              {/* Quad month columns — non-sortable */}
+              {(() => {
+                const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
+                const fmtMo = (fm) => { if (!fm) return null; const [yr, mo] = fm.split("-"); return new Date(parseInt(yr), parseInt(mo)-1, 1).toLocaleString("en-US", { month: "short" }).toUpperCase() + " '" + yr.slice(2); };
+                const nowLabel  = quadSettings?.monthly?.forecast_month      ? fmtMo(quadSettings.monthly.forecast_month)      : null;
+                const nextLabel = quadSettings?.next_monthly?.forecast_month ? fmtMo(quadSettings.next_monthly.forecast_month) : null;
+                const thStyle = { cursor: "default", userSelect: "none", padding: "10px 8px", textAlign: "center", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" };
+                return (<>
+                  <th style={thStyle} title="Current month US quad assignment">
+                    <div style={{ fontSize: "9px", color: nowLabel && quadSettings?.monthly ? qColors[quadSettings.monthly.quad] : "#8899aa" }}>QUAD</div>
+                    <div style={{ fontSize: "9px", color: "#8899aa" }}>{nowLabel || "—"}</div>
+                  </th>
+                  <th style={thStyle} title="Next month US quad assignment">
+                    <div style={{ fontSize: "9px", color: nextLabel && quadSettings?.next_monthly ? qColors[quadSettings.next_monthly.quad] : "#8899aa" }}>QUAD</div>
+                    <div style={{ fontSize: "9px", color: "#8899aa" }}>{nextLabel || "—"}</div>
+                  </th>
+                </>);
+              })()}
             </tr>
           </thead>
           <tbody>
@@ -965,7 +1009,7 @@ function Dashboard() {
                 : [];
               const sep = needsSep ? [
                 <tr key={`sep-${row.assetClass}`}>
-                  <td colSpan={14} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
+                  <td colSpan={16} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
                     {row.assetClass.toUpperCase()}
                   </td>
                 </tr>
