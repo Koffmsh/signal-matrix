@@ -390,6 +390,7 @@ function Dashboard() {
   const [schedulerStatus, setSchedulerStatus] = useState(null);
   const [schwabStatus,    setSchwabStatus]    = useState(null);
   const [quadSettings,    setQuadSettings]    = useState(null);
+  const [countryQuads,    setCountryQuads]    = useState({});   // sector → {cur: quad, next: quad}
 
   // Load ticker universe from DB on page load
   useEffect(() => {
@@ -445,6 +446,37 @@ function Dashboard() {
     fetch(`${API_BASE}/api/quad/current`)
       .then(r => r.json())
       .then(data => { if (data.monthly) setQuadSettings(data); })
+      .catch(() => {});
+  }, []);
+
+  // Load country quarterly quads on page load — for International Equities rows
+  useEffect(() => {
+    fetch(`${API_BASE}/api/quad/settings?country=ALL&type=quarterly`)
+      .then(r => r.json())
+      .then(rows => {
+        const now   = new Date();
+        const curQ  = Math.floor(now.getMonth() / 3) + 1;
+        const nextQ = curQ === 4 ? 1 : curQ + 1;
+        const nextY = curQ === 4 ? now.getFullYear() + 1 : now.getFullYear();
+        const curKey  = `${now.getFullYear()}-Q${curQ}`;
+        const nextKey = `${nextY}-Q${nextQ}`;
+        // country_code → sector label (mirrors _SECTOR_TO_CODE in signals.py)
+        const CODE_TO_SECTOR = {
+          JP: "Japan", CN: "China", MX: "Mexico", TR: "Turkey", AE: "UAE",
+          DE: "Germany", FR: "France", GB: "United Kingdom", ES: "Spain",
+          KR: "South Korea", IN: "India", BR: "Brazil", CA: "Canada",
+          AU: "Australia", EU: "Eurozone", US: "United States",
+        };
+        const map = {};
+        rows.forEach(r => {
+          const sector = CODE_TO_SECTOR[r.country];
+          if (!sector) return;
+          if (!map[sector]) map[sector] = {};
+          if (r.forecast_month === curKey)  map[sector].cur  = r.quad;
+          if (r.forecast_month === nextKey) map[sector].next = r.quad;
+        });
+        setCountryQuads(map);
+      })
       .catch(() => {});
   }, []);
 
@@ -679,29 +711,37 @@ function Dashboard() {
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB, row.trendExtended)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
-        {/* Quad Now */}
+        {/* Quad Now — box + prob; international rows use country quarterly quad */}
         {(() => {
-          const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
-          if (!quadSettings?.monthly) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
-          const q = quadSettings.monthly.quad;
-          const p = Math.round((quadSettings.monthly.probability ?? 0) * 100);
+          const qColors = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
+          const isIntl  = row.assetClass === "International Equities";
+          const cq      = isIntl ? countryQuads[row.sector] : null;
+          const q       = cq?.cur ?? quadSettings?.monthly?.quad;
+          const p       = isIntl ? null : (quadSettings?.monthly ? Math.round((quadSettings.monthly.probability ?? 0) * 100) : null);
+          if (!q) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
           return (
-            <td style={{ padding: "9px 8px", textAlign: "center" }}>
-              <span style={{ color: qColors[q], fontWeight: "700", fontSize: "11px", letterSpacing: "0.05em" }}>Q{q}</span>
-              <span style={{ color: "#8899aa", fontSize: "9px" }}> {p}%</span>
+            <td style={{ padding: "9px 8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "20px", background: `${qColors[q]}55`, border: `1px solid ${qColors[q]}`, borderRadius: "3px", color: "#ffffff", fontWeight: "700", fontSize: "12px", flexShrink: 0 }}>{q}</div>
+                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums" }}>{p}%</span>}
+              </div>
             </td>
           );
         })()}
-        {/* Quad Next */}
+        {/* Quad Next — box + prob; international rows use next country quarterly quad */}
         {(() => {
-          const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
-          if (!quadSettings?.next_monthly) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
-          const q = quadSettings.next_monthly.quad;
-          const p = Math.round((quadSettings.next_monthly.probability ?? 0) * 100);
+          const qColors = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
+          const isIntl  = row.assetClass === "International Equities";
+          const cq      = isIntl ? countryQuads[row.sector] : null;
+          const q       = cq?.next ?? quadSettings?.next_monthly?.quad;
+          const p       = isIntl ? null : (quadSettings?.next_monthly ? Math.round((quadSettings.next_monthly.probability ?? 0) * 100) : null);
+          if (!q) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
           return (
-            <td style={{ padding: "9px 8px", textAlign: "center" }}>
-              <span style={{ color: qColors[q], fontWeight: "700", fontSize: "11px", letterSpacing: "0.05em" }}>Q{q}</span>
-              <span style={{ color: "#8899aa", fontSize: "9px" }}> {p}%</span>
+            <td style={{ padding: "9px 8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "20px", background: `${qColors[q]}55`, border: `1px solid ${qColors[q]}`, borderRadius: "3px", color: "#ffffff", fontWeight: "700", fontSize: "12px", flexShrink: 0 }}>{q}</div>
+                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums" }}>{p}%</span>}
+              </div>
             </td>
           );
         })()}
@@ -759,38 +799,6 @@ function Dashboard() {
             </div>
           );
         })()}
-        {/* Quad display */}
-        {quadSettings && quadSettings.monthly && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
-            <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>QUAD FRAMEWORK</div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: "700", letterSpacing: "0.08em" }}>
-              {(() => {
-                const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
-                const q = quadSettings.monthly.quad;
-                const p = Math.round((quadSettings.monthly.probability ?? 0) * 100);
-                const [yr, mo] = quadSettings.monthly.forecast_month.split("-");
-                const monthLabel = new Date(parseInt(yr), parseInt(mo) - 1, 1)
-                  .toLocaleString("en-US", { month: "short" }).toUpperCase() + " " + yr;
-                return (
-                  <span style={{ color: qColors[q] }}>QUAD {q}  {p}%  <span style={{ fontSize: "9px", opacity: 0.75 }}>{monthLabel}</span></span>
-                );
-              })()}
-              {quadSettings.next_monthly && (
-                <>
-                  <span style={{ color: "#8899aa" }}>→</span>
-                  {(() => {
-                    const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
-                    const q = quadSettings.next_monthly.quad;
-                    const p = Math.round((quadSettings.next_monthly.probability ?? 0) * 100);
-                    return (
-                      <span style={{ color: qColors[q] }}>QUAD {q}  {p}%</span>
-                    );
-                  })()}
-                </>
-              )}
-            </div>
-          </div>
-        )}
         <div style={{ display: "flex", gap: "24px" }}>
           {[["BULLISH", bullish, "#00e5a0"], ["BEARISH", bearish, "#ff4d6d"], ["ALIGNED", aligned, "#0099ff"], ["ALERTS", alerts, "#f0b429"], ["ENTRY", entries, "#e8f4ff"]].map(([label, val, color]) => (
             <div key={label} style={{ textAlign: "center" }}>
@@ -979,22 +987,15 @@ function Dashboard() {
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
               <SortHdr label="TREND LEVEL" k="trendLRR" />
-              {/* Quad month columns — non-sortable */}
+              {/* Quad month columns — non-sortable, 4 cols: box + prob × 2 months */}
               {(() => {
-                const qColors = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
                 const fmtMo = (fm) => { if (!fm) return null; const [yr, mo] = fm.split("-"); return new Date(parseInt(yr), parseInt(mo)-1, 1).toLocaleString("en-US", { month: "short" }).toUpperCase() + " '" + yr.slice(2); };
-                const nowLabel  = quadSettings?.monthly?.forecast_month      ? fmtMo(quadSettings.monthly.forecast_month)      : null;
-                const nextLabel = quadSettings?.next_monthly?.forecast_month ? fmtMo(quadSettings.next_monthly.forecast_month) : null;
-                const thStyle = { cursor: "default", userSelect: "none", padding: "10px 8px", textAlign: "center", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" };
+                const nowLabel  = quadSettings?.monthly?.forecast_month      ? fmtMo(quadSettings.monthly.forecast_month)      : "—";
+                const nextLabel = quadSettings?.next_monthly?.forecast_month ? fmtMo(quadSettings.next_monthly.forecast_month) : "—";
+                const thStyle = { cursor: "default", userSelect: "none", padding: "10px 8px", textAlign: "center", fontSize: "9px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" };
                 return (<>
-                  <th style={thStyle} title="Current month US quad assignment">
-                    <div style={{ fontSize: "9px", color: nowLabel && quadSettings?.monthly ? qColors[quadSettings.monthly.quad] : "#8899aa" }}>QUAD</div>
-                    <div style={{ fontSize: "9px", color: "#8899aa" }}>{nowLabel || "—"}</div>
-                  </th>
-                  <th style={thStyle} title="Next month US quad assignment">
-                    <div style={{ fontSize: "9px", color: nextLabel && quadSettings?.next_monthly ? qColors[quadSettings.next_monthly.quad] : "#8899aa" }}>QUAD</div>
-                    <div style={{ fontSize: "9px", color: "#8899aa" }}>{nextLabel || "—"}</div>
-                  </th>
+                  <th style={thStyle} title="Current month US quad">{nowLabel}</th>
+                  <th style={thStyle} title="Next month US quad">{nextLabel}</th>
                 </>);
               })()}
             </tr>

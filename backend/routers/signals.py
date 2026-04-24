@@ -156,7 +156,8 @@ def run_output(db: Session) -> dict:
     # Fetch US monthly quad for current ET month
     from zoneinfo import ZoneInfo
     _ET = ZoneInfo("America/New_York")
-    current_month = datetime.now(_ET).strftime("%Y-%m")
+    now_et        = datetime.now(_ET)
+    current_month = now_et.strftime("%Y-%m")
     quad_row = db.query(QuadSettings).filter(
         QuadSettings.country        == "US",
         QuadSettings.forecast_month == current_month,
@@ -164,6 +165,24 @@ def run_output(db: Session) -> dict:
     ).first()
     quad_current = quad_row.quad        if quad_row else None
     quad_prob    = quad_row.probability if quad_row else 0.0
+
+    # Fetch country quarterly quads for current quarter (International Equities routing)
+    current_q_num    = (now_et.month - 1) // 3 + 1
+    current_quarter  = f"{now_et.year}-Q{current_q_num}"
+    quarterly_rows   = db.query(QuadSettings).filter(
+        QuadSettings.quad_type      == "quarterly",
+        QuadSettings.forecast_month == current_quarter,
+    ).all()
+    # country_code → quad  (probability is always 1.0 for quarterly rows)
+    quarterly_quads  = {r.country: r.quad for r in quarterly_rows}
+
+    # Sector label → ISO country code (matches COUNTRY_CODE in QuadSetup.js)
+    _SECTOR_TO_CODE = {
+        "Japan": "JP", "China": "CN", "Mexico": "MX", "Turkey": "TR", "UAE": "AE",
+        "Germany": "DE", "France": "FR", "United Kingdom": "GB", "Spain": "ES",
+        "South Korea": "KR", "India": "IN", "Brazil": "BR", "Canada": "CA",
+        "Australia": "AU", "Eurozone": "EU", "United States": "US",
+    }
 
     for ticker in get_active_tickers(db):
         try:
@@ -180,13 +199,25 @@ def run_output(db: Session) -> dict:
                     "prior_lrr": row.lrr if row else None,
                 }
 
+            # Route International Equities to their country quarterly quad;
+            # everything else uses the US monthly quad.
+            ticker_ac     = asset_class_map_out.get(ticker, "")
+            ticker_sector = sector_map_out.get(ticker, "")
+            if ticker_ac == "International Equities":
+                country_code  = _SECTOR_TO_CODE.get(ticker_sector)
+                ticker_quad   = quarterly_quads.get(country_code) if country_code else None
+                ticker_prob   = 1.0 if ticker_quad is not None else 0.0
+            else:
+                ticker_quad   = quad_current
+                ticker_prob   = quad_prob
+
             data = compute_output(
                 ticker, db,
                 prior_ranges  = prior_ranges,
-                asset_class   = asset_class_map_out.get(ticker, ""),
-                sector        = sector_map_out.get(ticker, ""),
-                quad_current  = quad_current,
-                quad_prob     = quad_prob,
+                asset_class   = ticker_ac,
+                sector        = ticker_sector,
+                quad_current  = ticker_quad,
+                quad_prob     = ticker_prob,
             )
             now  = datetime.utcnow()
 
