@@ -111,34 +111,34 @@ def _find_uptrend_abc(pivot_highs: list, pivot_lows: list):
              B = first confirmed pivot high after A.
              C = first confirmed pivot low after B with C > A.
 
-    A always anchors at the most extreme low — once a lower confirmed pivot
-    exists, A advances and the older higher A is discarded.  This mirrors
-    the downtrend rule: you cannot retreat to a higher (less extreme) A.
-    update_c_dynamically walks C forward after the initial ABC is found.
+    Iterates A candidates from most extreme (lowest) to least extreme.
+    When the most extreme A has no confirmed B or C yet (e.g. a very recent
+    low with no follow-through), falls back to the next candidate rather than
+    returning None.  This allows a prior valid structure to be found and the
+    trend to heal as soon as D re-establishes above the old C.
     """
     if not pivot_lows or not pivot_highs:
         return None
 
-    # A = lowest confirmed pivot low in the window (origin of the uptrend)
-    a_idx, a_price = min(pivot_lows, key=lambda x: x[1])
+    # Try A candidates from most extreme (lowest price) to least extreme
+    for a_idx, a_price in sorted(pivot_lows, key=lambda x: x[1]):
+        b_candidates = [(i, p) for i, p in pivot_highs if i > a_idx]
+        if not b_candidates:
+            continue
+        b_idx, b_price = b_candidates[0]
 
-    # B = first confirmed pivot high after A
-    b_candidates = [(i, p) for i, p in pivot_highs if i > a_idx]
-    if not b_candidates:
-        return None
-    b_idx, b_price = b_candidates[0]
+        c_candidates = [(i, p) for i, p in pivot_lows if i > b_idx and p > a_price]
+        if not c_candidates:
+            continue
+        c_idx, c_price = c_candidates[0]
 
-    # C = first confirmed pivot low after B with C > A
-    c_candidates = [(i, p) for i, p in pivot_lows if i > b_idx and p > a_price]
-    if not c_candidates:
-        return None
-    c_idx, c_price = c_candidates[0]
+        return dict(
+            direction="uptrend",
+            a=a_price, b=b_price, c=c_price,
+            a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
+        )
 
-    return dict(
-        direction="uptrend",
-        a=a_price, b=b_price, c=c_price,
-        a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
-    )
+    return None
 
 
 def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
@@ -147,34 +147,33 @@ def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
                B = first confirmed pivot low after A.
                C = first confirmed pivot high after B with C < A.
 
-    A always anchors at the most extreme high — once a higher confirmed pivot
-    exists, A advances and the older lower A is discarded.  You cannot retreat
-    to a lower A when a higher confirmed pivot high is present in the window.
-    update_c_dynamically walks C forward after the initial ABC is found.
+    Iterates A candidates from most extreme (highest) to least extreme.
+    When the most extreme A has no confirmed B or C yet (e.g. a very recent
+    high with no follow-through), falls back to the next candidate rather than
+    returning None.
     """
     if not pivot_highs or not pivot_lows:
         return None
 
-    # A = highest confirmed pivot high in the window (origin of the downtrend)
-    a_idx, a_price = max(pivot_highs, key=lambda x: x[1])
+    # Try A candidates from most extreme (highest price) to least extreme
+    for a_idx, a_price in sorted(pivot_highs, key=lambda x: x[1], reverse=True):
+        b_candidates = [(i, p) for i, p in pivot_lows if i > a_idx]
+        if not b_candidates:
+            continue
+        b_idx, b_price = b_candidates[0]
 
-    # B = first confirmed pivot low after A
-    b_candidates = [(i, p) for i, p in pivot_lows if i > a_idx]
-    if not b_candidates:
-        return None
-    b_idx, b_price = b_candidates[0]
+        c_candidates = [(i, p) for i, p in pivot_highs if i > b_idx and p < a_price]
+        if not c_candidates:
+            continue
+        c_idx, c_price = c_candidates[0]
 
-    # C = first confirmed pivot high after B with C < A
-    c_candidates = [(i, p) for i, p in pivot_highs if i > b_idx and p < a_price]
-    if not c_candidates:
-        return None
-    c_idx, c_price = c_candidates[0]
+        return dict(
+            direction="downtrend",
+            a=a_price, b=b_price, c=c_price,
+            a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
+        )
 
-    return dict(
-        direction="downtrend",
-        a=a_price, b=b_price, c=c_price,
-        a_idx=a_idx, b_idx=b_idx, c_idx=c_idx,
-    )
+    return None
 
 
 def _has_prior_break_confirmed(abc: dict, pivot_highs: list, pivot_lows: list,
