@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
-const QUAD_COLORS = { 1: "#00e5a0", 2: "#a3c940", 3: "#f0b429", 4: "#ff4d6d" };
+const QUAD_COLORS = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
 
 const COUNTRIES = [
   "United States", "Japan", "China", "Eurozone",
