@@ -47,9 +47,11 @@ def _build_obv(closes: list, volumes: list) -> list:
     return obv
 
 
-def _obv_direction(closes: list, volumes: list, bar_window: int = 9) -> str:
+def _obv_direction(closes: list, volumes: list, bar_window: int = 5) -> str:
     """
-    Determine OBV trend direction using pivot structure (bar_window = 9 each side).
+    Determine OBV trend direction using ABCD pivot logic (bar_window=5 each side).
+    Mirrors the price pivot engine: A (extreme) → B → C (confirmed) → D running > B = Bullish.
+    Searches the most recent 60 bars — matches the trade timeframe A lookback.
     Returns: 'Bullish' | 'Bearish' | 'Neutral'
     """
     obv = _build_obv(closes, volumes)
@@ -57,25 +59,39 @@ def _obv_direction(closes: list, volumes: list, bar_window: int = 9) -> str:
     if n < bar_window * 2 + 2:
         return "Neutral"
 
+    search_start = max(bar_window, n - 60)
     pivot_highs = []
     pivot_lows  = []
-    for i in range(bar_window, n - bar_window):
+    for i in range(search_start, n - bar_window):
         window = obv[i - bar_window : i + bar_window + 1]
         if obv[i] == max(window):
             pivot_highs.append((i, obv[i]))
         if obv[i] == min(window):
             pivot_lows.append((i, obv[i]))
 
-    if len(pivot_highs) < 2 or len(pivot_lows) < 2:
+    if not pivot_highs or not pivot_lows:
         return "Neutral"
 
-    last_high, prior_high = pivot_highs[-1][1], pivot_highs[-2][1]
-    last_low,  prior_low  = pivot_lows[-1][1],  pivot_lows[-2][1]
+    current_obv = obv[-1]
 
-    if last_high > prior_high and last_low > prior_low:
-        return "Bullish"
-    if last_high < prior_high and last_low < prior_low:
-        return "Bearish"
+    # Uptrend: A (most extreme low) → B (first high after A) → C (low after B, C > A) → D > B
+    a_idx, a_val = min(pivot_lows, key=lambda x: x[1])
+    b_up = next(((i, v) for i, v in pivot_highs if i > a_idx), None)
+    if b_up:
+        b_idx, b_val = b_up
+        c_up = next(((i, v) for i, v in pivot_lows if i > b_idx and v > a_val), None)
+        if c_up and current_obv > b_val:
+            return "Bullish"
+
+    # Downtrend: A (most extreme high) → B (first low after A) → C (high after B, C < A) → D < B
+    a_idx, a_val = max(pivot_highs, key=lambda x: x[1])
+    b_dn = next(((i, v) for i, v in pivot_lows if i > a_idx), None)
+    if b_dn:
+        b_idx, b_val = b_dn
+        c_dn = next(((i, v) for i, v in pivot_highs if i > b_idx and v < a_val), None)
+        if c_dn and current_obv < b_val:
+            return "Bearish"
+
     return "Neutral"
 
 
@@ -750,7 +766,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
     # OBV pivot direction + MA20 slope signals
     if prices and volumes and len(prices) == len(volumes):
-        obv_dir   = _obv_direction(prices, volumes, bar_window=9)
+        obv_dir   = _obv_direction(prices, volumes)
         obv_ma20  = _build_obv_ma20(prices, volumes)
     else:
         obv_dir  = "Neutral"

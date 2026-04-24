@@ -1037,12 +1037,15 @@ function Dashboard() {
           return `${date} · ${time} ET`;
         };
 
-        // fields: [label, value, color, isState, warnTip?]
-        // warnTip = string → wraps value in <span title> for ⚠ tooltip
         const tradeBreakIsB = row.tradeExtended || false;
         const trendBreakIsB = row.trendExtended || false;
+
+        // __section__ sentinel entries span the full grid width as labeled dividers
+        const SECTION = (name) => ["__section__", name, null, false, null];
+
         const fields = [
-          ["Close",        fmtPrice(row.close),                                                          "#c8d8e8",                              false],
+          // ── CONVICTION ───────────────────────────────────────────────────
+          SECTION("CONVICTION"),
           ["Viewpoint",    row.viewpoint,                                                                  vpColor(row.viewpoint),                 false],
           ...(row.viewpoint !== "Neutral" && row.viewpointSince ? [
             ["Aligned since", fmtSince(row.viewpointSince),                                               vpColor(row.viewpoint),                 false],
@@ -1050,26 +1053,8 @@ function Dashboard() {
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
-          ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
-          ["Trade LRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
-          ["Trade HRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
-          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
-          ["Trade B" + (tradeBreakIsB ? " *" : ""),  fmtPrice(row.tradeB), tradeBreakIsB  ? "#f0b429" : "#8899aa", false, tradeBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
-          ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
-          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
-          ...(row.trendDir !== "Neutral" && row.trendLRR != null ? [
-            ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB, trendBreakIsB) : null],
-          ] : []),
-          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? "Active break level — invalidates trend on close through" : null],
-          ["Trend B" + (trendBreakIsB ? " *" : ""),  fmtPrice(row.trendB), trendBreakIsB  ? "#f0b429" : "#8899aa", false, trendBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
-          ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
-          ["Tail Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
-          ...(row.ltDir !== "Neutral" && row.ltLRR != null ? [
-            ["Tail Level",  fmtPrice(row.ltLRR),                                                           dirColor(row.ltDir),                                       false],
-          ] : []),
-          ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false, "Hurst exponent (Trade, 63-day DFA)\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
           ["VIX Regime",   row.vixRegime || "—",
-                           (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Edgy" ? "#8899aa" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : r === "N/A" ? "#445566" : "#8899aa"; })(),
+                           (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Edgy" ? "#8899aa" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
                            false, "VIX regime at time of signal calculation\nInvestable (VIX < 19) — Domestic Equities × 1.10\nEdgy (19–23) — × 1.00\nChoppy (24–29) — × 0.90\nDanger (≥ 30) — × 0.80\nN/A — non-equity asset class, no multiplier applied"],
           ...(row.quadAlignment ? [
             ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
@@ -1079,13 +1064,35 @@ function Dashboard() {
                                row.quadMult == null ? "#8899aa" : row.quadMult > 1.0 ? "#00e5a0" : row.quadMult < 1.0 ? "#ff4d6d" : "#8899aa",
                                false, "Quad conviction multiplier applied to this ticker\nDriven by current quad, probability, and asset/sector alignment"],
           ] : []),
-          ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false, "Hurst exponent (Trend, 252-day DFA)\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
-          ...(['Commodities', 'Foreign Exchange'].includes(row.assetClass) ? [
-            [<span>H<span style={{fontSize:"13px"}}>↑</span> Trend</span>,   row.hTrendUp   != null ? row.hTrendUp.toFixed(3)   : "—",  hurstColor(row.hTrendUp),               false, "Asymmetric Hurst — uptrend DFA (Commodities/FX only)\nUsed as H_eff when viewpoint is Bullish\n≥ 0.60 — Trending (green) · < 0.50 — Mean-reverting (red)"],
-            [<span>H<span style={{fontSize:"13px"}}>↓</span> Trend</span>,   row.hTrendDown != null ? row.hTrendDown.toFixed(3) : "—",  hurstColor(row.hTrendDown),              false, "Asymmetric Hurst — downtrend DFA (Commodities/FX only)\nUsed as H_eff when viewpoint is Bearish\n≥ 0.60 — Trending (green) · < 0.50 — Mean-reverting (red)"],
+
+          // ── TRADE ────────────────────────────────────────────────────────
+          SECTION("TRADE"),
+          ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
+          ["Trade LRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
+          ["Trade HRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
+          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
+          ["Trade B" + (tradeBreakIsB ? " *" : ""),  fmtPrice(row.tradeB), tradeBreakIsB  ? "#f0b429" : "#8899aa", false, tradeBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
+          ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
+
+          // ── TREND ────────────────────────────────────────────────────────
+          SECTION("TREND"),
+          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
+          ...(row.trendDir !== "Neutral" && row.trendLRR != null ? [
+            ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB, trendBreakIsB) : null],
           ] : []),
-          ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false, "Hurst exponent (Tail, 756-day DFA) — context only, not in conviction\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
-          // ── Volatility ────────────────────────────────────────────────────
+          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? "Active break level — invalidates trend on close through" : null],
+          ["Trend B" + (trendBreakIsB ? " *" : ""),  fmtPrice(row.trendB), trendBreakIsB  ? "#f0b429" : "#8899aa", false, trendBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
+          ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
+
+          // ── TAIL ─────────────────────────────────────────────────────────
+          SECTION("TAIL"),
+          ["Tail Dir",     `${dirIcon(row.ltDir)} ${row.ltDir}`,                                          dirColor(row.ltDir),                                       false],
+          ...(row.ltDir !== "Neutral" && row.ltLRR != null ? [
+            ["Tail Level",  fmtPrice(row.ltLRR),                                                           dirColor(row.ltDir),                                       false],
+          ] : []),
+
+          // ── VOLATILITY ───────────────────────────────────────────────────
+          SECTION("VOLATILITY"),
           [row.ivSource === "schwab" ? "IV Rank \u2014 schwab" : "IV Rank \u2014 proxy",
                            row.relIV != null ? `${row.relIV}%` : "—",                                     ivColor(row.relIV),                     false,
                            "IV Rank: where current IV30 sits within its 252-day range\n< 20 = historically cheap options (green)\n> 80 = expensive options (red)"],
@@ -1113,6 +1120,18 @@ function Dashboard() {
                            })(),
                            false,
                            "VRP rank within 252-day rolling history\nLow = options historically cheap vs realized vol = green\nHigh = options historically expensive = red"],
+
+          // ── HURST ────────────────────────────────────────────────────────
+          SECTION("HURST"),
+          ["Hurst (T)",    fmtHurst(row.hurstTrade),                                                       hurstColor(row.hurstTrade),             false, "Hurst exponent (Trade, 63-day DFA)\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
+          ["Hurst (Tr)",   fmtHurst(row.hurstTrend),                                                       hurstColor(row.hurstTrend),             false, "Hurst exponent (Trend, 252-day DFA)\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
+          ...(['Commodities', 'Foreign Exchange'].includes(row.assetClass) ? [
+            [<span>H<span style={{fontSize:"13px"}}>↑</span> Trend</span>,   row.hTrendUp   != null ? row.hTrendUp.toFixed(3)   : "—",  hurstColor(row.hTrendUp),               false, "Asymmetric Hurst — uptrend DFA (Commodities/FX only)\nUsed as H_eff when viewpoint is Bullish\n≥ 0.60 — Trending (green) · < 0.50 — Mean-reverting (red)"],
+            [<span>H<span style={{fontSize:"13px"}}>↓</span> Trend</span>,   row.hTrendDown != null ? row.hTrendDown.toFixed(3) : "—",  hurstColor(row.hTrendDown),              false, "Asymmetric Hurst — downtrend DFA (Commodities/FX only)\nUsed as H_eff when viewpoint is Bearish\n≥ 0.60 — Trending (green) · < 0.50 — Mean-reverting (red)"],
+          ] : []),
+          ["Hurst (Tail)", fmtHurst(row.hurstLt),                                                          hurstColor(row.hurstLt),                false, "Hurst exponent (Tail, 756-day DFA) — context only, not in conviction\n≥ 0.60 — Trending (green)\n0.50–0.59 — Moderate (amber)\n< 0.50 — Mean-reverting (red)"],
+
+          // ── metadata ─────────────────────────────────────────────────────
           ["Updated",      row.updated,                                                                    "#667788",                              false],
           ["Asset Class",  row.assetClass || "—",                                                          "#8899aa",                              false],
           ["Sector",       row.sector     || "—",                                                          "#8899aa",                              false],
@@ -1122,20 +1141,34 @@ function Dashboard() {
           <div style={{ position: "fixed", bottom: "0", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderBottom: "none", borderRight: "none", padding: "20px", zIndex: 100 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
               <div>
-                <div style={{ fontSize: "22px", fontWeight: "700", color: "#e8f4ff", letterSpacing: "0.1em" }}>{row.ticker}</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                  <div style={{ fontSize: "22px", fontWeight: "700", color: "#e8f4ff", letterSpacing: "0.1em" }}>{row.ticker}</div>
+                  <div style={{ fontSize: "16px", fontWeight: "600", color: "#c8d8e8" }}>{fmtPrice(row.close)}</div>
+                </div>
                 <div style={{ fontSize: "11px", color: "#8899aa" }}>{row.description}</div>
               </div>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
-              {fields.map(([label, val, color, isState, tip]) => (
-                <div key={label} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
-                  <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.08em", marginBottom: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
-                  <div style={{ fontSize: "11px", fontWeight: "600", color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {tip ? <span title={tip} style={{ cursor: "help" }}>{val}</span> : val}
+              {fields.map(([label, val, color, isState, tip], idx) => {
+                if (label === "__section__") {
+                  return (
+                    <div key={`sec-${val}`} style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "6px", marginTop: idx === 0 ? "0" : "8px" }}>
+                      <div style={{ width: "2px", height: "10px", background: "#00e5a0", borderRadius: "1px", flexShrink: 0 }} />
+                      <span style={{ fontSize: "8px", fontWeight: "700", letterSpacing: "0.15em", color: "#c8d8e8" }}>{val}</span>
+                      <div style={{ flex: 1, height: "1px", background: "#1a2535" }} />
+                    </div>
+                  );
+                }
+                return (
+                  <div key={typeof label === "string" ? label : `field-${idx}`} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
+                    <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.08em", marginBottom: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+                    <div style={{ fontSize: "11px", fontWeight: "600", color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {tip ? <span title={tip} style={{ cursor: "help" }}>{val}</span> : val}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {row.isAlert && (
               <div style={{ marginTop: "10px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>

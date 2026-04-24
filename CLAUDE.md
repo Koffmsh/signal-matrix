@@ -226,9 +226,15 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 ### OBV Pivot Engine Replaces Price-Momentum Proxy (`conviction_engine.py`)
 - Old `_volume_signal` used 5-day / 20-day price momentum — not real volume
-- **Replaced with:** `_build_obv` + `_obv_direction` — pivot-based OBV trend detection
+- **Replaced with:** `_build_obv` + `_obv_direction` — ABCD pivot-based OBV trend detection
 - Volume history stored in `price_cache.volume_history_json` (aligned to `history_json` dates)
-- OBV bar_window = 9 — requires confirmed pivots on both sides (same rule as price pivot engine)
+- **OBV bar_window = 5** — matches the trade timeframe price pivot window; confirmed pivots require bar_window bars on both sides
+- **`_obv_direction` uses ABCD logic** (mirrors price pivot engine) — NOT a 4-pivot HH+HL comparison:
+  - Uptrend: A (most extreme OBV low in 60-bar window) → B (first confirmed high after A) → C (confirmed low after B where C > A) → D running > B → "Bullish"
+  - Downtrend: A (most extreme OBV high) → B (first confirmed low after A) → C (confirmed high after B where C < A) → D running < B → "Bearish"
+  - 60-bar lookback for pivot search — mirrors trade timeframe A lookback
+  - Returns "Neutral" if ABCD structure not established in either direction
+- **Old method (superseded):** compared last 2 pivot highs vs prior 2 pivot highs (HH+HL for Bullish). Removed because it required 4 confirmed pivots, lagged V-recoveries by weeks, and could return Bullish/Bearish before D was established
 - **Vol Signal compared against Trade Dir** (not Viewpoint) — volume is a short-term signal; confirming/diverging against the trade timeframe move is methodologically correct
 - Confirming = OBV direction matches Trade Dir; Diverging = opposes Trade Dir; Neutral = OBV has no structure or Trade Dir is Neutral
 - Conviction math unaffected: multiplier only applies when Viewpoint ≠ Neutral, where Trade Dir always equals Viewpoint anyway
@@ -1854,7 +1860,7 @@ git checkout -- .   # roll back if needed
 38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
 39. **One close through break level = BREAK_OF_TRADE immediately** — break level = C normally; B when `d_extended=True`. Direction HOLDS during BREAK_OF_TRADE (not Neutral). Forgiveness: recovery on day 1 restores prior state; 2+ consecutive closes = BREAK_CONFIRMED → direction → Neutral. Recovery from BREAK_CONFIRMED requires close above B.
 40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
-41. **OBV pivot bar_window = 9 bars** — confirmed pivots require bar_window on both sides, same rule as price pivot engine
+41. **OBV pivot bar_window = 5 bars** — matches the trade timeframe price pivot window. `_obv_direction` uses ABCD logic (A extreme → B → C confirmed → D running > B = Bullish), NOT the old 4-pivot HH+HL comparison. 60-bar lookback for pivot search.
 42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
 43. **schwab-py is the only Schwab API client** — never write raw HTTP calls against Schwab endpoints
 44. **Yahoo Finance is a permanent fallback** — never remove it; always called when Schwab is unavailable
