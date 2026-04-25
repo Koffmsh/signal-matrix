@@ -13,3 +13,4 @@ psycopg2-binary==2.9.9
 schwab-py==1.4.0
 cryptography==42.0.5
 scipy==1.12.0
+twilio>=8.0.0

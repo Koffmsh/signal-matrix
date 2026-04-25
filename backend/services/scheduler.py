@@ -15,6 +15,7 @@ from models.scheduler_log import SchedulerLog
 import services.schwab_client as schwab_client
 from services.schwab_market_data import schwab_fetch_all
 from services.schwab_options import schwab_fetch_iv
+from services.intraday_monitor import run_intraday_check
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,40 @@ def schwab_data_job() -> None:
         logger.info(f"Schwab data job: complete — status={status}, duration={duration}s")
 
 
+def _intraday_monitor_job() -> None:
+    """
+    Every 15 minutes, 9:30 AM–3:45 PM ET, NYSE trading days only.
+    Checks PROXIMITY and RETRACEMENT_50 triggers; sends SMS on first hit per day.
+    Light path: price refresh (skip/append) + pure arithmetic against EOD signals.
+    """
+    et      = ZoneInfo("America/New_York")
+    now_et  = datetime.now(et)
+    et_date = now_et.date()
+
+    # NYSE trading days only
+    if not _is_trading_day(et_date):
+        return
+
+    # Market hours gate: 9:30 AM – 3:45 PM ET
+    # (4:00 PM is covered by the EOD job which also refreshes prices)
+    market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=15, minute=45, second=0, microsecond=0)
+    if now_et < market_open or now_et > market_close:
+        return
+
+    db = SessionLocal()
+    try:
+        result = run_intraday_check(db)
+        logger.info(
+            f"Intraday monitor: {result.get('tickers_checked', 0)} checked, "
+            f"{result.get('alerts_sent', 0)} alerts sent"
+        )
+    except Exception as e:
+        logger.error(f"Intraday monitor job failed: {e}")
+    finally:
+        db.close()
+
+
 def start() -> None:
     scheduler.add_job(
         schwab_data_job,
@@ -215,8 +250,19 @@ def start() -> None:
         id="schwab_refresh",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _intraday_monitor_job,
+        "interval",
+        minutes=15,
+        id="intraday_monitor",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("Scheduler: started — EOD job 4:00 PM ET (prices→IV→signals), Schwab token refresh every 25 min")
+    logger.info(
+        "Scheduler: started — EOD job 4:00 PM ET (prices→IV→signals), "
+        "Schwab token refresh every 25 min, "
+        "intraday monitor every 15 min (9:30 AM–3:45 PM ET trading days)"
+    )
 
 
 def shutdown() -> None:

@@ -369,6 +369,86 @@ def schwab_fetch_all(db: Session) -> dict:
         return _yahoo_fallback(db, tickers)
 
 
+# ── Intraday quote refresh (15-min monitor only) ──────────────────────────────
+
+def schwab_fetch_intraday_quotes(db: Session) -> dict:
+    """
+    Lightweight intraday price refresh for the 15-min monitor.
+
+    Intentionally different from schwab_fetch_all() in three ways:
+      1. No idempotency check — runs a fresh get_quotes() call every time.
+         schwab_fetch_all() skips re-fetching once cache_date == today, making
+         price_cache.close stale for the rest of the day.  This function has no
+         such guard — every call gets a live lastPrice.
+      2. lastPrice only — never falls back to closePrice (yesterday's EOD).
+         If lastPrice is absent (pre-market, halted) the ticker is skipped.
+      3. No history changes — cache_date is NOT updated, so schwab_fetch_all()
+         idempotency remains intact for the EOD job.
+
+    Updates price_cache: close, volume, daily_high, daily_low, updated_at.
+    Yahoo-only tickers (indices, FX, futures) are skipped — they are in
+    SCHWAB_UNSUPPORTED and are nearly always Neutral viewpoint anyway.
+    """
+    tickers        = _get_active_tickers(db)
+    schwab_tickers = [t for t in tickers if t not in SCHWAB_UNSUPPORTED]
+    schwab_symbols = [get_schwab_symbol(t) for t in schwab_tickers]
+
+    if not schwab_tickers:
+        return {"fetched": 0, "errors": 0}
+
+    try:
+        client = schwab_client_svc.get_schwab_client(db)
+    except (RuntimeError, ValueError) as e:
+        logger.warning(f"Intraday quotes: no Schwab client ({e}) — skipping")
+        return {"fetched": 0, "errors": 0, "error": str(e)}
+
+    try:
+        quote_resp = client.get_quotes(schwab_symbols)
+        quote_resp.raise_for_status()
+        quotes = quote_resp.json()
+    except Exception as e:
+        logger.error(f"Intraday quotes: batch get_quotes failed — {e}")
+        return {"fetched": 0, "errors": 1, "error": str(e)}
+
+    existing_map = {
+        r.ticker: r
+        for r in db.query(PriceCache).filter(PriceCache.ticker.in_(schwab_tickers)).all()
+    }
+
+    fetched = 0
+    skipped = 0
+
+    for app_ticker in schwab_tickers:
+        schwab_sym = get_schwab_symbol(app_ticker)
+        q          = quotes.get(schwab_sym, {}).get("quote", {})
+
+        # lastPrice only — refuse to use closePrice (yesterday's EOD close)
+        last_price = q.get("lastPrice")
+        if not last_price:
+            skipped += 1
+            logger.debug(f"Intraday quotes: no lastPrice for {app_ticker} — skipping")
+            continue
+
+        close      = round(float(last_price), 2)
+        volume     = int(q.get("totalVolume", 0))
+        daily_high = round(float(q.get("highPrice", close)), 2)
+        daily_low  = round(float(q.get("lowPrice",  close)), 2)
+
+        row = existing_map.get(app_ticker)
+        if row:
+            row.close      = close
+            row.volume     = volume
+            row.daily_high = daily_high
+            row.daily_low  = daily_low
+            row.updated_at = datetime.utcnow()
+            # NOTE: cache_date intentionally NOT updated — preserves EOD idempotency
+            fetched += 1
+
+    db.commit()
+    logger.info(f"Intraday quotes: {fetched} updated, {skipped} skipped (no lastPrice)")
+    return {"fetched": fetched, "skipped": skipped}
+
+
 # ── Schwab fetch ──────────────────────────────────────────────────────────────
 
 def _schwab_fetch(db: Session, client, tickers: list) -> dict:
