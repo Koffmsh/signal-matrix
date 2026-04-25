@@ -34,6 +34,7 @@ indicators.
 - **Backend:** Python FastAPI running at localhost:8000 (local) / api.signal.suttonmc.com (production)
 - **Database:** Supabase (managed Postgres) in production — SQLite (`backend/signal_matrix.db`) for local dev only
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
+- **Twilio:** SMS alerts via `twilio>=8.0.0`; credentials in `.env` (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, TWILIO_TO)
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
 - **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
@@ -554,6 +555,16 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 
 **Idempotency check:** Uses first Schwab-supported ticker (excludes `SCHWAB_UNSUPPORTED`) to avoid perpetual cache miss when a Yahoo-only ticker sorts first.
 
+### Schwab API — Instrument Type Limitations (Architectural Decision)
+Why certain tickers permanently route to Yahoo Finance — this is not a bug or a gap to close, it is a deliberate permanent architecture decision based on what the Schwab API actually supports.
+
+- **Equities and ETFs:** Fully supported — `get_quotes()` (batch) + `get_price_history()` (per-ticker). Primary data source for all equity/ETF tickers.
+- **Indices (SPX, NDX, $DJI, VIX, RUT, VVIX):** `SCHWAB_SYMBOL_MAP` translates these to Schwab format (`$SPX.X`, `$NDX.X`, etc.) but `get_quotes()` silently drops them — no error, just missing keys in the response. `get_price_history()` per-ticker may work but requires 6 separate HTTP calls vs. one Yahoo batch; the skip/append gap-detection path makes this near-zero cost on normal daily runs anyway. **Yahoo is the right permanent answer for indices.**
+- **FX (USD = DXY index, JPY = USDJPY):** These are not securities — Schwab's API is equity/ETF-only and has no FX endpoint. DXY and spot FX rates simply do not exist in their quote infrastructure. **Yahoo is the right permanent answer for FX.**
+- **Futures (/CL, /ZN, /GC):** Schwab uses contract-specific symbols (e.g. `/CLM26`). The "continuous front-month" concept used here (`CL=F`, `GC=F`) is a Yahoo abstraction — Yahoo handles the monthly roll automatically. Replicating that on Schwab would require tracking expiration calendars and rolling contracts, significant complexity for no signal quality gain at EOD resolution. **Yahoo is the right permanent answer for futures.**
+- **Speed:** On skip/append days (the normal case after the first fetch), both Yahoo and Schwab are essentially instant due to gap detection. On bootstrap/short fetches Yahoo's batch call is faster than equivalent per-ticker Schwab calls. No speed advantage to switching.
+- **Rule:** Do not attempt to replace Yahoo with Schwab for indices, FX, or futures — the mixed-source architecture is intentional and permanent. When adding new tickers in any of these categories, add them to `SCHWAB_UNSUPPORTED`, `YAHOO_SYMBOL_MAP`, and (if futures) `IV_INELIGIBLE`.
+
 ### SCHWAB_UNSUPPORTED Expanded — Indices Now Route to Yahoo (`schwab_market_data.py`)
 - Schwab batch quotes API silently drops index symbols (SPX, NDX, $DJI, VIX) when mixed with equity symbols — no error, just missing keys in the response
 - Without this fix, these tickers never get `updated_at` stamped, causing REFRESH DATA to stay amber even after a successful refresh (SPX is `display_order=1` and its timestamp drives the header)
@@ -647,6 +658,15 @@ Futures use continuous front-month symbols stored with a leading slash (e.g. `/C
 - **Subsequent REFRESH DATA same day:** IV skipped entirely → near-instant
 - **Rule:** Never change back to `force=True` in `market_data.py` — it re-introduces the 55-second penalty on every button press
 
+### Intraday Price Refresh — `schwab_fetch_intraday_quotes` vs `schwab_fetch_all` (`schwab_market_data.py`)
+- **Root problem:** The intraday monitor originally called `schwab_fetch_all(db)` for price updates. `schwab_fetch_all()` has an idempotency check that returns early once `cache_date == today AND data_source == "schwab"` — meaning after the first intraday call, every subsequent 15-minute call would skip `get_quotes()` entirely and `price_cache.close` would stay frozen at the first read value.
+- **Fix:** Added `schwab_fetch_intraday_quotes(db)` — a dedicated lightweight function for intraday use only:
+  - No idempotency check — always calls `get_quotes()` every time it is invoked
+  - Uses `lastPrice` exclusively — never falls back to `closePrice` (which is yesterday's EOD)
+  - Does NOT update `cache_date` — preserves the EOD idempotency check for `schwab_fetch_all()`
+  - Updates `close`, `volume`, `daily_high`, `daily_low`, and `updated_at` only
+- **Rule:** The intraday monitor must ALWAYS use `schwab_fetch_intraday_quotes(db)` — never `schwab_fetch_all(db)`. Using `schwab_fetch_all` intraday silently freezes prices after the first call.
+
 ### Live Dot Removed from Header (`App.js`)
 - The `● LIVE` dot in the dashboard header was removed — it added no signal value and confused users about data freshness
 - SCHED indicator, EOD timestamp, and button colors already communicate all relevant freshness state
@@ -712,7 +732,8 @@ signal-matrix/
 │   │   ├── scheduler_log.py               ← Task 4.2 — Scheduler run log DB model
 │   │   ├── ticker.py                      ← Task 4.6 — Tickers DB model
 │   │   ├── schwab_tokens.py               ← Task 5.3 — Schwab OAuth tokens DB model ✅
-│   │   └── iv_history.py                  ← Task 5.5 — IV history DB model ✅
+│   │   ├── iv_history.py                  ← Task 5.5 — IV history DB model ✅
+│   │   └── intraday_alert_log.py          ← Intraday monitor alert dedup log
 │   ├── alembic/                           ← Task 5.1 — DB migration tooling ✅
 │   │   ├── env.py
 │   │   └── versions/
@@ -727,16 +748,19 @@ signal-matrix/
 │   │       ├── k1a2b3c4d5e6_iv_history_vol_rename_and_skew.py ← rv21→hv30, rv63→hv90; added call_iv_25d, put_iv_25d, risk_reversal, put_call_ratio
 │   │       ├── l2b3c4d5e6f7_price_cache_add_vol_columns.py  ← added hv30, hv90, iv30, risk_reversal, skew_rank, put_call_ratio
 │   │       ├── m3c4d5e6f7g8_iv_history_rename_vol_premium_vrp_add_vrp_rank.py  ← vol_premium→vrp; added price_cache.vrp_rank
-│   │       └── 08f62d15c8b7_iv_history_add_skew_rank.py                        ← added iv_history.skew_rank (Integer 0–100)
+│   │       ├── 08f62d15c8b7_iv_history_add_skew_rank.py                        ← added iv_history.skew_rank (Integer 0–100)
+│   │       └── a1b2c3d4e5f6_add_intraday_alert_log.py                          ← intraday_alert_log table (PROXIMITY + RETRACEMENT_50 dedup)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
 │   │   ├── pivot_engine.py                ← Task 3.2 — ABC Pivot Detector ✅
 │   │   ├── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine ✅
-│   │   ├── scheduler.py                   ← Task 4.2 — APScheduler EOD job ✅
+│   │   ├── scheduler.py                   ← Task 4.2 — APScheduler EOD + intraday monitor jobs ✅
 │   │   ├── schwab_client.py               ← Task 5.3 — Token management + Schwab client ✅
-│   │   ├── schwab_market_data.py          ← Task 5.4 — EOD quote + history fetch ✅
-│   │   └── schwab_options.py              ← Task 5.5 — IV fetch + iv_history write ✅
+│   │   ├── schwab_market_data.py          ← Task 5.4 — EOD quote + history fetch + intraday quotes ✅
+│   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + iv_history write ✅
+│   │   ├── intraday_monitor.py            ← PROXIMITY + RETRACEMENT_50 alert engine ✅
+│   │   └── sms.py                         ← Twilio SMS wrapper ✅
 │   └── routers/
 │       ├── market_data.py
 │       ├── signals.py                     ← Task 3.3/3.4/4.3 — Signal endpoints + history ✅
@@ -811,7 +835,10 @@ signal-matrix/
 
 ### Scheduler Overview
 - APScheduler `AsyncIOScheduler` inside FastAPI lifespan
-- Single job fires at **4:00 PM ET** on NYSE trading days only (via `pandas_market_calendars`)
+- **Three registered jobs:**
+  1. `schwab_data_job` — CronTrigger 4:00 PM ET NYSE trading days (prices → IV → signals)
+  2. `schwab_refresh` — interval every 25 min (proactive Schwab token refresh)
+  3. `intraday_monitor` — CronTrigger mon–fri 9:30 AM–3:45 PM ET at :00/:15/:30/:45
 - On startup: catch-up check — if past 4:00 PM ET, trading day, and no successful run today → runs immediately
 - All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
 
@@ -854,9 +881,12 @@ Run twice same day     → signal_history idempotency check prevents duplicate s
 ### Scheduler Files
 | File | Role |
 |---|---|
-| `backend/services/scheduler.py` | Core job logic, catch-up, start/shutdown |
+| `backend/services/scheduler.py` | Core job logic, catch-up, start/shutdown; all three jobs |
 | `backend/routers/scheduler.py` | `GET /api/scheduler/status` endpoint |
 | `backend/models/scheduler_log.py` | SQLAlchemy model for `scheduler_log` table |
+| `backend/services/intraday_monitor.py` | PROXIMITY + RETRACEMENT_50 alert engine |
+| `backend/services/sms.py` | Twilio SMS wrapper |
+| `backend/models/intraday_alert_log.py` | Alert dedup log model |
 
 ### scheduler_log Table
 ```sql
@@ -877,6 +907,101 @@ error_msg, duration_s, created_at (UTC string)
 - `run_hurst(db)`, `run_pivots(db)`, `run_output(db)`, `calculate_signals(db)` extracted in `signals.py`
 - HTTP endpoints now call these functions — behavior unchanged
 - `main.py` converted from module-level startup to `lifespan` context manager
+
+---
+
+## Intraday Monitor — PROXIMITY + RETRACEMENT_50 SMS Alerts ✅
+
+### Overview
+Lightweight price monitor running every 15 minutes during NYSE trading hours (9:30 AM–3:45 PM ET).
+Does NOT recalculate pivots, Hurst, or conviction. Reads EOD-calculated signal state and watches
+live price against it. Fires SMS alerts via Twilio when triggers are met.
+
+**Critical design constraint:** Never call `calculate_signals()` intraday — pivot states require
+confirmed EOD closes. Running signals intraday would produce false BREAK_OF_TRADE states.
+The monitor is purely observational.
+
+### Two Triggers (each fires at most once per ticker per day)
+
+**PROXIMITY** — `prox >= 0.85` toward entry zone:
+```
+Bullish: prox = 1 - (close - lrr) / (hrr - lrr)   peaks at 1.0 when close = LRR
+Bearish: prox = (close - lrr) / (hrr - lrr)         peaks at 1.0 when close = HRR
+Not clamped — price below LRR (Bullish) reports as 110%+ etc.
+```
+- Fires once per ticker per day (first time prox >= 0.85)
+- SMS: ticker, viewpoint, price, entry level, prox %, range, conviction
+
+**RETRACEMENT_50** — price retraces 50% from D back toward C (pullback entry):
+```
+Gate: structural_state must be UPTREND_VALID or DOWNTREND_VALID
+Uptrend:   d_eff = max(pivot_d, close)          # intraday D may extend higher
+           level_50 = pivot_c + 0.50 × (d_eff - pivot_c)
+           fires when close <= level_50
+Downtrend: d_eff = min(pivot_d, close)          # intraday D may extend lower
+           level_50 = d_eff + 0.50 × (pivot_c - d_eff)
+           fires when close >= level_50
+```
+- Dedup key includes `pivot_c` — new C = new setup = alert resets for same ticker same day
+- SMS: ticker, viewpoint, price, D level, C pivot, 50% level, conviction
+
+### Scheduler — CronTrigger (clock-aligned)
+```python
+CronTrigger(
+    day_of_week = "mon-fri",
+    hour        = "9-15",
+    minute      = "0,15,30,45",
+    timezone    = "America/New_York",
+)
+```
+- Fires at :00/:15/:30/:45 aligned to clock — NOT relative to container start time
+- `hour="9-15"` includes 9:00 and 9:15; pre-market guard skips those: `if now_et.hour == 9 and now_et.minute < 30: return`
+- Effective window: 9:30 AM, 9:45 AM, 10:00 AM … 3:30 PM, 3:45 PM ET
+- NYSE trading days only (via `_is_trading_day()` check inside the job)
+- **Rule:** Never switch back to `"interval", minutes=15` — interval fires relative to container start and will miss the 9:30 AM open
+
+### Per-Run Flow (`run_intraday_check(db)`)
+```
+1. schwab_fetch_intraday_quotes(db)      — fast batch quotes, lastPrice only, no cache_date update
+2. Load signal_output                    — trade tf, non-Neutral viewpoints only (read-only)
+3. Load signal_pivots                    — trade tf, matching tickers (read-only)
+4. Load price_cache                      — current close after step 1
+5. For each ticker:
+   a. PROXIMITY check → send SMS + log if prox >= 0.85 and not already fired today
+   b. RETRACEMENT_50 check → send SMS + log if at/past 50% level and not already fired today
+6. db.commit()
+```
+
+### intraday_alert_log Table
+```sql
+id          INTEGER PRIMARY KEY AUTOINCREMENT
+ticker      TEXT NOT NULL (index)
+alert_date  TEXT NOT NULL                -- ET YYYY-MM-DD
+alert_type  TEXT NOT NULL                -- 'PROXIMITY' | 'RETRACEMENT_50'
+pivot_c     FLOAT nullable               -- dedup key for retracement (NULL for PROXIMITY)
+fired_at    TEXT NOT NULL                -- ET HH:MM
+price       FLOAT NOT NULL
+metric      FLOAT nullable               -- prox% or retrace% (e.g. 0.88 or 0.50)
+conviction  FLOAT nullable
+created_at  TEXT NOT NULL                -- UTC timestamp
+
+UNIQUE(ticker, alert_date, alert_type, pivot_c)
+```
+**Postgres NULL caveat:** `UNIQUE` with a nullable column does NOT prevent duplicate NULL rows in
+Postgres (NULL != NULL). For PROXIMITY alerts (`pivot_c = NULL`) the Python `_already_fired()`
+check is the primary dedup guard. The constraint only guarantees uniqueness for RETRACEMENT_50
+rows (where `pivot_c` is set).
+
+### SMS Service (`sms.py`)
+- `send_sms(message)` → True/False
+- Reads from env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `TWILIO_TO`
+- No-ops silently (with warning log) if any credential is missing — safe in dev without Twilio configured
+- Lazy import of `twilio.rest.Client` — won't crash on import if twilio package issue
+
+### Why Volume Surge Was Excluded
+The first 15-minute bar always has elevated volume relative to the daily average (opening spike) —
+any volume pace comparison in the first 1–2 bars would fire false positives on nearly every ticker.
+Dropped entirely. OBV direction already computed in EOD signals and displayed in the popup.
 
 ---
 
@@ -1792,6 +1917,11 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `d477733` — feat: add current + next month quad columns to dashboard table (solid color box + probability)
   - `5ea6e37` — feat: route international tickers to country quarterly quads in conviction + dashboard
   - `2b0e780` — fix: update QuadSetup quad colors to match dashboard palette (Q1 dark green, Q2 system green, Q3 amber, Q4 red)
+  - `1d999be` — feat: OBV ABCD pivot logic + popup section dividers
+  - `3a6b5a4` — fix: remove delta-H, VRP Change, and P/C Ratio from popup
+  - `fb9f5dc` — docs: update CLAUDE.md — country quad routing, quad colors, conviction tooltip format
+  - `5a08815` — feat: intraday monitor — PROXIMITY + RETRACEMENT_50 SMS alerts every 15 min
+  - `ad1f0fe` — fix: intraday monitor — CronTrigger aligned to clock boundaries, fires at 9:30 AM open
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -1896,6 +2026,9 @@ git checkout -- .   # roll back if needed
 64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched.
 65. **Proactive spec review** — when reading a spec or reviewing methodology, flag any inconsistencies with existing code or other parts of the spec before implementing. Do not implement silently when something looks wrong or contradictory.
 70. **UI text contrast — 3-level hierarchy** — Never use `#445566` or darker for readable text. Three levels: (1) `#00e5a0` green for section titles/headers; (2) `#c8d8e8` for column headers, data labels, group separators; (3) `#8899aa` for descriptive/secondary text (subtitles, inactive controls, units). Reserve `#445566` and darker for decorative borders only.
+74. **Intraday monitor uses `schwab_fetch_intraday_quotes` — never `schwab_fetch_all`** — `schwab_fetch_all()` has an idempotency check that freezes `price_cache.close` after the first same-day call. `schwab_fetch_intraday_quotes()` always calls `get_quotes()`, uses `lastPrice` only, and does not update `cache_date`. Swapping them silently breaks the 15-minute price refresh.
+75. **Never call `calculate_signals()` intraday** — pivot states require confirmed EOD closes; running signals intraday produces false BREAK_OF_TRADE states. The intraday monitor is purely observational.
+76. **Intraday scheduler uses `CronTrigger` — never `"interval"`** — `CronTrigger(day_of_week="mon-fri", hour="9-15", minute="0,15,30,45", timezone="America/New_York")` aligns to clock boundaries, guaranteeing the first fire is exactly 9:30 AM ET. An interval trigger fires relative to container start time and will miss the open if the container starts at an off-minute.
 
 ---
 
@@ -2067,13 +2200,14 @@ Only commit after production is confirmed healthy.
 ## What Is NOT In Scope Yet
 - Account positions display (deferred — manage in ThinkorSwim; Phase 6 or later)
 - WebSocket streaming (deferred — REST polling is sufficient for EOD signals)
-- Volume surge icon on dashboard rows (deferred to Phase 6)
+- Volume surge icon on dashboard rows (deferred — opening bar always spikes; daily avg comparison unreliable intraday)
 - Schwab order execution (permanently out of scope)
 - Quad Tracker dashboard (Phase QT)
 - Quad alignment column in Signal Matrix table (Phase QT)
 - Tier 2 auto-surfacing based on conviction threshold
 - MA20/50/100 display in dashboard UI
 - Signal history UI (table exists, endpoint exists — frontend consumption is future scope)
+- Intraday alert log UI — `intraday_alert_log` table exists; no dashboard view yet (future scope)
 
 ---
 

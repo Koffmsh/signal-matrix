@@ -1154,7 +1154,6 @@ function Dashboard() {
                 if (label === "__section__") {
                   return (
                     <div key={`sec-${val}`} style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "6px", marginTop: idx === 0 ? "0" : "8px" }}>
-                      <div style={{ width: "2px", height: "10px", background: "#00e5a0", borderRadius: "1px", flexShrink: 0 }} />
                       <span style={{ fontSize: "8px", fontWeight: "700", letterSpacing: "0.15em", color: "#c8d8e8" }}>{val}</span>
                       <div style={{ flex: 1, height: "1px", background: "#1a2535" }} />
                     </div>
