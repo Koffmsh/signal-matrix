@@ -204,23 +204,20 @@ def schwab_data_job() -> None:
 
 def _intraday_monitor_job() -> None:
     """
-    Every 15 minutes, 9:30 AM–3:45 PM ET, NYSE trading days only.
-    Checks PROXIMITY and RETRACEMENT_50 triggers; sends SMS on first hit per day.
-    Light path: price refresh (skip/append) + pure arithmetic against EOD signals.
+    Fires at :00/:15/:30/:45 each hour, 9:30 AM–3:45 PM ET, NYSE trading days only.
+    CronTrigger aligns to clock boundaries so the first fire is exactly 9:30 AM.
+    An interval trigger would fire relative to container start time and could miss open.
     """
-    et      = ZoneInfo("America/New_York")
-    now_et  = datetime.now(et)
+    now_et  = datetime.now(ZoneInfo("America/New_York"))
     et_date = now_et.date()
 
-    # NYSE trading days only
+    # NYSE trading days only — CronTrigger handles the clock, this handles holidays
     if not _is_trading_day(et_date):
         return
 
-    # Market hours gate: 9:30 AM – 3:45 PM ET
-    # (4:00 PM is covered by the EOD job which also refreshes prices)
-    market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
-    market_close = now_et.replace(hour=15, minute=45, second=0, microsecond=0)
-    if now_et < market_open or now_et > market_close:
+    # Skip the two pre-market fires (9:00 and 9:15) that the cron pattern includes
+    # CronTrigger hour=9-15 minute=0,15,30,45 fires at 9:00 and 9:15 before open
+    if now_et.hour == 9 and now_et.minute < 30:
         return
 
     db = SessionLocal()
@@ -252,8 +249,16 @@ def start() -> None:
     )
     scheduler.add_job(
         _intraday_monitor_job,
-        "interval",
-        minutes=15,
+        # Fires at :00/:15/:30/:45 from 9 AM–3 PM, plus 9:30–9:45 via minute=30,45 at hour=9
+        # Effective market-hours range: 9:30, 9:45, 10:00 … 15:30, 15:45
+        # hour=9  minute=30,45  → 9:30, 9:45
+        # hour=10-15 minute=0,15,30,45 → 10:00 … 15:45
+        CronTrigger(
+            day_of_week = "mon-fri",
+            hour        = "9-15",
+            minute      = "0,15,30,45",
+            timezone    = "America/New_York",
+        ),
         id="intraday_monitor",
         replace_existing=True,
     )
@@ -261,7 +266,7 @@ def start() -> None:
     logger.info(
         "Scheduler: started — EOD job 4:00 PM ET (prices→IV→signals), "
         "Schwab token refresh every 25 min, "
-        "intraday monitor every 15 min (9:30 AM–3:45 PM ET trading days)"
+        "intraday monitor 9:30 AM–3:45 PM ET at :00/:15/:30/:45 (trading days)"
     )
 
 
