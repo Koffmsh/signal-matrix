@@ -34,7 +34,7 @@ from models.price_cache import PriceCache
 from models.signal_output import SignalOutput
 from models.signal_pivots import SignalPivots
 from models.intraday_alert_log import IntradayAlertLog
-from services.schwab_market_data import schwab_fetch_intraday_quotes
+from services.schwab_market_data import schwab_fetch_intraday_quotes, yahoo_fetch_intraday_quotes
 from services.sms import send_sms
 from services.email_alert import send_email
 
@@ -201,16 +201,21 @@ def run_intraday_check(db: Session) -> dict:
     tickers_checked = 0
 
     # ── Step 1: Refresh prices ────────────────────────────────────────────────
-    # Uses schwab_fetch_intraday_quotes() — NOT schwab_fetch_all().
-    # schwab_fetch_all() has an idempotency check that skips re-fetching once
-    # cache_date == today, meaning price_cache.close stays frozen at the first
-    # intraday value for the rest of the day.  schwab_fetch_intraday_quotes()
-    # always calls get_quotes() and uses lastPrice only (never closePrice).
+    # Two passes:
+    #   a) schwab_fetch_intraday_quotes() — Schwab-supported equities/ETFs (~70 tickers)
+    #      Always calls get_quotes(), uses lastPrice only, no cache_date update.
+    #   b) yahoo_fetch_intraday_quotes()  — Yahoo-only tickers (indices, FX, futures, ~11 tickers)
+    #      Uses fetch_ticker_close() (5-day yfinance), no cache_date update.
     try:
         schwab_fetch_intraday_quotes(db)
     except Exception as e:
-        logger.error(f"Intraday monitor: price refresh failed — {e}")
+        logger.error(f"Intraday monitor: Schwab price refresh failed — {e}")
         return {"alerts_sent": 0, "error": str(e)}
+
+    try:
+        yahoo_fetch_intraday_quotes(db)
+    except Exception as e:
+        logger.warning(f"Intraday monitor: Yahoo price refresh failed — {e} (continuing)")
 
     # ── Step 2: Load signal_output (trade tf, non-Neutral viewpoints only) ───
     outputs = {

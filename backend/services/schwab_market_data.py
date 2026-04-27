@@ -449,6 +449,53 @@ def schwab_fetch_intraday_quotes(db: Session) -> dict:
     return {"fetched": fetched, "skipped": skipped}
 
 
+def yahoo_fetch_intraday_quotes(db: Session) -> dict:
+    """
+    Lightweight intraday price refresh for Yahoo-only tickers (indices, FX, futures).
+    Companion to schwab_fetch_intraday_quotes() — covers the SCHWAB_UNSUPPORTED set.
+
+    Uses fetch_ticker_close() (5-day yfinance pull) to get the latest price.
+    Same rules as schwab_fetch_intraday_quotes:
+      - No cache_date update (preserves EOD idempotency)
+      - Updates close, volume, daily_high, daily_low, updated_at only
+    """
+    from services.yahoo_finance import fetch_ticker_close
+
+    tickers          = _get_active_tickers(db)
+    yahoo_tickers    = [t for t in tickers if t in SCHWAB_UNSUPPORTED]
+
+    if not yahoo_tickers:
+        return {"fetched": 0, "errors": 0}
+
+    existing_map = {
+        r.ticker: r
+        for r in db.query(PriceCache).filter(PriceCache.ticker.in_(yahoo_tickers)).all()
+    }
+
+    fetched = 0
+    errors  = 0
+
+    for ticker in yahoo_tickers:
+        result = fetch_ticker_close(ticker)
+        if result is None:
+            errors += 1
+            continue
+        close, volume, daily_high, daily_low = result
+        row = existing_map.get(ticker)
+        if row:
+            row.close      = close
+            row.volume     = volume
+            row.daily_high = daily_high
+            row.daily_low  = daily_low
+            row.updated_at = datetime.utcnow()
+            # NOTE: cache_date intentionally NOT updated
+            fetched += 1
+
+    db.commit()
+    logger.info(f"Yahoo intraday quotes: {fetched} updated, {errors} errors")
+    return {"fetched": fetched, "errors": errors}
+
+
 # ── Schwab fetch ──────────────────────────────────────────────────────────────
 
 def _schwab_fetch(db: Session, client, tickers: list) -> dict:
