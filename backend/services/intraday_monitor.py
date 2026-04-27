@@ -36,6 +36,7 @@ from models.signal_pivots import SignalPivots
 from models.intraday_alert_log import IntradayAlertLog
 from services.schwab_market_data import schwab_fetch_intraday_quotes
 from services.sms import send_sms
+from services.email_alert import send_email
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
@@ -261,6 +262,7 @@ def run_intraday_check(db: Session) -> dict:
                     sig.lrr, sig.hrr, prox, sig.conviction,
                 )
                 send_sms(msg)
+                send_email(f"⚡ {ticker} — ENTRY ZONE ({viewpoint})", msg)
                 _log_alert(db, today, now_str, ticker, "PROXIMITY",
                            close, prox, sig.conviction, None)
                 alerts_sent += 1
@@ -285,6 +287,7 @@ def run_intraday_check(db: Session) -> dict:
                         sig.conviction,
                     )
                     send_sms(msg)
+                    send_email(f"📐 {ticker} — 50% RETRACE ({viewpoint})", msg)
                     _log_alert(db, today, now_str, ticker, "RETRACEMENT_50",
                                close, retrace_pct, sig.conviction, piv.pivot_c)
                     alerts_sent += 1
