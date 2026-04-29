@@ -255,6 +255,17 @@ Critical issues already resolved — do not reintroduce these bugs:
 - The old duplicate "Vol Signal" row that appeared above OBV Direction was removed — it was a leftover from the price-momentum proxy era
 - **Do not rename** `vol_signal` → `obv_signal` in the DB — "Vol Signal" is the correct trader-facing name
 
+### ATR Buffer Symmetry Fix — Uptrend Normal Case (`conviction_engine.py`)
+- **Problem:** Downtrend normal used `max(MA20, close + 0.5×ATR)` for HRR to prevent the ceiling collapsing to close when price approached MA20 from below. Uptrend normal used `LRR = MA20` exactly — no corresponding buffer. When price pulled back close to MA20 in an uptrend, LRR could sit nearly at close level, providing no meaningful floor.
+- **Fix:** Uptrend normal now uses `min(MA20, close - 0.5×ATR)` for LRR — symmetric with the downtrend HRR buffer. When price is far above MA20, buffer is inactive and LRR = MA20. When price approaches MA20, LRR drops to `close - 0.5×ATR` to maintain meaningful separation.
+- **Rule:** The ATR buffer is symmetric — both sides of the normal case (uptrend LRR, downtrend HRR) use the same 0.5×ATR anchor logic. Do not revert the uptrend case to `LRR = MA20` exactly.
+
+### Popup Trade Section Order (`App.js`)
+- **Trade Dir and Trade State** are displayed side-by-side in the same row (dual-field `__dual__` renderer)
+- **Order:** Trade Dir | Trade State → Trade LRR → Trade HRR → Trade B → Trade C
+- **`__dual__` renderer** — special field type in the popup `fields` array: `["__dual__", [[label, val, color, isState, tip], ...]]`. Renders as a full-width subgrid containing two side-by-side cells. Used only for Trade Dir + Trade State.
+- **Trade B before Trade C** — B is the prior swing reference; C is the active invalidation level. B shown first as structural context, C shown last as the actionable level.
+
 ### Warning Tooltip — C Pivot Price Injected Inline (`App.js`)
 - LRR/HRR ⚠ tooltips now include the C pivot value inline: e.g. `"LRR is below C ($448.20) — approaching trade invalidation level"`
 - `warnTip(dir, which, cVal, bVal, isExtended)` helper builds the tooltip string — formats price as `$X,XXX.XX`; when `isExtended=true` tooltip says "B replaces C" as the break level
@@ -436,7 +447,9 @@ Critical issues already resolved — do not reintroduce these bugs:
   vol    = STD20(close)
 
   Structural uptrend + above MA20 (normal):
-    LRR = center                                   # MA20 — tight entry floor (k_tight = 0)
+    LRR = min(center, close - 0.5 × ATR)          # ATR buffer: ensures LRR sits at least
+                                                   # 0.5×ATR below close; collapses to MA20
+                                                   # when price is far above (buffer inactive)
     HRR = center + k_wide × vol                    # BB upper — target
 
   Structural uptrend + below MA20 (counter-trend):
@@ -1513,7 +1526,8 @@ regime = "downtrend" if 2+ consecutive closes BELOW MA20(close)
 #### LRR/HRR Formulas — Pivot Direction + Regime Switch (v1.8)
 ```python
 # Structural uptrend + above MA20 (normal):
-LRR = center                               # MA20 — tight entry floor (k_tight = 0)
+LRR = min(center, close - 0.5 × atr)     # ATR buffer: meaningful floor below close;
+                                           # collapses to MA20 when close is far above
 HRR = center + k_wide × vol               # BB upper — target
 
 # Structural uptrend + below MA20 (counter-trend):
@@ -1532,17 +1546,24 @@ HRR = center + k_wide × vol               # BB upper — widens to full band
 
 #### Role Summary
 ```
-Uptrend + above MA20 (normal):          LRR = MA20 (tight entry, k_tight=0), HRR = BB upper (target)
+Uptrend + above MA20 (normal):          LRR = min(MA20, close - 0.5×ATR),    HRR = BB upper (target)
 Uptrend + below MA20 (counter-trend):   LRR = BB lower (wide),               HRR = BB upper (target)
 Downtrend + below MA20 (normal):        LRR = BB lower (target),              HRR = max(MA20, close+0.5×ATR)
 Downtrend + above MA20 (counter-trend): LRR = BB lower (target),              HRR = BB upper (wide)
 ```
-k_wide always defines the target/exit side. Entry side collapses to MA20 (k_tight = 0).
+k_wide always defines the target/exit side. Entry side uses ATR buffer anchored to MA20.
 
-#### ATR Buffer Behavior
-- When close is far below MA20 (2×ATR or more): `close + 0.5×ATR` < MA20 → HRR = MA20
-- When close approaches MA20 (within 0.5×ATR): buffer kicks in → HRR = close + 0.5×ATR
-- This ensures HRR always provides a meaningful ceiling, even when close has recovered near MA20
+#### ATR Buffer Behavior (symmetric on both sides)
+**Uptrend normal — LRR buffer:**
+- When close is far above MA20: `close - 0.5×ATR` > MA20 → LRR = MA20
+- When close approaches MA20 (within 0.5×ATR from above): buffer kicks in → LRR = close - 0.5×ATR
+- Ensures LRR always provides a meaningful floor below close, even during pullbacks to MA20
+
+**Downtrend normal — HRR buffer:**
+- When close is far below MA20: `close + 0.5×ATR` < MA20 → HRR = MA20
+- When close approaches MA20 (within 0.5×ATR from below): buffer kicks in → HRR = close + 0.5×ATR
+- Ensures HRR always provides a meaningful ceiling above close, even during bounces to MA20
+
 - ATR = 14-day simple MA of True Range; stored in `price_cache.atr`
 
 #### Self-Correction Property
@@ -1802,7 +1823,8 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 - **Scale labels:** 9 · 20 · 30 · 45+ at zone boundaries, 11px, `#8899aa`
 - **Needle position formula:** `Math.min(Math.max((vix - 9) / 36, 0), 1) * 100` percent
 - Labels: INVESTABLE (green) · CHOPPY (amber) · DANGER (red) shown inline next to numeric VIX value
-- **VoV line** — `VoV 15.3% · 72nd pct` displayed in grey below scale labels; from `price_cache.vov_30d` + `vov_rank`; hidden when null
+- **VVIX line** — `VVIX 85.3 · 42nd pct` displayed in grey below scale labels; VVIX close from `realDataMap.get("VVIX").close`, rank from `rel_iv` (252-day price rank stored on VVIX price_cache row); hidden when VVIX close is null. Answers: "is VVIX signaling elevated tail risk today vs. history?"
+- **VoV (realized)** — still computed and stored in `price_cache.vov_30d` + `vov_rank` for future use (e.g. VVIX vs realized VoV spread signal); not currently displayed
 
 ## Dashboard Columns (current, in order) — v1.7
 | Column | Description |
@@ -1835,12 +1857,11 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | VIX Regime | Investable / Edgy / Choppy / Danger — regime at time of signal calculation; from `vix_regime` in `signal_output` |
 | Vol Direction | Bullish / Bearish / Neutral — OBV pivot trend direction (`obv_direction`) |
 | Vol Signal vs Trade | Confirming ✓ / Diverging ✗ / Neutral — compared against Trade Dir (`obv_confirming`) |
-| Trade Dir | Direction + icon |
+| Trade Dir \| Trade State | Side-by-side dual-field row — direction + icon on left; structural state string on right |
 | Trade LRR | BB lower band; color = trade dir; ⚠ + hover tooltip when warn; ↑↓ overshoot flag |
 | Trade HRR | BB upper band; color = trade dir; ⚠ + hover tooltip when warn; ↑↓ overshoot flag |
-| Trade C | C pivot — trade invalidation level (or B when structural EXTENDED) |
 | Trade B | B pivot — prior swing high/low |
-| Trade State | Structural state string |
+| Trade C | C pivot — active invalidation level (or B when d_extended=True) |
 | Trend Dir | Direction + icon |
 | Trend Level | MA100 floor/ceiling — hidden when Neutral or slope contradicts direction; ⚠ when warn |
 | Trend C | C pivot — trend invalidation level |
@@ -2023,7 +2044,8 @@ git checkout -- .   # roll back if needed
 69. **Slope boost changed to × 1.20 in v1.9** (was × 1.17 in v1.8). Do not revert to 1.17.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
-64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched.
+64. **VoV rank computed from existing VIX price history** — no separate accumulation period needed. `compute_vov_with_rank()` computes 30-day rolling std of VIX log returns (VoV series) from 5-year history in `price_cache`, then ranks current VoV within its own 252-day trailing window. Returns `(vov_30d, vov_rank)` tuple. Stored in `price_cache.vov_30d` and `price_cache.vov_rank`. Updated on every REFRESH DATA when VIX history is fetched. Not currently displayed — retained for future VVIX vs realized VoV spread signal.
+**VVIX price rank** — computed in `refresh_data()` in `market_data.py` after VoV. Ranks VVIX close within its own 252-day price history (0–100). Stored in `price_cache.rel_iv` for the VVIX row (VVIX has no options chain so rel_iv is otherwise unused). `iv_source` set to `"price_rank"`. Displayed in VIX gauge header as `VVIX 85.3 · 42nd pct`. Popup shows `IV Rank — price_rank`. Do not replace with the Yahoo realized-vol proxy — price rank answers the correct question (is VVIX elevated vs history?).
 65. **Proactive spec review** — when reading a spec or reviewing methodology, flag any inconsistencies with existing code or other parts of the spec before implementing. Do not implement silently when something looks wrong or contradictory.
 70. **UI text contrast — 3-level hierarchy** — Never use `#445566` or darker for readable text. Three levels: (1) `#00e5a0` green for section titles/headers; (2) `#c8d8e8` for column headers, data labels, group separators; (3) `#8899aa` for descriptive/secondary text (subtitles, inactive controls, units). Reserve `#445566` and darker for decorative borders only.
 74. **Intraday monitor uses `schwab_fetch_intraday_quotes` — never `schwab_fetch_all`** — `schwab_fetch_all()` has an idempotency check that freezes `price_cache.close` after the first same-day call. `schwab_fetch_intraday_quotes()` always calls `get_quotes()`, uses `lastPrice` only, and does not update `cache_date`. Swapping them silently breaks the 15-minute price refresh.

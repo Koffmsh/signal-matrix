@@ -476,7 +476,10 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
     Regime flip (2 consecutive closes above/below MA20) switches tight vs wide:
 
       Uptrend + above MA20 (normal):
-        LRR = MA20                 (tight entry floor — k_tight = 0)
+        LRR = min(MA20, close - 0.5×ATR)
+              ATR buffer: when close approaches MA20 from above, ensures LRR
+              sits at least 0.5×ATR below close. Collapses to MA20 when close
+              is far above it (buffer inactive). Mirrors downtrend tight ceiling.
         HRR = MA20 + 2σ           (BB upper — target)
 
       Uptrend + below MA20 (counter-trend):
@@ -522,7 +525,11 @@ def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
         # Uptrend
         hrr = round(center + k_wide * vol, 4)
         if above:
-            lrr = round(center, 4)               # normal: tight LRR at MA20 (k_tight = 0)
+            # Normal uptrend: tight LRR = MA20 with ATR buffer near close
+            if atr and close is not None:
+                lrr = round(min(center, close - 0.5 * atr), 4)
+            else:
+                lrr = round(center, 4)
         else:
             lrr = round(center - k_wide * vol, 4)  # counter-trend: widen to BB lower
 

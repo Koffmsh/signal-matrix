@@ -789,12 +789,11 @@ function Dashboard() {
                 <span style={{ position: "absolute", right: 0, fontSize: "11px", color: "#8899aa" }}>45+</span>
               </div>
               {(() => {
-                const vov  = realDataMap.get("VIX")?.vov_30d;
-                const rank = realDataMap.get("VIX")?.vov_rank;
-                if (vov == null) return null;
-                const pct = `${(vov * 100).toFixed(1)}%`;
-                const txt = rank != null ? `VoV ${pct} · ${rank.toFixed(0)}th pct` : `VoV ${pct}`;
-                return <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.05em", marginTop: "4px" }}>{txt}</div>;
+                const vvix = realDataMap.get("VVIX");
+                if (vvix?.close == null) return null;
+                const rank = vvix.rel_iv != null ? Math.round(vvix.rel_iv) : null;
+                const txt  = rank != null ? `VVIX ${vvix.close.toFixed(1)} · ${rank}th pct` : `VVIX ${vvix.close.toFixed(1)}`;
+                return <div style={{ fontSize: "10px", color: "#8899aa", letterSpacing: "0.05em", marginTop: "4px" }}>{txt}</div>;
               })()}
             </div>
           );
@@ -947,7 +946,7 @@ function Dashboard() {
           {sortKey !== "default" && (
             <button onClick={() => { setSortKey("default"); setSortDir(1); }} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "2px 8px", fontSize: "9px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>↺ DEFAULT</button>
           )}
-          <span style={{ fontSize: "10px", color: "#667788" }}>{filtered.length} of {DATA.length} instruments</span>
+          <span style={{ fontSize: "10px", color: "#8899aa" }}>{filtered.length} of {DATA.length} instruments</span>
         </div>
       </div>
 
@@ -1067,12 +1066,14 @@ function Dashboard() {
 
           // ── TRADE ────────────────────────────────────────────────────────
           SECTION("TRADE"),
-          ["Trade Dir",    `${dirIcon(row.tradeDir)} ${row.tradeDir}`,                                    dirColor(row.tradeDir),                                    false],
+          ["__dual__", [
+            ["Trade Dir", `${dirIcon(row.tradeDir)} ${row.tradeDir}`, dirColor(row.tradeDir), false, null],
+            ["Trade State", row.tradeState || "—", stateColor(row.tradeState), true, null]
+          ]],
           ["Trade LRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeLRR)}${row.tradeLrrWarn ? " ⚠" : ""}${row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
           ["Trade HRR",    row.tradeDir !== "Neutral" ? `${fmtPrice(row.tradeHRR)}${row.tradeHrrWarn ? " ⚠" : ""}${row.tradeHrrExtended ? " ↑" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeHrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
-          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
           ["Trade B" + (tradeBreakIsB ? " *" : ""),  fmtPrice(row.tradeB), tradeBreakIsB  ? "#f0b429" : "#8899aa", false, tradeBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
-          ["Trade State",  row.tradeState || "—",                                                          stateColor(row.tradeState),                                true],
+          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
 
           // ── TREND ────────────────────────────────────────────────────────
           SECTION("TREND"),
@@ -1156,6 +1157,20 @@ function Dashboard() {
                     <div key={`sec-${val}`} style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "6px", marginTop: idx === 0 ? "0" : "8px" }}>
                       <span style={{ fontSize: "8px", fontWeight: "700", letterSpacing: "0.15em", color: "#c8d8e8" }}>{val}</span>
                       <div style={{ flex: 1, height: "1px", background: "#1a2535" }} />
+                    </div>
+                  );
+                }
+                if (label === "__dual__") {
+                  return (
+                    <div key={`dual-${idx}`} style={{ gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                      {val.map(([dlabel, dval, dcolor, disState, dtip], didx) => (
+                        <div key={`dual-field-${didx}`} style={{ background: "#080e18", border: "1px solid #131f2e", borderRadius: "3px", padding: "7px 10px" }}>
+                          <div style={{ fontSize: "9px", color: "#99aabb", letterSpacing: "0.08em", marginBottom: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dlabel}</div>
+                          <div style={{ fontSize: "11px", fontWeight: "600", color: dcolor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {dtip ? <span title={dtip} style={{ cursor: "help" }}>{dval}</span> : dval}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   );
                 }

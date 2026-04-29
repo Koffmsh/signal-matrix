@@ -207,6 +207,22 @@ def refresh_data(db: Session) -> dict:
     except Exception as e:
         logger.warning(f"VoV computation skipped: {e}")
 
+    # VVIX price rank — stored in rel_iv (0-100 percentile within 252-day price history).
+    # VVIX has no options chain so rel_iv is otherwise unused. Price rank is conceptually
+    # identical to IV rank — where current price sits within its own rolling history.
+    try:
+        vvix_row = db.query(PriceCache).filter(PriceCache.ticker == "VVIX").first()
+        if vvix_row and vvix_row.history_json and vvix_row.close:
+            prices = json.loads(vvix_row.history_json)
+            if len(prices) >= 252:
+                window = prices[-252:]
+                rank = round(sum(p <= vvix_row.close for p in window) / len(window) * 100)
+                vvix_row.rel_iv = rank
+                vvix_row.iv_source = "price_rank"
+                db.commit()
+    except Exception as e:
+        logger.warning(f"VVIX price rank computation skipped: {e}")
+
     # Read all active tickers from cache in one query — avoids N+1 round trips to Supabase.
     # load_only skips history_json / volume_history_json blobs (not needed for page load).
     tickers = get_active_tickers(db)
