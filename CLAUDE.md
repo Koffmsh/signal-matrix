@@ -1,4 +1,4 @@
-# Signal Matrix Platform — Project Context
+﻿# Signal Matrix Platform — Project Context
 
 ## Important Note for Neo
 The `.docx` spec files in `Docs/` cannot be read by Claude Code.
@@ -311,12 +311,12 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **30-day interpolation:** finds the two expirations bracketing 30 DTE (near < 30, far ≥ 30), computes ATM IV at each (average call + put), linearly interpolates → `IV_near × (far_dte - 30) / span + IV_far × (30 - near_dte) / span`; falls back to nearest available if only one side of 30 DTE exists
 - Individual option `volatility` is a decimal (e.g. `0.318` for 31.8%) — no ÷100 needed; guard: if value > 2.0 it's percentage format, divide by 100
 - **IV Rank formula** (matches TOS "IV Percentile"): `(current_iv - min_252) / (max_252 - min_252) * 100` — range-based, NOT `percentileofscore` frequency-based
-- Cold start: returns `50` when fewer than 5 observations in `iv_history`
+- Cold start: returns `50` when fewer than 5 observations in `vol_history`
 - Updates `price_cache.rel_iv` (replaces Yahoo proxy) + sets `price_cache.iv_source = 'schwab'`
 - **Per-ticker fallback:** on any per-ticker error, leaves Yahoo proxy `rel_iv` intact and tags `iv_source = 'proxy'`
 - **No-tokens fallback:** if Schwab token missing/expired, entire batch tagged `'proxy'` immediately — no options calls made
 - `iv_source` exposed in `serialize_cache_row()` in `market_data.py` — popup label shows `IV% — schwab` or `IV% — proxy`
-- **Production reset required after this fix:** run `DELETE FROM iv_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
+- **Production reset required after this fix:** run `DELETE FROM vol_history;` in Supabase SQL editor — old rows used wrong source field and will corrupt IV Rank if left in
 
 ### Volatility Metrics Expansion — HV30/HV90, IV30, Risk Reversal, Skew Rank, P/C Ratio (`schwab_options.py`)
 - **All vol metrics come exclusively from `schwab_fetch_iv`** — HV30/HV90 are NOT computed in `schwab_market_data.py` from Yahoo data. All-or-nothing: if Schwab tokens unavailable, all new vol fields remain null (no partial population from Yahoo)
@@ -342,14 +342,21 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Put/Call Ratio — `_extract_put_call_ratio(data)`:**
   - Total put OI ÷ total call OI across all fetched strikes and expirations
   - `> 1.2` = fear/capitulation (contrarian bullish); `< 0.6` = complacency
-- **iv_history renamed columns:** `rv21` → `hv30`, `rv63` → `hv90` (migration `k1a2b3c4d5e6`)
-- **iv_history new columns:** `call_iv_25d`, `put_iv_25d`, `risk_reversal`, `skew_rank`, `put_call_ratio` (migration `k1a2b3c4d5e6`; `skew_rank` added migration `08f62d15c8b7`)
-- **iv_history `vol_premium` renamed to `vrp`** (migration `m3c4d5e6f7g8`) — VRP = IV30 − HV30; positive = options expensive vs realized; negative = cheap
+- **vol_history renamed columns:** `rv21` → `hv30`, `rv63` → `hv90` (migration `k1a2b3c4d5e6`)
+- **vol_history new columns:** `call_iv_25d`, `put_iv_25d`, `risk_reversal`, `skew_rank`, `put_call_ratio` (migration `k1a2b3c4d5e6`; `skew_rank` added migration `08f62d15c8b7`)
+- **vol_history `vol_premium` renamed to `vrp`** (migration `m3c4d5e6f7g8`) — VRP = IV30 − HV30; positive = options expensive vs realized; negative = cheap
 - **price_cache new columns:** `hv30`, `hv90`, `iv30`, `risk_reversal`, `skew_rank` (Integer), `put_call_ratio` (migration `l2b3c4d5e6f7`); `vrp_rank` Integer (migration `m3c4d5e6f7g8`)
-- **VRP (Volatility Risk Premium):** `vrp = IV30 − HV30`; stored in `iv_history.vrp` daily. Positive = options expensive vs realized vol; negative = options cheap. Renamed from `vol_premium`.
+- **VRP (Volatility Risk Premium):** `vrp = IV30 − HV30`; stored in `vol_history.vrp` daily. Positive = options expensive vs realized vol; negative = options cheap. Renamed from `vol_premium`.
 - **VRP Rank:** rank of `vrp` within its own 252-day rolling history: `(vrp - min_252) / (max_252 - min_252) × 100`. Stored in `price_cache.vrp_rank` (Integer 0–100). Low = options historically cheap vs realized = green; High = historically expensive = red. Requires `_RANK_MIN_HISTORY = 30` observations. Computed by `_compute_vrp_rank()` in `schwab_options.py` (mirrors `_compute_skew_rank`).
 - **IV30 vs Schwab "Implied Volatility":** Our IV30 is constant-maturity 30-day interpolated ATM IV (TOS methodology). Schwab's "Implied Volatility" stat in the Options Statistics panel is front-month ATM IV without maturity adjustment — will differ by ~2-4% due to term structure. Both are correct; they measure different things. Constant-maturity is methodologically cleaner for cross-asset comparison.
-- **Idempotency:** checked against `iv_history` table (not `price_cache.iv_source`) — `iv_history` must be cleared to force re-fetch: `DELETE FROM iv_history WHERE iv_date = 'YYYY-MM-DD'`
+- **Idempotency:** checked against `vol_history` table (not `price_cache.iv_source`) — `vol_history` must be cleared to force re-fetch: `DELETE FROM vol_history WHERE iv_date = 'YYYY-MM-DD'`
+
+### vol_history Table — Rename + HV-Only Accumulation (`schwab_options.py`, `scheduler.py`)
+- **`iv_history` renamed to `vol_history`** (migration `n1o2p3q4r5s6`) — table stores all vol metrics (IV30, HV30, HV90, VRP, skew), not just implied vol; name was misleading
+- **`IVHistory` model → `VolHistory`** in `models/vol_history.py`; `models/iv_history.py` is superseded (no longer imported)
+- **`accumulate_hv_only(db)`** in `schwab_options.py` — writes daily HV30/HV90 rows to `vol_history` for Yahoo-only tickers (SPX, NDX, RUT, VIX, $DJI, USD, JPY, /CL, /ZN, /GC, VVIX). `implied_vol`, `vrp`, `risk_reversal` etc. all NULL. Runs in the 4 PM scheduler job after `schwab_fetch_iv()`.
+- **HV Rank label** — popup `iv_source = 'proxy'` now shows **"HV Rank"** (was "IV Rank — proxy"). The proxy was never implied vol — it was 21-day realized vol ranked within its 252-day history. Tooltip updated to match. `iv_source = 'schwab'` → "IV Rank — schwab" (unchanged). `iv_source = 'price_rank'` → "VVIX Rank — price" (unchanged).
+- **Migration note:** `create_all()` on startup auto-created an empty `vol_history` table before the migration ran; migration handles this by dropping the empty table first before renaming `iv_history`
 
 ### Conviction Score — 4-Layer Formula (v1.9)
 - **H completely removed from conviction formula** — H is still calculated and stored for regime classification display only (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT affect conviction score.
@@ -745,7 +752,7 @@ signal-matrix/
 │   │   ├── scheduler_log.py               ← Task 4.2 — Scheduler run log DB model
 │   │   ├── ticker.py                      ← Task 4.6 — Tickers DB model
 │   │   ├── schwab_tokens.py               ← Task 5.3 — Schwab OAuth tokens DB model ✅
-│   │   ├── iv_history.py                  ← Task 5.5 — IV history DB model ✅
+│   │   ├── vol_history.py                  ← Task 5.5 — IV history DB model ✅
 │   │   └── intraday_alert_log.py          ← Intraday monitor alert dedup log
 │   ├── alembic/                           ← Task 5.1 — DB migration tooling ✅
 │   │   ├── env.py
@@ -761,8 +768,9 @@ signal-matrix/
 │   │       ├── k1a2b3c4d5e6_iv_history_vol_rename_and_skew.py ← rv21→hv30, rv63→hv90; added call_iv_25d, put_iv_25d, risk_reversal, put_call_ratio
 │   │       ├── l2b3c4d5e6f7_price_cache_add_vol_columns.py  ← added hv30, hv90, iv30, risk_reversal, skew_rank, put_call_ratio
 │   │       ├── m3c4d5e6f7g8_iv_history_rename_vol_premium_vrp_add_vrp_rank.py  ← vol_premium→vrp; added price_cache.vrp_rank
-│   │       ├── 08f62d15c8b7_iv_history_add_skew_rank.py                        ← added iv_history.skew_rank (Integer 0–100)
-│   │       └── a1b2c3d4e5f6_add_intraday_alert_log.py                          ← intraday_alert_log table (PROXIMITY + RETRACEMENT_50 dedup)
+│   │       ├── 08f62d15c8b7_iv_history_add_skew_rank.py                        ← added vol_history.skew_rank (Integer 0–100)
+│   │       ├── a1b2c3d4e5f6_add_intraday_alert_log.py                          ← intraday_alert_log table (PROXIMITY + RETRACEMENT_50 dedup)
+│   │       └── n1o2p3q4r5s6_rename_iv_history_to_vol_history.py                ← renamed iv_history → vol_history; added accumulate_hv_only() for Yahoo-only tickers
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -771,7 +779,7 @@ signal-matrix/
 │   │   ├── scheduler.py                   ← Task 4.2 — APScheduler EOD + intraday monitor jobs ✅
 │   │   ├── schwab_client.py               ← Task 5.3 — Token management + Schwab client ✅
 │   │   ├── schwab_market_data.py          ← Task 5.4 — EOD quote + history fetch + intraday quotes ✅
-│   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + iv_history write ✅
+│   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + vol_history write ✅
 │   │   ├── intraday_monitor.py            ← PROXIMITY + RETRACEMENT_50 alert engine ✅
 │   │   └── sms.py                         ← Twilio SMS wrapper ✅
 │   └── routers/
@@ -832,7 +840,7 @@ signal-matrix/
 | 5.2 | Fly.io deployment — Docker, secrets, signal.suttonmc.com DNS | ✅ Complete |
 | 5.3 | Schwab OAuth — token exchange, storage, proactive auto-refresh | ✅ Complete |
 | 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ✅ Complete |
-| 5.5 | IV Percentile — options chain fetch, iv_history table | ✅ Complete |
+| 5.5 | IV Percentile — options chain fetch, vol_history table | ✅ Complete |
 | 5.6 | OBV source swap — volume_history_json from Schwab | ✅ Complete |
 
 ### New Button — CALCULATE SIGNALS
@@ -858,13 +866,14 @@ signal-matrix/
 ### EOD Flow (4:00 PM ET, NYSE trading days) — single chained job
 ```
 APScheduler (schwab_data_job)
-    → schwab_fetch_all()    writes → price_cache (Schwab primary, Yahoo fallback)
-    → schwab_fetch_iv()     writes → price_cache.rel_iv + iv_history
-    → calculate_signals()   writes → signal_hurst
-                                   → signal_pivots
-                                   → signal_output
-                                   → signal_history (snapshot)
-    → scheduler_log         writes → success/failure entry
+    → schwab_fetch_all()      writes → price_cache (Schwab primary, Yahoo fallback)
+    → schwab_fetch_iv()       writes → price_cache.rel_iv + vol_history (IV-eligible tickers)
+    → accumulate_hv_only()    writes → vol_history hv30/hv90 (Yahoo-only: SPX, NDX, RUT, VIX, $DJI, USD, JPY, futures, VVIX)
+    → calculate_signals()     writes → signal_hurst
+                                     → signal_pivots
+                                     → signal_output
+                                     → signal_history (snapshot)
+    → scheduler_log           writes → success/failure entry
 ```
 Previously two separate jobs (data at 4:00 PM, signals at 4:15 PM). Merged into one — signals run
 immediately after data fetch, both buttons go green together by ~4:02 PM.
@@ -1186,7 +1195,7 @@ ASSET_CLASS_OVERRIDES = {
 
 ### Database: Supabase (Postgres)
 - Replaces SQLite in production — all existing tables migrated via Alembic
-- Two new tables: `schwab_tokens` (encrypted OAuth tokens), `iv_history` (rolling IV per ticker)
+- Two new tables: `schwab_tokens` (encrypted OAuth tokens), `vol_history` (all vol metrics — IV30, HV30/HV90, VRP, skew; renamed from `iv_history`)
 - `price_cache` gains `data_source` column: `'schwab'` | `'yahoo'` | `'yahoo_fallback'`
 - Direct connection string → Alembic migrations only
 - Pooled connection string (Transaction mode, port 6543) → app runtime
@@ -1202,7 +1211,7 @@ ASSET_CLASS_OVERRIDES = {
 ```
 4:00 PM ET — single chained job (prices → IV → signals)
     schwab_fetch_all()       Schwab primary / Yahoo fallback — writes price_cache
-    schwab_fetch_iv()        ~65 requests (options-eligible only) — writes iv_history
+    schwab_fetch_iv()        ~65 requests (options-eligible only) — writes vol_history
     calculate_signals()      full pipeline — writes signal_output + signal_history
     scheduler_log            success/failure entry
 ```
@@ -1677,7 +1686,7 @@ quad_settings:  id (INTEGER PRIMARY KEY),
                 -- GET /api/quad/current → {monthly, next_monthly} for current + next ET month
                 -- Alembic migration: e6d00527381b (drops old single-row schema, recreates)
 
-iv_history:     ticker, iv_date,
+vol_history:     ticker, iv_date,
                 implied_vol,                ← IV30 (30d constant-maturity ATM IV)
                 hv30, hv90,                 ← annualized realized vol (21-day, 63-day)
                 vrp,                        ← IV30 − HV30 (vol risk premium)
@@ -1928,7 +1937,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `ad3d728` — docs: update CLAUDE.md — drop MA20_TP, add ATR, alembic SQLite fallback
   - `7f1eeda` — feat: conviction engine v1.8 — remove H, OBV slope layers, auto_adjust fix
   - `3432b45` — feat: volatility tracking — HV30/HV90, IV30, risk reversal, skew rank, P/C ratio
-  - `8afa3d3` — feat: VRP and VRP Rank — rename vol_premium→vrp in iv_history, add vrp_rank to price_cache
+  - `8afa3d3` — feat: VRP and VRP Rank — rename vol_premium→vrp in vol_history, add vrp_rank to price_cache
   - `f2ec28b` — feat: left sidebar navigation + /ticker/:symbol stub route (AppLayout pattern, NAV_ITEMS array)
   - `8463a95` — feat: admin shell with horizontal tab nav — AdminPanel→shell, TickerList extracted, QuadSetup stub
   - `ae066f3` — feat: redesign quad settings — monthly NTM grid + country quarterly table (migration e6d00527381b, upsert API, QuadSetup full rewrite)
@@ -1943,6 +1952,10 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `fb9f5dc` — docs: update CLAUDE.md — country quad routing, quad colors, conviction tooltip format
   - `5a08815` — feat: intraday monitor — PROXIMITY + RETRACEMENT_50 SMS alerts every 15 min
   - `ad1f0fe` — fix: intraday monitor — CronTrigger aligned to clock boundaries, fires at 9:30 AM open
+  - `20a367d` — feat: ATR buffer symmetry, VVIX rank, popup trade reorder, UI polish
+  - `bd01710` — feat: add Yahoo intraday quotes pass — covers indices, FX, futures in 15-min monitor
+  - `96e81b7` — feat: add email alerts as backup to SMS
+  - (next) — refactor: rename iv_history → vol_history, add accumulate_hv_only() for HV-only tickers, fix HV Rank label
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git

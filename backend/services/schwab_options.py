@@ -1,9 +1,9 @@
-"""
+﻿"""
 schwab_options.py — Schwab options chain IV fetch.
 
 Entry point: schwab_fetch_iv(db)
   - Fetches ATM IV30 + 25Δ skew + put/call ratio for IV-eligible tickers
-  - Writes daily record to iv_history table
+  - Writes daily record to vol_history table
   - Computes IV Rank and Skew Rank (0-100) matching TOS methodology
   - Updates price_cache: rel_iv, iv30, risk_reversal, skew_rank, put_call_ratio, iv_source
   - Falls back to existing Yahoo proxy (iv_source = 'proxy') per ticker on any error
@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 import schwab.client
 from sqlalchemy.orm import Session
 
-from models.iv_history import IVHistory
+from models.vol_history import VolHistory
 from models.price_cache import PriceCache
 from models.ticker import Ticker
 import services.schwab_client as schwab_client_svc
@@ -39,7 +39,7 @@ _ET = ZoneInfo("America/New_York")
 # These tickers are excluded — indices have non-standard chain structure; futures use different chain APIs
 IV_INELIGIBLE = {"VIX", "$DJI", "SPX", "NDX", "RUT", "/CL", "/ZN", "/GC", "VVIX"}
 
-# Minimum iv_history observations required before ranks are meaningful.
+# Minimum vol_history observations required before ranks are meaningful.
 _RANK_MIN_HISTORY = 30
 
 
@@ -211,18 +211,18 @@ def _extract_put_call_ratio(data: dict) -> float | None:
     return round(total_put_oi / total_call_oi, 4)
 
 
-def _upsert_iv_history(
+def _upsert_vol_history(
     db: Session, ticker: str, iv_date: str,
     implied_vol: float, hv30: float | None, hv90: float | None,
     call_iv_25d: float | None, put_iv_25d: float | None,
     risk_reversal: float | None, put_call_ratio: float | None,
 ) -> None:
-    """Write one IV observation to iv_history (no commit — batch at end)."""
+    """Write one IV observation to vol_history (no commit — batch at end)."""
     vrp = round(implied_vol - hv30, 6) if (implied_vol is not None and hv30 is not None) else None
 
-    existing = db.query(IVHistory).filter(
-        IVHistory.ticker  == ticker,
-        IVHistory.iv_date == iv_date,
+    existing = db.query(VolHistory).filter(
+        VolHistory.ticker  == ticker,
+        VolHistory.iv_date == iv_date,
     ).first()
     if existing:
         existing.implied_vol    = implied_vol
@@ -234,7 +234,7 @@ def _upsert_iv_history(
         existing.risk_reversal  = risk_reversal
         existing.put_call_ratio = put_call_ratio
     else:
-        db.add(IVHistory(
+        db.add(VolHistory(
             ticker          = ticker,
             iv_date         = iv_date,
             implied_vol     = implied_vol,
@@ -257,9 +257,9 @@ def _compute_iv_percentile(db: Session, ticker: str, today_iv: float) -> int | N
     Today's row must already be flushed before calling this.
     """
     history = (
-        db.query(IVHistory)
-        .filter(IVHistory.ticker == ticker, IVHistory.implied_vol.isnot(None))
-        .order_by(IVHistory.iv_date.desc())
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.implied_vol.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
         .limit(252)
         .all()
     )
@@ -285,9 +285,9 @@ def _compute_skew_rank(db: Session, ticker: str, today_rr: float) -> int | None:
     Today's row must already be flushed before calling this.
     """
     history = (
-        db.query(IVHistory)
-        .filter(IVHistory.ticker == ticker, IVHistory.risk_reversal.isnot(None))
-        .order_by(IVHistory.iv_date.desc())
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.risk_reversal.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
         .limit(252)
         .all()
     )
@@ -313,9 +313,9 @@ def _compute_vrp_rank(db: Session, ticker: str, today_vrp: float) -> int | None:
     Today's row must already be flushed before calling this.
     """
     history = (
-        db.query(IVHistory)
-        .filter(IVHistory.ticker == ticker, IVHistory.vrp.isnot(None))
-        .order_by(IVHistory.iv_date.desc())
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.vrp.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
         .limit(252)
         .all()
     )
@@ -335,13 +335,13 @@ def _compute_vrp_rank(db: Session, ticker: str, today_vrp: float) -> int | None:
 def _compute_vrp_changes(db: Session, ticker: str) -> tuple:
     """
     Compute VRP change over 1 trading day, 1 week (5 days), 1 month (21 days).
-    Queries the last 22 iv_history rows with valid VRP (today already flushed).
+    Queries the last 22 vol_history rows with valid VRP (today already flushed).
     Returns (vrp_1d_chg, vrp_1w_chg, vrp_1m_chg) as decimals — any may be None.
     """
     rows = (
-        db.query(IVHistory)
-        .filter(IVHistory.ticker == ticker, IVHistory.vrp.isnot(None))
-        .order_by(IVHistory.iv_date.desc())
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.vrp.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
         .limit(22)
         .all()
     )
@@ -412,9 +412,9 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
 
     # Idempotency check — skip if already fetched today
     if not force:
-        sample = db.query(IVHistory).filter(
-            IVHistory.ticker  == eligible[0],
-            IVHistory.iv_date == today,
+        sample = db.query(VolHistory).filter(
+            VolHistory.ticker  == eligible[0],
+            VolHistory.iv_date == today,
         ).first()
         if sample:
             logger.info("IV: already fetched today — skipping")
@@ -465,8 +465,8 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             # Compute VRP = IV30 - HV30
             vrp = round(implied_vol - hv30, 6) if (implied_vol is not None and hv30 is not None) else None
 
-            # Write to iv_history (today's row included in rank calcs)
-            _upsert_iv_history(
+            # Write to vol_history (today's row included in rank calcs)
+            _upsert_vol_history(
                 db, ticker, today, implied_vol, hv30, hv90,
                 call_iv_25d, put_iv_25d, risk_reversal, put_call_ratio,
             )
@@ -476,7 +476,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             iv_pct   = _compute_iv_percentile(db, ticker, implied_vol)
             vrp_rank = _compute_vrp_rank(db, ticker, vrp) if vrp is not None else None
 
-            # Compute VRP changes (1d, 1w, 1m) from iv_history
+            # Compute VRP changes (1d, 1w, 1m) from vol_history
             vrp_1d_chg, vrp_1w_chg, vrp_1m_chg = _compute_vrp_changes(db, ticker)
 
             if iv_pct is not None:
@@ -523,3 +523,65 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
     db.commit()
     logger.info(f"IV fetch complete: {fetched} fetched, {errors} errors")
     return {"fetched": fetched, "errors": errors}
+
+
+# Tickers that route through Yahoo (no Schwab price quote) — HV accumulated daily from price history
+_HV_ONLY_TICKERS = {"SPX", "NDX", "RUT", "VIX", "$DJI", "USD", "JPY", "/CL", "/ZN", "/GC", "VVIX"}
+
+
+def accumulate_hv_only(db: Session) -> dict:
+    """
+    Compute and store HV30/HV90 in vol_history for Yahoo-only tickers that never
+    go through schwab_fetch_iv(). Called daily after the main IV fetch job.
+    implied_vol and all IV-derived fields (vrp, skew, etc.) are left NULL.
+    """
+    import json
+    import numpy as np
+
+    today = datetime.now(_ET).strftime("%Y-%m-%d")
+    written = 0
+    skipped = 0
+
+    for ticker in sorted(_HV_ONLY_TICKERS):
+        try:
+            pc = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+            if not pc or not pc.history_json:
+                logger.debug(f"HV-only: {ticker} — no price history, skipping")
+                continue
+
+            closes = json.loads(pc.history_json)
+            if len(closes) < 22:
+                logger.debug(f"HV-only: {ticker} — insufficient history ({len(closes)} bars)")
+                continue
+
+            arr  = np.array(closes, dtype=float)
+            rets = np.log(arr[1:] / arr[:-1])
+            hv30 = round(float(np.std(rets[-21:], ddof=0) * (252 ** 0.5)), 6) if len(rets) >= 21 else None
+            hv90 = round(float(np.std(rets[-63:], ddof=0) * (252 ** 0.5)), 6) if len(rets) >= 63 else None
+
+            existing = db.query(VolHistory).filter(
+                VolHistory.ticker  == ticker,
+                VolHistory.iv_date == today,
+            ).first()
+
+            if existing:
+                existing.hv30 = hv30
+                existing.hv90 = hv90
+                skipped += 1
+            else:
+                db.add(VolHistory(
+                    ticker      = ticker,
+                    iv_date     = today,
+                    implied_vol = None,
+                    hv30        = hv30,
+                    hv90        = hv90,
+                    created_at  = datetime.utcnow().isoformat(),
+                ))
+                written += 1
+
+        except Exception as e:
+            logger.error(f"HV-only accumulation failed for {ticker}: {e}")
+
+    db.commit()
+    logger.info(f"HV-only accumulation complete: {written} new, {skipped} updated")
+    return {"written": written, "skipped": skipped}

@@ -17,7 +17,7 @@ import models.scheduler_log   # Task 4.2 — scheduler_log table
 import models.signal_history  # Task 4.3 — signal_history table
 import models.ticker          # Task 4.6 — tickers table
 import models.schwab_tokens   # Task 5.1 — schwab_tokens table
-import models.iv_history      # Task 5.1 — iv_history table
+import models.vol_history     # renamed from iv_history — stores all vol metrics (IV + HV)
 import models.quad_settings   # v1.9 — quad_settings table
 import services.scheduler as scheduler_svc
 import logging

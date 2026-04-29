@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+﻿import { useState, useMemo, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { fetchCachedMarketData, fetchBatchMarketData } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
@@ -1094,9 +1094,9 @@ function Dashboard() {
 
           // ── VOLATILITY ───────────────────────────────────────────────────
           SECTION("VOLATILITY"),
-          [row.ivSource === "schwab" ? "IV Rank \u2014 schwab" : row.ivSource === "price_rank" ? "VVIX Rank \u2014 price" : "IV Rank \u2014 proxy",
+          [row.ivSource === "schwab" ? "IV Rank \u2014 schwab" : row.ivSource === "price_rank" ? "VVIX Rank \u2014 price" : "HV Rank",
                            row.relIV != null ? `${row.relIV}%` : "—",                                     ivColor(row.relIV),                     false,
-                           "IV Rank: where current IV30 sits within its 252-day range\n< 20 = historically cheap options (green)\n> 80 = expensive options (red)"],
+                           row.ivSource === "schwab" ? "IV Rank: where current IV30 sits within its 252-day range\n< 20 = historically cheap options (green)\n> 80 = expensive options (red)" : "HV Rank: where current 21-day realized vol sits within its 252-day range\n< 20 = historically low volatility (green)\n> 80 = historically high volatility (red)"],
           ["IV30",         row.iv30   != null ? `${(row.iv30   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,
                            "30-day constant-maturity implied volatility (ATM, interpolated)"],
           ["HV30",         row.hv30   != null ? `${(row.hv30   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,

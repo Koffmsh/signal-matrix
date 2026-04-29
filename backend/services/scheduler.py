@@ -14,7 +14,7 @@ from routers.signals import calculate_signals
 from models.scheduler_log import SchedulerLog
 import services.schwab_client as schwab_client
 from services.schwab_market_data import schwab_fetch_all
-from services.schwab_options import schwab_fetch_iv
+from services.schwab_options import schwab_fetch_iv, accumulate_hv_only
 from services.intraday_monitor import run_intraday_check
 
 logger = logging.getLogger(__name__)
@@ -167,11 +167,18 @@ def schwab_data_job() -> None:
             f"source={result.get('data_source', 'unknown')}"
         )
 
-        # 2. IV
+        # 2. IV — Schwab options chain for IV-eligible tickers
         iv_result = schwab_fetch_iv(db)
         logger.info(
             f"Schwab data job: IV complete — "
             f"fetched={iv_result.get('fetched', 0)}, errors={iv_result.get('errors', 0)}"
+        )
+
+        # 2b. HV-only — Yahoo-routed tickers (SPX, NDX, RUT, VIX, futures, FX)
+        hv_result = accumulate_hv_only(db)
+        logger.info(
+            f"Schwab data job: HV-only complete — "
+            f"written={hv_result.get('written', 0)}, updated={hv_result.get('skipped', 0)}"
         )
 
         # 3. Signals — immediately after prices + IV are written
