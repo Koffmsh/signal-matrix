@@ -1094,7 +1094,7 @@ function Dashboard() {
 
           // ── VOLATILITY ───────────────────────────────────────────────────
           SECTION("VOLATILITY"),
-          [row.ivSource === "schwab" ? "IV Rank \u2014 schwab" : "IV Rank \u2014 proxy",
+          [row.ivSource === "schwab" ? "IV Rank \u2014 schwab" : row.ivSource === "price_rank" ? "VVIX Rank \u2014 price" : "IV Rank \u2014 proxy",
                            row.relIV != null ? `${row.relIV}%` : "—",                                     ivColor(row.relIV),                     false,
                            "IV Rank: where current IV30 sits within its 252-day range\n< 20 = historically cheap options (green)\n> 80 = expensive options (red)"],
           ["IV30",         row.iv30   != null ? `${(row.iv30   * 100).toFixed(1)}%` : "—",                 "#8899aa",                              false,
