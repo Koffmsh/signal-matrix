@@ -158,7 +158,7 @@ def _proximity_message(
     lrr: float, hrr: float, prox: float, conviction: float | None,
 ) -> str:
     entry_level = lrr if viewpoint == "Bullish" else hrr
-    conv_str    = f" | Conv {int(conviction)}" if conviction else ""
+    conv_str    = f" | Conv {int(conviction)}%" if conviction else ""
     return (
         f"⚡ {ticker} — ENTRY ZONE ({viewpoint})\n"
         f"{_fmt_price(close)} near {_fmt_price(entry_level)} | Prox {prox * 100:.0f}%{conv_str}\n"
@@ -172,10 +172,11 @@ def _retrace_message(
     pivot_c: float, pivot_d: float, level_50: float, retrace_pct: float,
     conviction: float | None,
 ) -> str:
-    conv_str = f" | Conv {int(conviction)}" if conviction else ""
+    conv_str  = f" | Conv {int(conviction)}%" if conviction else ""
+    move_word = "pullback" if viewpoint == "Bullish" else "bounce"
     return (
         f"📐 {ticker} — 50% RETRACE ({viewpoint})\n"
-        f"{_fmt_price(close)} at 50% pullback from D {_fmt_price(pivot_d)}\n"
+        f"{_fmt_price(close)} at 50% {move_word} from D {_fmt_price(pivot_d)}\n"
         f"C: {_fmt_price(pivot_c)} | 50% level: {_fmt_price(level_50)}{conv_str}\n"
         f"[Trade tf — EOD structure]"
     )
