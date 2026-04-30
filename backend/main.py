@@ -7,6 +7,7 @@ from routers.scheduler import router as scheduler_router
 from routers.tickers import router as tickers_router, seed_tickers_if_empty
 from routers.auth import router as auth_router
 from routers.quad import router as quad_router
+from routers.vol import router as vol_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from database import SessionLocal
@@ -105,6 +106,7 @@ app.include_router(scheduler_router)
 app.include_router(tickers_router)
 app.include_router(auth_router)
 app.include_router(quad_router)
+app.include_router(vol_router)
 
 
 @app.get("/health")

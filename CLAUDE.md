@@ -618,18 +618,40 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 - Dashboard still remounts on navigation (Routes unmounts inactive routes) but with `/cached` the re-fetch is instant (pure DB read)
 - nginx `try_files` config already handles SPA routing in production — no nginx changes needed
 
+### Global Header (`src/components/shared/Header.js`)
+- Fixed top bar: `position: fixed, top: 0, left: 0, right: 0, height: 48px, zIndex: 200`
+- Background matches sidebar: `#060e1a`, border-bottom `1px solid #1a2a3a`
+- **Left side — brand:** 4px gradient bar (`#00e5a0` → `#0077ff`) + "SIGNAL MATRIX" (11px, 700, `#e8f4ff`, 0.2em tracking) + "MULTI-TIMEFRAME · PROBABILISTIC" subtitle (9px, `#445566`)
+- **Right side — user profile placeholder:** 30px circle button with SVG person icon; future home for CALCULATE SIGNALS, REFRESH DATA, and real user profile
+- `zIndex: 200` — above sidebar (`zIndex: 100`) so header always covers the sidebar top edge
+- **Future:** CALCULATE SIGNALS and REFRESH DATA buttons will migrate here from the dashboard header; user profile will link to settings
+
 ### Left Sidebar Navigation (`src/components/shared/Sidebar.js`)
 - Collapsible icon rail: **48px collapsed** (icon only), **180px expanded** (icon + label) on `onMouseEnter`/`onMouseLeave`; `transition: width 200ms ease`
+- `position: fixed`, `top: 48px` (below global header), `height: calc(100vh - 48px)` — `position: fixed` eliminates ResizeObserver stutter caused by Recharts `ResponsiveContainer` firing during flex-layout width changes
 - Active item: `3px solid #00e5a0` left border + `rgba(0,229,160,0.07)` background; detected via `useLocation()` (exact match for `/`, prefix for sub-routes)
+- **Lock toggle** at bottom: click to lock sidebar open or return to hover mode; icon-only (no text label), tooltip = "Collapse Sidebar" / "Expand Sidebar"; green lock icon when locked, grey when unlocked
+- `locked` and `onToggleLock` props — `sidebarLocked` state lives in `AppLayout`; `expanded = locked || hovered`; mouse enter/leave events disabled when locked
 - **NAV_ITEMS array** in `Sidebar.js` is the single place to add future dashboards — each entry is `{ icon, label, path, exact }`
 - **Admin is NOT in the sidebar** — admin remains accessible only by direct URL (`/admin`); settings gear icon (deferred) will be the future password gate
-- **AppLayout pattern in `App.js`:** `App` renders `<BrowserRouter><AppLayout />` — `AppLayout` uses `useLocation()` to conditionally show Sidebar (hidden when path starts with `/admin`), then renders `<Routes>` in a flex container
+- **AppLayout pattern in `App.js`:** `App` renders `<BrowserRouter><AppLayout />` — `AppLayout` renders `<Header />` first (fixed), then a flex container with `paddingTop: 48`; `sidebarWidth = locked ? 180 : 48`; content div uses `marginLeft: sidebarWidth` with matching transition
 - **Routes defined:**
   - `/ticker/:symbol` → `TickerAnalysis` stub (future ticker drill-down analysis page)
+  - `/vol/*` → `SpxVolChart`
   - `/admin` → `AdminPanel` (no sidebar)
   - `*` → `Dashboard` (catch-all)
-- **Sidebar is sticky** (`position: sticky; top: 0`) — stays visible while dashboard table scrolls
 - **Rule:** Add new dashboards by appending to `NAV_ITEMS` in `Sidebar.js` — no other files need changing for basic nav items
+- **Rule:** Sidebar must remain `position: fixed` — reverting to `position: sticky` re-introduces ResizeObserver stutter on any page with Recharts `ResponsiveContainer`
+
+### SPX Vol Chart (`src/components/Vol/SpxVolChart.js`)
+- Route: `/vol` (registered as `/vol/*` in AppLayout)
+- **Data:** `fetchSpxVolHistory()` → `/api/signals/spx-vol-history` — returns `{ dates, hv30, hv90, pct_change, updated }`
+- **Chart:** Recharts `ComposedChart` — HV30 (blue line, left axis), HV90 (orange line, left axis), daily % change (green/red bars, right axis)
+- **X-axis:** Year labels only — `getJanTicks(dates)` pre-filters to first Jan date per year, passed as explicit `ticks` prop; eliminates grey phantom tick marks from null-returning custom tick components
+- **Right Y-axis:** Symmetric domain callback `([dataMin, dataMax]) => [-bound, bound]` where `bound = ceil(max(|dataMin|, |dataMax|) × 10) / 10` — ensures zero-centered bar chart
+- **2Y/MAX toggle:** Default 2Y; `useMemo` filters data by ISO date string comparison; toggle buttons styled with active border/background matching dashboard aesthetic
+- **Layout:** 75px horizontal padding on both sides; chart area has `border: 1px solid #1a2a3a`, `borderRadius: 6`, `background: #07111f`
+- **`position: fixed` sidebar fix:** Sidebar stutter on this page was caused by Recharts `ResponsiveContainer` ResizeObserver firing as the flex-layout content width changed during hover transitions. Fixed by making sidebar `position: fixed` — content width never changes.
 
 ### Ticker Analysis Page — Stub (`src/components/Analysis/TickerAnalysis.js`)
 - Route: `/ticker/:symbol` — reads symbol from `useParams()`
@@ -728,8 +750,11 @@ signal-matrix/
 │   │   ├── Analysis/
 │   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
+│   │   ├── Vol/
+│   │   │   └── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
 │   │   └── shared/
-│   │       └── Sidebar.js                 ← collapsible left sidebar (48px→180px on hover); NAV_ITEMS array
+│   │       ├── Header.js                  ← global top bar (48px fixed); brand left, user profile right
+│   │       └── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px
 │   ├── data/
 │   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is SQLite tickers table
 │   ├── hooks/                             ← placeholder
@@ -1956,6 +1981,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `bd01710` — feat: add Yahoo intraday quotes pass — covers indices, FX, futures in 15-min monitor
   - `96e81b7` — feat: add email alerts as backup to SMS
   - (next) — refactor: rename iv_history → vol_history, add accumulate_hv_only() for HV-only tickers, fix HV Rank label
+  - (next) — feat: global header bar + sidebar lock toggle + SPX vol chart improvements (2Y/MAX toggle, X-axis fix, symmetric Y-axis, margins, border)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git

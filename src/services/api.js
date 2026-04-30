@@ -59,6 +59,20 @@ export async function fetchBatchMarketData() {
 }
 
 /**
+ * SPX Realized Vol chart — rolling HV30/HV90 + daily pct change over full price history.
+ */
+export async function fetchSpxVolHistory() {
+  try {
+    const response = await fetch(`${API_URL}/api/vol/spx-history`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchSpxVolHistory failed", err);
+    return null;
+  }
+}
+
+/**
  * Fetch single ticker quote.
  * Useful for debugging in browser console:
  *   import { fetchQuote } from './services/api';

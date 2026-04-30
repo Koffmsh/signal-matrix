@@ -3,7 +3,9 @@ import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { fetchCachedMarketData, fetchBatchMarketData } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
 import Sidebar from "./components/shared/Sidebar";
+import Header from "./components/shared/Header";
 import TickerAnalysis from "./components/Analysis/TickerAnalysis";
+import SpxVolChart from "./components/Vol/SpxVolChart";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
@@ -33,17 +35,28 @@ export default function App() {
 function AppLayout() {
   const location = useLocation();
   const showSidebar = !location.pathname.startsWith("/admin");
+  const [sidebarLocked, setSidebarLocked] = useState(false);
+  const sidebarWidth = showSidebar ? (sidebarLocked ? 180 : 48) : 0;
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
-      {showSidebar && <Sidebar />}
-      <div style={{ flex: 1, overflow: "auto" }}>
-        <Routes>
-          <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
-          <Route path="/admin/*" element={<AdminPanel />} />
-          <Route path="*" element={<Dashboard />} />
-        </Routes>
+    <>
+      <Header />
+      <div style={{ display: "flex", minHeight: "100vh", paddingTop: 48 }}>
+        {showSidebar && (
+          <Sidebar
+            locked={sidebarLocked}
+            onToggleLock={() => setSidebarLocked(l => !l)}
+          />
+        )}
+        <div style={{ flex: 1, overflow: "auto", marginLeft: sidebarWidth, transition: "margin-left 200ms ease" }}>
+          <Routes>
+            <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
+            <Route path="/vol/*" element={<SpxVolChart />} />
+            <Route path="/admin/*" element={<AdminPanel />} />
+            <Route path="*" element={<Dashboard />} />
+          </Routes>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
