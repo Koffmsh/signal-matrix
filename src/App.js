@@ -405,6 +405,7 @@ function Dashboard() {
   const [schwabStatus,    setSchwabStatus]    = useState(null);
   const [quadSettings,    setQuadSettings]    = useState(null);
   const [countryQuads,    setCountryQuads]    = useState({});   // sector → {cur: quad, next: quad}
+  const [quadMapOpen,     setQuadMapOpen]     = useState(false);
 
   // Load ticker universe from DB on page load
   useEffect(() => {
@@ -828,13 +829,14 @@ function Dashboard() {
             </div>
           );
         })()}
-        <div style={{ display: "flex", gap: "24px" }}>
+        <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
           {[["BULLISH", bullish, "#00e5a0"], ["BEARISH", bearish, "#ff4d6d"], ["ALIGNED", aligned, "#0099ff"], ["ALERTS", alerts, "#f0b429"], ["ENTRY", entries, "#e8f4ff"]].map(([label, val, color]) => (
             <div key={label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: "20px", fontWeight: "700", color }}>{val}</div>
               <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>{label}</div>
             </div>
           ))}
+          <button onClick={() => setQuadMapOpen(true)} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "4px 10px", fontSize: "9px", letterSpacing: "0.12em", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", marginLeft: "8px" }}>QUAD MAP</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
           {(() => {
@@ -1231,6 +1233,16 @@ function Dashboard() {
           <span key={label} style={{ fontSize: "9px", color, letterSpacing: "0.08em" }}>{label}</span>
         ))}
       </div>
+
+      {/* Quad Map modal */}
+      {quadMapOpen && (
+        <div onClick={() => setQuadMapOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh", background: "#07111f", border: "1px solid #1a2a3a", borderRadius: "6px", padding: "8px" }}>
+            <button onClick={() => setQuadMapOpen(false)} style={{ position: "absolute", top: "8px", right: "8px", background: "transparent", border: "none", color: "#8899aa", fontSize: "18px", cursor: "pointer", lineHeight: 1 }}>✕</button>
+            <img src="/quad-map.png" alt="Expected Performance by Quad" style={{ display: "block", maxWidth: "85vw", maxHeight: "85vh", objectFit: "contain" }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
