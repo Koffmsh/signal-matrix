@@ -1877,8 +1877,9 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Trade HRR | BB upper band (MA20 + k_hrr×STD20) — color = trade direction; ⚠ when HRR < B (uptrend) or HRR > C (downtrend); ↑↓ overshoot flag |
 | Trend Dir | Medium-term direction |
 | Trend Level | MA100 — floor (uptrend, green) or ceiling (downtrend, red); hidden when Neutral or slope contradicts direction |
-| Asset Class | Classification — tightened badge, far right |
-| Sector | GICS sector / type — tightened badge, far right |
+| [Quad Now] | Current month US quad box + probability |
+| [Quad Next] | Next month US quad box + probability |
+| Q FIT | ▲ green (Best) / — grey (Neutral) / ▼ red (Worst) — does this asset class historically perform well in the current quad environment; sortable; uses `signal_output.quad_alignment`; sort key `qFitSort` (1/0/−1) for correct ordering |
 
 ## Popup Fields (click any row) — Phase 6
 | Field | Notes |
@@ -1982,6 +1983,7 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `96e81b7` — feat: add email alerts as backup to SMS
   - `6f2ad32` — refactor: rename iv_history → vol_history, add accumulate_hv_only() for HV-only tickers, fix HV Rank label
   - `190d5f3` — feat: global header bar + sidebar lock toggle + SPX vol chart improvements (2Y/MAX toggle, X-axis fix, symmetric Y-axis, margins, border)
+  - `efabd56` — feat: add Q Fit column — quad environment fit for asset class/sector (▲/—/▼, sortable, uses signal_output.quad_alignment)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
