@@ -1980,8 +1980,8 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `20a367d` — feat: ATR buffer symmetry, VVIX rank, popup trade reorder, UI polish
   - `bd01710` — feat: add Yahoo intraday quotes pass — covers indices, FX, futures in 15-min monitor
   - `96e81b7` — feat: add email alerts as backup to SMS
-  - (next) — refactor: rename iv_history → vol_history, add accumulate_hv_only() for HV-only tickers, fix HV Rank label
-  - (next) — feat: global header bar + sidebar lock toggle + SPX vol chart improvements (2Y/MAX toggle, X-axis fix, symmetric Y-axis, margins, border)
+  - `6f2ad32` — refactor: rename iv_history → vol_history, add accumulate_hv_only() for HV-only tickers, fix HV Rank label
+  - `190d5f3` — feat: global header bar + sidebar lock toggle + SPX vol chart improvements (2Y/MAX toggle, X-axis fix, symmetric Y-axis, margins, border)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
