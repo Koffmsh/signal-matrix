@@ -41,6 +41,10 @@ def run_hurst(db: Session) -> dict:
     ticker_rows = db.query(Ticker).filter(Ticker.active == True).all()
     asset_class_map = {t.ticker: (t.asset_class or "") for t in ticker_rows}
 
+    # Pre-load all existing hurst rows to avoid per-ticker queries
+    all_hurst_rows = db.query(SignalHurst).all()
+    hurst_map_calc = {r.ticker: r for r in all_hurst_rows}
+
     for ticker in get_active_tickers(db):
         try:
             data = compute_hurst(ticker, db)
@@ -54,9 +58,7 @@ def run_hurst(db: Session) -> dict:
                 if prices:
                     h_trend_up, h_trend_down = compute_asymmetric_h(prices, window=WINDOW_TREND)
 
-            existing = db.query(SignalHurst).filter(
-                SignalHurst.ticker == ticker
-            ).first()
+            existing = hurst_map_calc.get(ticker)
 
             now = datetime.utcnow()
 
@@ -84,13 +86,13 @@ def run_hurst(db: Session) -> dict:
                     calculated_at = now,
                 ))
 
-            db.commit()
             results.append(data)
 
         except Exception as e:
             logger.error(f"Hurst calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
+    db.commit()
     return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
@@ -98,6 +100,10 @@ def run_pivots(db: Session) -> dict:
     """Compute ABC pivot structure for all active tickers."""
     results = []
     errors  = []
+
+    # Pre-load all existing pivot rows to avoid per-ticker queries
+    all_pivot_rows = db.query(SignalPivots).all()
+    pivot_map = {(r.ticker, r.timeframe): r for r in all_pivot_rows}
 
     for ticker in get_active_tickers(db):
         try:
@@ -107,10 +113,7 @@ def run_pivots(db: Session) -> dict:
             for tf in ("trade", "trend", "lt"):
                 tf_data = data[tf]
 
-                existing = db.query(SignalPivots).filter(
-                    SignalPivots.ticker    == ticker,
-                    SignalPivots.timeframe == tf,
-                ).first()
+                existing = pivot_map.get((ticker, tf))
 
                 fields = dict(
                     bar_window       = tf_data.get("bar_window"),
@@ -133,13 +136,13 @@ def run_pivots(db: Session) -> dict:
                 else:
                     db.add(SignalPivots(ticker=ticker, timeframe=tf, **fields))
 
-            db.commit()
             results.append(data)
 
         except Exception as e:
             logger.error(f"Pivot calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
+    db.commit()
     return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
@@ -184,20 +187,21 @@ def run_output(db: Session) -> dict:
         "Australia": "AU", "Eurozone": "EU", "United States": "US",
     }
 
+    # Pre-load all existing signal_output rows to avoid per-ticker queries
+    all_output_rows = db.query(SignalOutput).all()
+    prior_ranges_map = {}
+    for row in all_output_rows:
+        t, tf = row.ticker, row.timeframe
+        if t not in prior_ranges_map:
+            prior_ranges_map[t] = {}
+        prior_ranges_map[t][tf] = {"prior_hrr": row.hrr, "prior_lrr": row.lrr}
+
+    # Pre-load all existing signal_output trade rows for viewpoint_since tracking
+    existing_trade_map = {row.ticker: row for row in all_output_rows if row.timeframe == "trade"}
+
     for ticker in get_active_tickers(db):
         try:
-            # Read yesterday's HRR/LRR before they get overwritten.
-            # conviction_engine uses these as the EXTENDED threshold:
-            # if today's close > prior_hrr (bullish) or < prior_lrr (bearish) → EXTENDED.
-            prior_ranges = {}
-            for tf in ("trade", "trend", "lt"):
-                row = db.query(SignalOutput).filter(
-                    SignalOutput.id == f"{ticker}_{tf}"
-                ).first()
-                prior_ranges[tf] = {
-                    "prior_hrr": row.hrr if row else None,
-                    "prior_lrr": row.lrr if row else None,
-                }
+            prior_ranges = prior_ranges_map.get(ticker, {})
 
             # Route International Equities to their country quarterly quad;
             # everything else uses the US monthly quad.
@@ -230,9 +234,7 @@ def run_output(db: Session) -> dict:
             # ── viewpoint_since — track when current aligned viewpoint began ──
             new_viewpoint = data["viewpoint"]
             now_et        = datetime.now(ZoneInfo("America/New_York")).isoformat()
-            existing_ref  = db.query(SignalOutput).filter(
-                SignalOutput.id == f"{ticker}_trade"
-            ).first()
+            existing_ref  = existing_trade_map.get(ticker)
 
             if existing_ref is None:
                 viewpoint_since = now_et if new_viewpoint in ("Bullish", "Bearish") else None
@@ -279,9 +281,9 @@ def run_output(db: Session) -> dict:
                     calculated_at    = now,
                 )
 
-                existing = db.query(SignalOutput).filter(
-                    SignalOutput.id == row_id
-                ).first()
+                existing = next(
+                    (r for r in all_output_rows if r.id == row_id), None
+                )
 
                 if existing:
                     for k, v in fields.items():
@@ -289,13 +291,13 @@ def run_output(db: Session) -> dict:
                 else:
                     db.add(SignalOutput(id=row_id, **fields))
 
-            db.commit()
             results.append(data)
 
         except Exception as e:
             logger.error(f"Output calculation failed for {ticker}: {e}")
             errors.append({"ticker": ticker, "error": str(e)})
 
+    db.commit()
     return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
