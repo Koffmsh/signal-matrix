@@ -836,7 +836,6 @@ function Dashboard() {
               <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.15em" }}>{label}</div>
             </div>
           ))}
-          <button onClick={() => setQuadMapOpen(true)} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "4px 10px", fontSize: "9px", letterSpacing: "0.12em", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", marginLeft: "8px" }}>QUAD MAP</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
           {(() => {
@@ -979,6 +978,7 @@ function Dashboard() {
             <button onClick={() => { setSortKey("default"); setSortDir(1); }} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "2px 8px", fontSize: "9px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>↺ DEFAULT</button>
           )}
           <span style={{ fontSize: "10px", color: "#8899aa" }}>{filtered.length} of {DATA.length} instruments</span>
+          <button onClick={() => setQuadMapOpen(true)} style={{ background: "transparent", border: "none", color: "#445566", fontSize: "10px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em", padding: "0", textDecoration: "underline" }}>QUAD MAP</button>
         </div>
       </div>
 
