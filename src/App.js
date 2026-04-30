@@ -1044,8 +1044,11 @@ function Dashboard() {
                 : [];
               const sep = needsSep ? [
                 <tr key={`sep-${row.assetClass}`}>
-                  <td colSpan={16} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
-                    {row.assetClass.toUpperCase()}{row.assetClass === "International Equities" && <span style={{ color: "#667788", fontWeight: "400", float: "right", marginRight: "240px", letterSpacing: "0.10em" }}>QUARTERLY QUADS</span>}
+                  <td colSpan={20} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>{row.assetClass.toUpperCase()}</span>
+                      {row.assetClass === "International Equities" && <span style={{ color: "#667788", fontWeight: "400", letterSpacing: "0.10em", marginRight: "44px" }}>QUARTERLY QUADS</span>}
+                    </div>
                   </td>
                 </tr>
               ] : [];

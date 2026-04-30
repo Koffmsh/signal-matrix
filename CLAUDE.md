@@ -292,6 +292,19 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Viewpoint, ALIGNED ONLY, and ALERTS filters unchanged (remain as buttons)
 - Filters apply instantly on selection — no submit button
 
+### Q FIT Column (`App.js`, `signals.py`)
+- Sortable column showing whether a security's asset class historically performs well (▲), neutral (—), or poorly (▼) in the current macro quad environment
+- **Viewpoint-independent** — purely "does this asset class/sector do well in this quad?" regardless of signal direction
+  - `quad_fit` field: `"Best"` | `"Neutral"` | `"Worst"` — computed on-the-fly in `/api/signals/stored`
+  - Uses `get_quad_alignment(ac, sec, quad)` → `+1.0` / `0.0` / `-1.0` → maps to `"Best"` / `"Neutral"` / `"Worst"`
+  - **NOT** `quad_alignment` (which is viewpoint-dependent: "Aligned"/"Misaligned"/"Neutral")
+- **International Equities:** use country quarterly quad (same `_SECTOR_TO_CODE` + quarterly lookup as `run_output()`)
+- **US all other asset classes:** use US monthly quad for current ET month
+- `qFitSort` numeric key: `Best=1`, `Neutral=0`, `Worst=-1` — correct sort ordering
+- Column placed before the quad month columns (Q FIT → Now → Next)
+- `QUARTERLY QUADS` label floated right on the International Equities separator row (above the quad columns)
+- **Rule:** Never use `sig.quad_alignment` for Q FIT — it is viewpoint-dependent and will show ▼ for bearish securities in bullish-tailwind quads
+
 ### QUAD MAP Button (`App.js`)
 - Styled button (matches filter button aesthetic) sitting left of the "N of N instruments" count in the filter/sort bar
 - Opens a modal overlay showing `public/quad-map.png` (Expected Performance by Quad reference image)
@@ -1698,7 +1711,7 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 obv_confirming,             ← True when Vol Direction aligns with Trade Dir (not Viewpoint)
                 h_trade_delta,              ← Phase 6: change in H_trade over ~20 trading days (display only)
                 vix_regime,                 ← Phase 6: 'Investable' | 'Edgy' | 'Choppy' | 'Danger' (from VIX at calc time)
-                quad_alignment,             ← v1.9: 'Best' | 'Worst' | 'Neutral' — asset class/sector alignment to current quad
+                quad_alignment,             ← v1.9: 'Aligned' | 'Misaligned' | 'Neutral' — viewpoint-dependent quad alignment (stored for conviction engine); NOT used for Q FIT display
                 quad_mult,                  ← v1.9: Float — quad multiplier applied to conviction (stored for popup/debug)
                 calculated_at
                 UNIQUE(ticker, timeframe)
@@ -1994,6 +2007,10 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `84eb874` — fix: Q Fit column — move before quad cols, fix Aligned/Misaligned string check (was checking Best/Worst)
   - `b30dc45` — feat: QUAD MAP button — opens PNG modal (public/quad-map.png)
   - `600b8e1` — feat: QUAD MAP button polish + remove legend bar
+  - `f52ad17` — feat: International Equities separator shows QUARTERLY QUADS label
+  - `635ba25` — docs: update CLAUDE.md — QUAD MAP button, Q Fit fixes, legend removal
+  - `d0957c2` — fix: Q FIT — viewpoint-independent quad_fit field (Best/Worst/Neutral, no viewpoint dependency; KWEB in Q1 now shows ▲)
+  - `44f5a62` — fix: QUARTERLY QUADS label floated right on IE separator (above quad columns)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
