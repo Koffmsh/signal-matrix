@@ -292,6 +292,13 @@ Critical issues already resolved — do not reintroduce these bugs:
 - Viewpoint, ALIGNED ONLY, and ALERTS filters unchanged (remain as buttons)
 - Filters apply instantly on selection — no submit button
 
+### QUAD MAP Button (`App.js`)
+- Styled button (matches filter button aesthetic) sitting left of the "N of N instruments" count in the filter/sort bar
+- Opens a modal overlay showing `public/quad-map.png` (Expected Performance by Quad reference image)
+- Click outside the image or ✕ to close; `quadMapOpen` state controls visibility
+- To update the image: replace `public/quad-map.png` and redeploy — no code changes needed
+- **Legend bar removed** — the color/threshold legend at the bottom of the page was removed; tooltips on each cell cover this information
+
 ### ENTRY Signal Column — Proximity-Based (v1.7) (`App.js`)
 - `entrySignal` is computed in the `ALL_DATA` useMemo pipeline: `"BUY"` | `"SELL"` | `null`
 - **BUY conditions:** Viewpoint = Bullish AND Trade Dir = Bullish AND Trend Dir = Bullish AND `prox_bullish > 0.85`
@@ -1879,7 +1886,7 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Trend Level | MA100 — floor (uptrend, green) or ceiling (downtrend, red); hidden when Neutral or slope contradicts direction |
 | [Quad Now] | Current month US quad box + probability |
 | [Quad Next] | Next month US quad box + probability |
-| Q FIT | ▲ green (Best) / — grey (Neutral) / ▼ red (Worst) — does this asset class historically perform well in the current quad environment; sortable; uses `signal_output.quad_alignment`; sort key `qFitSort` (1/0/−1) for correct ordering |
+| Q FIT | ▲ green (Performs Well) / — grey (Neutral) / ▼ red (Performs Poorly) — asset class historical performance in current quad; sortable; uses `signal_output.quad_alignment` ("Aligned"/"Misaligned"/"Neutral"); sort key `qFitSort` (1/0/−1); column appears before the quad month columns |
 
 ## Popup Fields (click any row) — Phase 6
 | Field | Notes |
@@ -1984,6 +1991,9 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `6f2ad32` — refactor: rename iv_history → vol_history, add accumulate_hv_only() for HV-only tickers, fix HV Rank label
   - `190d5f3` — feat: global header bar + sidebar lock toggle + SPX vol chart improvements (2Y/MAX toggle, X-axis fix, symmetric Y-axis, margins, border)
   - `efabd56` — feat: add Q Fit column — quad environment fit for asset class/sector (▲/—/▼, sortable, uses signal_output.quad_alignment)
+  - `84eb874` — fix: Q Fit column — move before quad cols, fix Aligned/Misaligned string check (was checking Best/Worst)
+  - `b30dc45` — feat: QUAD MAP button — opens PNG modal (public/quad-map.png)
+  - `600b8e1` — feat: QUAD MAP button polish + remove legend bar
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
