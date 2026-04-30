@@ -977,8 +977,8 @@ function Dashboard() {
           {sortKey !== "default" && (
             <button onClick={() => { setSortKey("default"); setSortDir(1); }} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "2px 8px", fontSize: "9px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>↺ DEFAULT</button>
           )}
+          <button onClick={() => setQuadMapOpen(true)} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>QUAD MAP</button>
           <span style={{ fontSize: "10px", color: "#8899aa" }}>{filtered.length} of {DATA.length} instruments</span>
-          <button onClick={() => setQuadMapOpen(true)} style={{ background: "transparent", border: "none", color: "#445566", fontSize: "10px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em", padding: "0", textDecoration: "underline" }}>QUAD MAP</button>
         </div>
       </div>
 
@@ -1227,12 +1227,6 @@ function Dashboard() {
         );
       })()}
 
-      {/* Legend */}
-      <div style={{ padding: "8px 24px 16px", display: "flex", gap: "20px", flexWrap: "wrap", borderTop: "1px solid #0d1a2a" }}>
-        {[["● ALIGNED", "#0077ff"], ["▲ BULLISH", "#00e5a0"], ["▼ BEARISH", "#ff4d6d"], ["HURST >0.6 TRENDING", "#00e5a0"], ["HURST <0.5 MEAN-REV", "#ff4d6d"], ["IV LOW <30%", "#00e5a0"], ["IV HIGH >60%", "#ff4d6d"]].map(([label, color]) => (
-          <span key={label} style={{ fontSize: "9px", color, letterSpacing: "0.08em" }}>{label}</span>
-        ))}
-      </div>
 
       {/* Quad Map modal */}
       {quadMapOpen && (
