@@ -238,6 +238,7 @@ function mergeSignalData(row, signalMap) {
     vixRegime:      sig.vix_regime              ?? null,
     quadAlignment:  sig.quad_alignment          ?? null,
     quadMult:       sig.quad_mult               ?? null,
+    qFitSort:       sig.quad_alignment === "Best" ? 1 : sig.quad_alignment === "Worst" ? -1 : 0,
     hTrendUp:       sig.h_trend_up              ?? null,
     hTrendDown:     sig.h_trend_down            ?? null,
   };
@@ -758,6 +759,22 @@ function Dashboard() {
             </td>
           );
         })()}
+        {/* Q FIT — asset class / sector quad fit in current macro environment */}
+        {(() => {
+          const qa = row.quadAlignment;
+          const icon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
+          const color = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
+          const tip   = qa === "Best"
+            ? "Best — this asset class historically performs well in the current quad environment"
+            : qa === "Worst"
+            ? "Worst — this asset class historically performs poorly in the current quad environment"
+            : "Neutral — no strong historical edge in the current quad environment";
+          return (
+            <td style={{ padding: "9px 8px", textAlign: "center" }}>
+              <span title={tip} style={{ color, fontWeight: "700", fontSize: "13px", cursor: "help" }}>{icon}</span>
+            </td>
+          );
+        })()}
       </tr>
     );
   };
@@ -1008,6 +1025,8 @@ function Dashboard() {
                 return (<>
                   <th style={thStyle} title="Current month US quad">{nowLabel}</th>
                   <th style={thStyle} title="Next month US quad">{nextLabel}</th>
+                  <SortHdr label="Q FIT" k="qFitSort" align="center"
+                    title="Quad Fit — does this asset class historically perform well (▲ Best), poorly (▼ Worst), or neutrally (—) in the current macro quad environment?" />
                 </>);
               })()}
             </tr>
