@@ -426,6 +426,46 @@ def get_stored_signals(db: Session = Depends(get_db)):
     hurst_rows = db.query(SignalHurst).all()
     hurst_map  = {r.ticker: r for r in hurst_rows}
 
+    # Compute quad_fit (pure asset class/sector vs current quad — no viewpoint dependency)
+    from zoneinfo import ZoneInfo
+    from services.conviction_engine import get_quad_alignment
+    _ET = ZoneInfo("America/New_York")
+    now_et = datetime.now(_ET)
+    current_month   = now_et.strftime("%Y-%m")
+    current_quarter = f"{now_et.year}-Q{((now_et.month - 1) // 3 + 1)}"
+    _quad_row = db.query(QuadSettings).filter(
+        QuadSettings.country == "US",
+        QuadSettings.forecast_month == current_month,
+        QuadSettings.quad_type == "monthly",
+    ).first()
+    _us_quad = _quad_row.quad if _quad_row else None
+    _quarterly = {r.country: r.quad for r in db.query(QuadSettings).filter(
+        QuadSettings.quad_type == "quarterly",
+        QuadSettings.forecast_month == current_quarter,
+    ).all()}
+    _SECTOR_TO_CODE = {
+        "Japan": "JP", "China": "CN", "Mexico": "MX", "Turkey": "TR", "UAE": "AE",
+        "Germany": "DE", "France": "FR", "United Kingdom": "GB", "Spain": "ES",
+        "South Korea": "KR", "India": "IN", "Brazil": "BR", "Canada": "CA",
+        "Australia": "AU", "Eurozone": "EU", "United States": "US",
+    }
+    ticker_rows_s = db.query(Ticker).filter(Ticker.active == True).all()
+    _ac_map  = {t.ticker: (t.asset_class or "") for t in ticker_rows_s}
+    _sec_map = {t.ticker: (t.sector      or "") for t in ticker_rows_s}
+
+    def _quad_fit(ticker: str) -> str:
+        ac  = _ac_map.get(ticker, "")
+        sec = _sec_map.get(ticker, "")
+        if ac == "International Equities":
+            code = _SECTOR_TO_CODE.get(sec)
+            quad = _quarterly.get(code) if code else None
+        else:
+            quad = _us_quad
+        if quad is None:
+            return "Neutral"
+        alignment = get_quad_alignment(ac, sec, quad)
+        return "Best" if alignment > 0 else "Worst" if alignment < 0 else "Neutral"
+
     # Check whether any lt rows exist — if not, only require trade + trend
     has_lt = any(r.timeframe == "lt" for r in rows)
 
@@ -446,6 +486,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "vix_regime":      row.vix_regime,
                 "quad_alignment":  row.quad_alignment,
                 "quad_mult":       row.quad_mult,
+                "quad_fit":        _quad_fit(t),
                 "h_trend_up":      getattr(h_row, "h_trend_up",   None) if h_row else None,
                 "h_trend_down":    getattr(h_row, "h_trend_down",  None) if h_row else None,
                 "trade": None, "trend": None, "lt": None,

@@ -238,7 +238,8 @@ function mergeSignalData(row, signalMap) {
     vixRegime:      sig.vix_regime              ?? null,
     quadAlignment:  sig.quad_alignment          ?? null,
     quadMult:       sig.quad_mult               ?? null,
-    qFitSort:       sig.quad_alignment === "Aligned" ? 1 : sig.quad_alignment === "Misaligned" ? -1 : 0,
+    quadFit:        sig.quad_fit                 ?? "Neutral",
+    qFitSort:       sig.quad_fit === "Best" ? 1 : sig.quad_fit === "Worst" ? -1 : 0,
     hTrendUp:       sig.h_trend_up              ?? null,
     hTrendDown:     sig.h_trend_down            ?? null,
   };
@@ -728,12 +729,12 @@ function Dashboard() {
         </td>
         {/* Q FIT — asset class / sector quad fit in current macro environment */}
         {(() => {
-          const qa = row.quadAlignment;
-          const icon  = qa === "Aligned" ? "▲" : qa === "Misaligned" ? "▼" : "—";
-          const color = qa === "Aligned" ? "#00e5a0" : qa === "Misaligned" ? "#ff4d6d" : "#8899aa";
-          const tip   = qa === "Aligned"
+          const qa = row.quadFit;
+          const icon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
+          const color = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
+          const tip   = qa === "Best"
             ? "Performs Well — this asset class historically performs well in the current quad environment"
-            : qa === "Misaligned"
+            : qa === "Worst"
             ? "Performs Poorly — this asset class historically performs poorly in the current quad environment"
             : "Neutral — no strong historical edge in the current quad environment";
           return (
@@ -1044,7 +1045,7 @@ function Dashboard() {
               const sep = needsSep ? [
                 <tr key={`sep-${row.assetClass}`}>
                   <td colSpan={16} style={{ padding: "5px 12px", background: "#0a1520", color: "#667788", fontSize: "9px", letterSpacing: "0.14em", fontWeight: "700", borderTop: "2px solid #1a2535", borderBottom: "1px solid #1a2535" }}>
-                    {row.assetClass.toUpperCase()}{row.assetClass === "International Equities" && <span style={{ color: "#445566", fontWeight: "400", marginLeft: "10px" }}>· QUARTERLY QUADS</span>}
+                    {row.assetClass.toUpperCase()}{row.assetClass === "International Equities" && <span style={{ color: "#667788", fontWeight: "400", float: "right", marginRight: "8px", letterSpacing: "0.10em" }}>QUARTERLY QUADS</span>}
                   </td>
                 </tr>
               ] : [];
