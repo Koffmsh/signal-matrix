@@ -238,7 +238,7 @@ function mergeSignalData(row, signalMap) {
     vixRegime:      sig.vix_regime              ?? null,
     quadAlignment:  sig.quad_alignment          ?? null,
     quadMult:       sig.quad_mult               ?? null,
-    qFitSort:       sig.quad_alignment === "Best" ? 1 : sig.quad_alignment === "Worst" ? -1 : 0,
+    qFitSort:       sig.quad_alignment === "Aligned" ? 1 : sig.quad_alignment === "Misaligned" ? -1 : 0,
     hTrendUp:       sig.h_trend_up              ?? null,
     hTrendDown:     sig.h_trend_down            ?? null,
   };
@@ -725,6 +725,22 @@ function Dashboard() {
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB, row.trendExtended)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
+        {/* Q FIT — asset class / sector quad fit in current macro environment */}
+        {(() => {
+          const qa = row.quadAlignment;
+          const icon  = qa === "Aligned" ? "▲" : qa === "Misaligned" ? "▼" : "—";
+          const color = qa === "Aligned" ? "#00e5a0" : qa === "Misaligned" ? "#ff4d6d" : "#8899aa";
+          const tip   = qa === "Aligned"
+            ? "Performs Well — this asset class historically performs well in the current quad environment"
+            : qa === "Misaligned"
+            ? "Performs Poorly — this asset class historically performs poorly in the current quad environment"
+            : "Neutral — no strong historical edge in the current quad environment";
+          return (
+            <td style={{ padding: "9px 8px", textAlign: "center" }}>
+              <span title={tip} style={{ color, fontWeight: "700", fontSize: "13px", cursor: "help" }}>{icon}</span>
+            </td>
+          );
+        })()}
         {/* Quad Now — box + prob; international rows use country quarterly quad */}
         {(() => {
           const qColors = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
@@ -756,22 +772,6 @@ function Dashboard() {
                 <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "20px", background: `${qColors[q]}55`, border: `1px solid ${qColors[q]}`, borderRadius: "3px", color: "#ffffff", fontWeight: "700", fontSize: "12px", flexShrink: 0 }}>{q}</div>
                 {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums" }}>{p}%</span>}
               </div>
-            </td>
-          );
-        })()}
-        {/* Q FIT — asset class / sector quad fit in current macro environment */}
-        {(() => {
-          const qa = row.quadAlignment;
-          const icon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
-          const color = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
-          const tip   = qa === "Best"
-            ? "Best — this asset class historically performs well in the current quad environment"
-            : qa === "Worst"
-            ? "Worst — this asset class historically performs poorly in the current quad environment"
-            : "Neutral — no strong historical edge in the current quad environment";
-          return (
-            <td style={{ padding: "9px 8px", textAlign: "center" }}>
-              <span title={tip} style={{ color, fontWeight: "700", fontSize: "13px", cursor: "help" }}>{icon}</span>
             </td>
           );
         })()}
@@ -1016,17 +1016,17 @@ function Dashboard() {
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
               <SortHdr label="TREND LEVEL" k="trendLRR" />
-              {/* Quad month columns — non-sortable, 4 cols: box + prob × 2 months */}
+              {/* Quad month columns — non-sortable, 4 cols: box + prob × 2 months + Q FIT */}
               {(() => {
                 const fmtMo = (fm) => { if (!fm) return null; const [yr, mo] = fm.split("-"); return new Date(parseInt(yr), parseInt(mo)-1, 1).toLocaleString("en-US", { month: "short" }).toUpperCase() + " '" + yr.slice(2); };
                 const nowLabel  = quadSettings?.monthly?.forecast_month      ? fmtMo(quadSettings.monthly.forecast_month)      : "—";
                 const nextLabel = quadSettings?.next_monthly?.forecast_month ? fmtMo(quadSettings.next_monthly.forecast_month) : "—";
                 const thStyle = { cursor: "default", userSelect: "none", padding: "10px 8px", textAlign: "center", fontSize: "9px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" };
                 return (<>
+                  <SortHdr label="Q FIT" k="qFitSort" align="center"
+                    title="Quad Fit — does this asset class historically perform well (▲) or poorly (▼) in the current macro quad environment?" />
                   <th style={thStyle} title="Current month US quad">{nowLabel}</th>
                   <th style={thStyle} title="Next month US quad">{nextLabel}</th>
-                  <SortHdr label="Q FIT" k="qFitSort" align="center"
-                    title="Quad Fit — does this asset class historically perform well (▲ Best), poorly (▼ Worst), or neutrally (—) in the current macro quad environment?" />
                 </>);
               })()}
             </tr>
