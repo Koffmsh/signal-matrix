@@ -642,14 +642,17 @@ def is_warning(lrr: float | None, hrr: float | None,
 def _compute_warn_flags(tf: str, pivot_dir: str | None,
                         lrr: float | None, hrr: float | None,
                         b: float | None, c: float | None,
-                        d_extended: bool = False) -> tuple:
+                        d_extended: bool = False,
+                        d: float | None = None) -> tuple:
     """
     Price-based pivot threshold flags (⚠ indicators on LRR/HRR cells).
 
     Break level = C normally; B when d_extended is True (D > B + bc_range).
 
-    Trade:  LRR ⚠ when uptrend: lrr < break_level  · downtrend: lrr > b
-            HRR ⚠ when uptrend: hrr < b             · downtrend: hrr > break_level
+    Trade:  LRR ⚠ when uptrend: lrr < break_level           · downtrend: lrr > b (or D when d_extended)
+            HRR ⚠ when uptrend: hrr < b (or D when d_extended) · downtrend: hrr > break_level
+              When d_extended: HRR (uptrend) / LRR (downtrend) compared against D — the extended
+              high/low — not B. B is the break level; D is the "can the target still reach the peak" reference.
     Trend:  LRR ⚠ when uptrend: lrr < break_level  · downtrend: lrr > break_level
             HRR = None → hrr_warn always False
     LT:     Never
@@ -665,13 +668,17 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
     # Break level shifts from C to B when d_extended is True
     break_level = b if (d_extended and b is not None) else c
 
+    # When d_extended, the target-side warn compares against D (the extended high/low).
+    # If D is unavailable, fall back to B so the flag still fires conservatively.
+    target_ref = (d if d is not None else b) if d_extended else b
+
     if tf == "trade":
         if pivot_dir == "uptrend":
             lrr_warn = lrr is not None and break_level is not None and lrr < break_level
-            hrr_warn = hrr is not None and b is not None and hrr < b
+            hrr_warn = hrr is not None and target_ref is not None and hrr < target_ref
         elif pivot_dir == "downtrend":
             hrr_warn = hrr is not None and break_level is not None and hrr > break_level
-            lrr_warn = lrr is not None and b is not None and lrr > b
+            lrr_warn = lrr is not None and target_ref is not None and lrr > target_ref
 
     elif tf == "trend":
         # lrr holds the Trend Level (single level); hrr is always None
@@ -814,6 +821,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         pivot_dir  = _infer_pivot_direction(pivot_row)
         b          = pivot_row.pivot_b
         c          = pivot_row.pivot_c
+        d          = pivot_row.pivot_d
         d_extended = bool(getattr(pivot_row, "d_extended", False) or False)
 
         # Direction — pivot engine has already applied B-based break logic when d_extended
@@ -860,7 +868,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             hrr_extended = False
             lrr_extended = False
 
-        lrr_warn, hrr_warn = _compute_warn_flags(tf, pivot_dir, lrr, hrr, b, c, d_extended=d_extended)
+        lrr_warn, hrr_warn = _compute_warn_flags(tf, pivot_dir, lrr, hrr, b, c, d_extended=d_extended, d=d)
 
         timeframe_results[tf] = {
             "lrr":              lrr,

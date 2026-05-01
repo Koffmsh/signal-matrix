@@ -175,7 +175,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 - B is between A and C in **time** (index), not necessarily in price direction — A < C < B in price for uptrend; B < C < A in price for downtrend
 - **D re-computes against new B:** if B advances past the previously established D level, D temporarily un-establishes until price closes through the new B — correct behavior since D must prove the trend beyond the new structural reference
 - **d_extended uses updated B and BC range:** `bc_range = abs(new_B - new_C)`; d_extended fires when D > new_B + bc_range (uptrend) or D < new_B - bc_range (downtrend)
-- **Warn flags use updated B:** `hrr_warn = hrr < b` (uptrend) compares HRR against the most recent swing high, not a stale first pivot after A
+- **Warn flags use updated B (non-extended) or D (extended):** `hrr_warn = hrr < b` normally (uptrend); when `d_extended=True`, `hrr_warn = hrr < d` — the BB target is compared against D (the extended high), not B. B is the break level; D is the "can the target still reach the peak" reference. See `_compute_warn_flags` in `conviction_engine.py`.
 - **Execution order in `compute_pivots_for_timeframe`:**
   1. `update_c_dynamically` — walks C to most recent valid structural level
   2. `update_b_dynamically` — advances B to most recent pivot between A and updated C
@@ -1953,11 +1953,22 @@ Each LRR/HRR cell uses its **own timeframe's direction** color, not the overall 
 ### Warning Flag Scope (LOCKED)
 Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has a single Trend Level (MA100) — the warn flag applies to that level vs C. Tail never warns.
 
+Two distinct reference points — break level and target reference — are used depending on `d_extended`:
+
+| Condition | `lrr_warn` reference (break level) | `hrr_warn` reference (target) |
+|---|---|---|
+| `d_extended=False` | C (uptrend) / B (downtrend) | B (uptrend) / C (downtrend) |
+| `d_extended=True` | **B** — break level, unchanged | **D** — extended high/low; "can BB target still reach the peak?" |
+
+Full table by timeframe:
+
 | Timeframe | LRR/Level ⚠ condition | HRR ⚠ condition |
 |---|---|---|
-| **Trade** | Bullish: `lrr < c` · Bearish: `lrr > b` | Bullish: `hrr < b` · Bearish: `hrr > c` |
+| **Trade** | Bullish: `lrr < c` (or `< b` when d_extended) · Bearish: `lrr > b` (or `> d` when d_extended) | Bullish: `hrr < b` (or `< d` when d_extended) · Bearish: `hrr > c` (or `> b` when d_extended) |
 | **Trend** | Bullish: `level < c` only (MA100 below C pivot) | Bearish: `level > c` only |
 | **Tail** | Never | Never (no HRR column) |
+
+**Why D for target-side warn when d_extended:** B is the break level (invalidation). D is the extended high/low the market has already reached. When `d_extended=True`, `hrr_warn` (uptrend) fires when HRR falls below D — "the BB target can no longer reach the extended peak." Comparing against B instead would be nearly impossible to fire in practice (B is far below D) and is the wrong reference for a momentum signal. `lrr_warn` stays anchored to B (the break level) — correct because it is a proximity-to-invalidation warning, not a target warning.
 
 ---
 
@@ -2011,6 +2022,9 @@ Trade timeframe has full warn flags (LRR + HRR, both C and B checks). Trend has 
   - `635ba25` — docs: update CLAUDE.md — QUAD MAP button, Q Fit fixes, legend removal
   - `d0957c2` — fix: Q FIT — viewpoint-independent quad_fit field (Best/Worst/Neutral, no viewpoint dependency; KWEB in Q1 now shows ▲)
   - `44f5a62` — fix: QUARTERLY QUADS label floated right on IE separator (above quad columns)
+  - `ecc8ec6` — perf: batch DB commits + pre-load queries in signal calculation
+  - `ed472db` — fix: Q FIT viewpoint-independent + separator + schema fixes
+  - (pending) — fix: hrr_warn when d_extended uses D not B — BB target compared against extended high/low
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -2071,7 +2085,7 @@ git checkout -- .   # roll back if needed
 30. **LRR/HRR always compute for BREAK states** — `_infer_pivot_direction` infers underlying direction even for BREAK_OF_TRADE/BREAK_OF_TREND/BREAK_CONFIRMED so LRR/HRR render grey
 31. **LRR/HRR cell color = timeframe direction** — use `dirRangeColor(dir, isWarn)`, NOT viewpoint color
 32. **Per-cell ⚠ warn flags are price-based** — separate from IV-driven `warning` structural state
-33. **Warning scope is timeframe-specific** — Trade: full (C+B); Trend: C-based only; LT: none
+33. **Warning scope is timeframe-specific** — Trade: full (C+B, or B+D when d_extended); Trend: C-based only; LT: none. When `d_extended=True`, `lrr_warn` stays anchored to B (break level); `hrr_warn` (uptrend) / `lrr_warn` (downtrend) target-side compares against D (the extended high/low), not B.
 34. **All cache_date and run_date writes use ET date** — never UTC date for trading day keys
 35. **`get_active_tickers(db)`** is the only way to retrieve the ticker list in backend — no hardcoded arrays
 36. **tickers.js is seed data only** — never import it for the live ticker universe; use `/api/tickers`
