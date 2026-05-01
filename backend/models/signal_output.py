@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Text, DateTime, Boolean, UniqueConstraint
+from sqlalchemy import Column, String, Float, Integer, Text, DateTime, Boolean, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -33,7 +33,8 @@ class SignalOutput(Base):
     h_trade_delta    = Column(Float,   nullable=True)   # H_trade change over ~20 trading days; NULL if insufficient history
     vix_regime       = Column(String(20), nullable=True)  # VIX regime zone: Investable|Edgy|Choppy|Danger
     quad_alignment   = Column(String(20), nullable=True)  # Aligned | Misaligned | Neutral
-    quad_mult        = Column(Float,      nullable=True)  # stored for debugging and popup display
+    quad_mult        = Column(Float,      nullable=True)  # stored for debugging (informational only in v2.0)
+    quad_score       = Column(Integer,    nullable=True)  # additive conviction contribution: +20/+15/0/−11/−15
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

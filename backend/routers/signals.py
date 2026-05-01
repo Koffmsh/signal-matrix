@@ -278,6 +278,7 @@ def run_output(db: Session) -> dict:
                     vix_regime       = data.get("vix_regime"),
                     quad_alignment   = data.get("quad_alignment"),
                     quad_mult        = data.get("quad_mult"),
+                    quad_score       = data.get("quad_score"),
                     calculated_at    = now,
                 )
 
@@ -523,6 +524,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "vix_regime":      row.vix_regime,
                 "quad_alignment":  row.quad_alignment,
                 "quad_mult":       row.quad_mult,
+                "quad_score":      row.quad_score,
                 "quad_fit":        _quad_fit(t),
                 "h_trend_up":      getattr(h_row, "h_trend_up",   None) if h_row else None,
                 "h_trend_down":    getattr(h_row, "h_trend_down",  None) if h_row else None,

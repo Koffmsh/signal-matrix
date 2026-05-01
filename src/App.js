@@ -238,6 +238,7 @@ function mergeSignalData(row, signalMap) {
     vixRegime:      sig.vix_regime              ?? null,
     quadAlignment:  sig.quad_alignment          ?? null,
     quadMult:       sig.quad_mult               ?? null,
+    quadScore:      sig.quad_score              ?? null,
     quadFit:        sig.quad_fit                 ?? "Neutral",
     qFitSort:       sig.quad_fit === "Best" ? 1 : sig.quad_fit === "Worst" ? -1 : 0,
     hTrendUp:       sig.h_trend_up              ?? null,
@@ -1094,14 +1095,14 @@ function Dashboard() {
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["VIX Regime",   row.vixRegime || "—",
                            (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Edgy" ? "#8899aa" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
-                           false, "VIX regime at time of signal calculation\nInvestable (VIX < 19) — Domestic Equities × 1.10\nEdgy (19–23) — × 1.00\nChoppy (24–29) — × 0.90\nDanger (≥ 30) — × 0.80\nN/A — non-equity asset class, no multiplier applied"],
+                           false, "VIX regime at time of signal calculation (v2.0 additive)\nInvestable (VIX < 19) — Domestic Equities +15\nEdgy (19–23) — +10\nChoppy (24–29) — +5\nDanger (≥ 30) — +0\nAll other asset classes: +15 (no VIX penalty)"],
           ...(row.quadAlignment ? [
             ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
                                row.quadAlignment === "Aligned" ? "#00e5a0" : row.quadAlignment === "Misaligned" ? "#ff4d6d" : "#8899aa",
                                false, "Quad framework alignment\nAligned = macro tailwind for viewpoint direction\nMisaligned = macro headwind\nNeutral = no quad mapping for this asset/sector"],
-            ["Quad Mult",      row.quadMult != null ? `×${row.quadMult.toFixed(2)}` : "—",
-                               row.quadMult == null ? "#8899aa" : row.quadMult > 1.0 ? "#00e5a0" : row.quadMult < 1.0 ? "#ff4d6d" : "#8899aa",
-                               false, "Quad multiplier (informational — v2.0 uses additive quad score, not this multiplier)\nDriven by current quad, probability, and asset/sector alignment"],
+            ["Quad Score",     row.quadScore != null ? (row.quadScore > 0 ? `+${row.quadScore}` : `${row.quadScore}`) : "—",
+                               row.quadScore == null ? "#8899aa" : row.quadScore > 0 ? "#00e5a0" : row.quadScore < 0 ? "#ff4d6d" : "#8899aa",
+                               false, "Quad conviction contribution (v2.0 additive formula)\n+20 = Aligned, high-confidence quad (prob ≥ 0.45)\n+15 = Aligned, lower-confidence quad (prob < 0.45)\n  0 = Neutral alignment or Neutral viewpoint\n−11 = Misaligned, lower-confidence (prob < 0.45)\n−15 = Misaligned, high-confidence (prob ≥ 0.45)"],
           ] : []),
 
           // ── TRADE ────────────────────────────────────────────────────────
