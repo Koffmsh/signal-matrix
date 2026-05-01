@@ -1180,7 +1180,7 @@ function Dashboard() {
         ];
 
         return (
-          <div style={{ position: "fixed", bottom: "0", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderBottom: "none", borderRight: "none", zIndex: 100, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 48px)" }}>
+          <div style={{ position: "fixed", top: "48px", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderTop: "none", borderRight: "none", zIndex: 100, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 48px)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 20px 16px 20px", flexShrink: 0 }}>
               <div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
