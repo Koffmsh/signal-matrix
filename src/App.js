@@ -1181,15 +1181,22 @@ function Dashboard() {
 
         return (
           <div style={{ position: "fixed", top: "48px", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderTop: "none", borderRight: "none", zIndex: 100, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 48px)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 20px 16px 20px", flexShrink: 0 }}>
-              <div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
-                  <div style={{ fontSize: "22px", fontWeight: "700", color: "#e8f4ff", letterSpacing: "0.1em" }}>{row.ticker}</div>
-                  <div style={{ fontSize: "16px", fontWeight: "600", color: "#c8d8e8" }}>{fmtPrice(row.close)}</div>
+            <div style={{ flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 20px 16px 20px" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                    <div style={{ fontSize: "22px", fontWeight: "700", color: "#e8f4ff", letterSpacing: "0.1em" }}>{row.ticker}</div>
+                    <div style={{ fontSize: "16px", fontWeight: "600", color: "#c8d8e8" }}>{fmtPrice(row.close)}</div>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#8899aa" }}>{row.description}</div>
                 </div>
-                <div style={{ fontSize: "11px", color: "#8899aa" }}>{row.description}</div>
+                <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
               </div>
-              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
+              {row.isAlert && (
+                <div style={{ margin: "0 20px 12px 20px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
+                  ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction
+                </div>
+              )}
             </div>
             <div style={{ overflowY: "auto", flex: 1, padding: "0 20px 20px 20px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
@@ -1226,11 +1233,6 @@ function Dashboard() {
                 );
               })}
             </div>
-            {row.isAlert && (
-              <div style={{ marginTop: "10px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
-                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction
-              </div>
-            )}
             </div>
           </div>
         );
