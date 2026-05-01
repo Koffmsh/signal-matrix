@@ -47,51 +47,36 @@ def _build_obv(closes: list, volumes: list) -> list:
     return obv
 
 
-def _obv_direction(closes: list, volumes: list, bar_window: int = 5) -> str:
+_OBV_REGRESSION_WINDOW = 40
+_OBV_NEUTRAL_BAND      = 0.02   # |normalized slope| below this → Neutral
+
+
+def _obv_direction(closes: list, volumes: list) -> str:
     """
-    Determine OBV trend direction using ABCD pivot logic (bar_window=5 each side).
-    Mirrors the price pivot engine: A (extreme) → B → C (confirmed) → D running > B = Bullish.
-    Searches the most recent 60 bars — matches the trade timeframe A lookback.
+    Determine OBV trend direction using 40-bar linear regression slope on the OBV series.
+    Slope is normalized by std(OBV) over the window to be scale-invariant across tickers.
+    A small neutral band around zero prevents noise from registering as direction.
     Returns: 'Bullish' | 'Bearish' | 'Neutral'
     """
     obv = _build_obv(closes, volumes)
-    n   = len(obv)
-    if n < bar_window * 2 + 2:
+    n   = _OBV_REGRESSION_WINDOW
+    if len(obv) < n:
         return "Neutral"
 
-    search_start = max(bar_window, n - 60)
-    pivot_highs = []
-    pivot_lows  = []
-    for i in range(search_start, n - bar_window):
-        window = obv[i - bar_window : i + bar_window + 1]
-        if obv[i] == max(window):
-            pivot_highs.append((i, obv[i]))
-        if obv[i] == min(window):
-            pivot_lows.append((i, obv[i]))
+    y     = obv[-n:]
+    x     = np.arange(n, dtype=float)
+    slope = float(np.polyfit(x, y, 1)[0])   # units: OBV per bar
 
-    if not pivot_highs or not pivot_lows:
+    # Normalize by std so the neutral band threshold is ticker-agnostic
+    std = float(np.std(y))
+    if std == 0:
         return "Neutral"
 
-    current_obv = obv[-1]
-
-    # Uptrend: A (most extreme low) → B (first high after A) → C (low after B, C > A) → D > B
-    a_idx, a_val = min(pivot_lows, key=lambda x: x[1])
-    b_up = next(((i, v) for i, v in pivot_highs if i > a_idx), None)
-    if b_up:
-        b_idx, b_val = b_up
-        c_up = next(((i, v) for i, v in pivot_lows if i > b_idx and v > a_val), None)
-        if c_up and current_obv > b_val:
-            return "Bullish"
-
-    # Downtrend: A (most extreme high) → B (first low after A) → C (high after B, C < A) → D < B
-    a_idx, a_val = max(pivot_highs, key=lambda x: x[1])
-    b_dn = next(((i, v) for i, v in pivot_lows if i > a_idx), None)
-    if b_dn:
-        b_idx, b_val = b_dn
-        c_dn = next(((i, v) for i, v in pivot_highs if i > b_idx and v < a_val), None)
-        if c_dn and current_obv < b_val:
-            return "Bearish"
-
+    normalized = slope / std
+    if normalized >  _OBV_NEUTRAL_BAND:
+        return "Bullish"
+    if normalized < -_OBV_NEUTRAL_BAND:
+        return "Bearish"
     return "Neutral"
 
 
@@ -778,13 +763,21 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     ma20_regime = cache_row.ma20_regime        if cache_row else None
     atr         = float(cache_row.atr)     if (cache_row and getattr(cache_row, 'atr',     None) is not None) else None
 
-    # OBV pivot direction + MA20 slope signals
+    # OBV direction (40-bar regression) + MA20 slope — computed once, used in vol_signal and conviction
     if prices and volumes and len(prices) == len(volumes):
-        obv_dir   = _obv_direction(prices, volumes)
-        obv_ma20  = _build_obv_ma20(prices, volumes)
+        obv_dir  = _obv_direction(prices, volumes)
+        obv_ma20 = _build_obv_ma20(prices, volumes)
     else:
         obv_dir  = "Neutral"
         obv_ma20 = []
+
+    # OBV MA20 slope — needed for strict vol_signal check before conviction loop
+    if len(obv_ma20) >= 4:
+        _slope_now  = obv_ma20[-1] - obv_ma20[-4]
+        obv_slope_early = ("rising" if _slope_now > 0 else
+                           "falling" if _slope_now < 0 else "flat")
+    else:
+        obv_slope_early = "flat"
 
     h_map = {
         "trade": getattr(hurst_row, "h_trade", None) if hurst_row else None,
@@ -897,8 +890,13 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     else:
         viewpoint = "Neutral"
 
-    # ── OBV vol_signal — compared against Trade Dir ──────────────────────────
-    if trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir:
+    # ── OBV vol_signal — strict: regression direction AND MA20 slope both confirm Trade Dir
+    # This matches the alignment_mult condition used in the conviction formula exactly.
+    _obv_slope_confirms = (
+        (trade_dir == "Bullish" and obv_slope_early == "rising") or
+        (trade_dir == "Bearish" and obv_slope_early == "falling")
+    )
+    if trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir and _obv_slope_confirms:
         vol_signal = "Confirming"
     elif obv_dir != "Neutral" and obv_dir != trade_dir:
         vol_signal = "Diverging"
