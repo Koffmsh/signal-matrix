@@ -2024,7 +2024,7 @@ Full table by timeframe:
   - `44f5a62` — fix: QUARTERLY QUADS label floated right on IE separator (above quad columns)
   - `ecc8ec6` — perf: batch DB commits + pre-load queries in signal calculation
   - `ed472db` — fix: Q FIT viewpoint-independent + separator + schema fixes
-  - (pending) — fix: hrr_warn when d_extended uses D not B — BB target compared against extended high/low
+  - `90bfca7` — fix: hrr_warn when d_extended uses D not B — BB target compared against extended high/low
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
