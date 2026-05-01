@@ -407,7 +407,8 @@ Critical issues already resolved — do not reintroduce these bugs:
   - Neutral (alignment = 0) → **0**
   - Misaligned (alignment < 0), prob ≥ 0.45 → **−15**; prob < 0.45 → **−11**
   - Probability threshold 0.45 (above random 0.25, meaningful directional read)
-  - `quad_mult` column still written for popup/debug — **informational only**, not in formula
+  - `quad_mult` column still written to `signal_output` for debug — **informational only**, not in formula, not shown in popup
+  - `quad_score` (Integer) now stored in `signal_output` and shown in popup — additive contribution +20/+15/0/−11/−15
 
 - **Component 3 — Volume (max 15):**
   - OBV direction: 40-bar linear regression slope normalized by std(OBV[-40:]); `|normalized| ≤ 0.02` → Neutral
@@ -826,7 +827,10 @@ signal-matrix/
 │   │       ├── m3c4d5e6f7g8_iv_history_rename_vol_premium_vrp_add_vrp_rank.py  ← vol_premium→vrp; added price_cache.vrp_rank
 │   │       ├── 08f62d15c8b7_iv_history_add_skew_rank.py                        ← added vol_history.skew_rank (Integer 0–100)
 │   │       ├── a1b2c3d4e5f6_add_intraday_alert_log.py                          ← intraday_alert_log table (PROXIMITY + RETRACEMENT_50 dedup)
-│   │       └── n1o2p3q4r5s6_rename_iv_history_to_vol_history.py                ← renamed iv_history → vol_history; added accumulate_hv_only() for Yahoo-only tickers
+│   │       ├── n1o2p3q4r5s6_rename_iv_history_to_vol_history.py                ← renamed iv_history → vol_history; added accumulate_hv_only() for Yahoo-only tickers
+│   │       ├── cc64e88accc0_merge_heads.py                                      ← merge two divergent heads before new revision
+│   │       ├── 312d2abdf53d_vol_history_implied_vol_nullable.py                 ← vol_history.implied_vol nullable (allows HV-only rows)
+│   │       └── o1p2q3r4s5t6_signal_output_add_quad_score.py                    ← added signal_output.quad_score (Integer) — v2.0 additive contribution
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1711,7 +1715,8 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 h_trade_delta,              ← Phase 6: change in H_trade over ~20 trading days (display only)
                 vix_regime,                 ← Phase 6: 'Investable' | 'Edgy' | 'Choppy' | 'Danger' (from VIX at calc time)
                 quad_alignment,             ← 'Aligned' | 'Misaligned' | 'Neutral' — quad alignment (stored for popup/debug and Q FIT); NOT viewpoint-dependent in v2.0
-                quad_mult,                  ← Float — informational only in v2.0 (stored for popup/debug); not applied in additive formula
+                quad_mult,                  ← Float — informational only in v2.0 (stored for debug only); not applied in additive formula; not shown in popup
+                quad_score,                 ← Integer — additive conviction contribution: +20/+15/0/−11/−15; shown in popup (v2.0)
                 calculated_at
                 UNIQUE(ticker, timeframe)
 
@@ -1901,16 +1906,21 @@ Horizontal gauge bar positioned between the title and summary counts (BULLISH / 
 | Q FIT | ▲ green (Performs Well) / — grey (Neutral) / ▼ red (Performs Poorly) — asset class historical performance in current quad; sortable; uses `signal_output.quad_alignment` ("Aligned"/"Misaligned"/"Neutral"); sort key `qFitSort` (1/0/−1); column appears before the quad month columns |
 
 ## Popup Fields (click any row) — Phase 6
+**Layout:** popup is `position: fixed, top: 48px, right: 0` — anchored top-right, below the global header. Outer div is a flex column with `maxHeight: calc(100vh - 48px)`. Ticker/price header is `flexShrink: 0` (always visible). ⚡ HIGH CONVICTION ALERT banner (when applicable) is pinned directly below the header, also `flexShrink: 0`. All fields scroll in a single `overflowY: auto` container below the banner. Popup never exceeds viewport height.
+
 | Field | Notes |
 |---|---|
+| ⚡ HIGH CONVICTION ALERT | Amber banner pinned below ticker header (before scrollable fields) — shown when `isAlert = true`; displays conviction % inline. Always visible without scrolling. |
 | Close | Live price |
 | Viewpoint | Bullish / Bearish / Neutral |
 | Aligned Since | ET timestamp — when current Bullish/Bearish viewpoint began. Hidden when Neutral |
 | Conviction | % shown when ≥ 45; grey when Neutral viewpoint; blank when < 45 |
 | ΔH (20d) | Change in H_trade (63-day DFA, Trade timeframe) over ~20 trading days — green when rising, red when falling; from `h_trade_delta` in `signal_output` |
-| VIX Regime | Investable / Edgy / Choppy / Danger — regime at time of signal calculation; from `vix_regime` in `signal_output` |
+| VIX Regime | Investable / Edgy / Choppy / Danger — regime at time of signal calculation; from `vix_regime` in `signal_output`; tooltip shows v2.0 additive scores (+15/+10/+5/+0) |
 | Vol Direction | Bullish / Bearish / Neutral — OBV pivot trend direction (`obv_direction`) |
 | Vol Signal vs Trade | Confirming ✓ / Diverging ✗ / Neutral — compared against Trade Dir (`obv_confirming`) |
+| Quad Alignment | Aligned ✓ / Misaligned ✗ / Neutral — quad environment vs viewpoint direction |
+| Quad Score | Additive conviction contribution: +20 / +15 / 0 / −11 / −15 — green positive, red negative, grey zero; from `quad_score` in `signal_output` |
 | Trade Dir \| Trade State | Side-by-side dual-field row — direction + icon on left; structural state string on right |
 | Trade LRR | BB lower band; color = trade dir; ⚠ + hover tooltip when warn; ↑↓ overshoot flag |
 | Trade HRR | BB upper band; color = trade dir; ⚠ + hover tooltip when warn; ↑↓ overshoot flag |
@@ -2030,6 +2040,11 @@ Full table by timeframe:
   - `5447f07` — fix: OBV direction → 40-bar linear regression; obv_confirming → strict check
   - `3d5de8e` — docs: update CLAUDE.md — hrr_warn d_extended fix, warn flag scope table
   - `90bfca7` — fix: hrr_warn when d_extended uses D not B — BB target compared against extended high/low
+  - `acc750a` — docs: Conviction Engine v2.0 spec + CLAUDE.md + App.js (additive formula, Neutral grey, alert ≥ 80, display ≥ 45)
+  - `11006f0` — feat: replace Quad Mult popup field with Quad Score (additive +20/+15/0/−11/−15); migration o1p2q3r4s5t6
+  - `422fb92` — fix: popup header hidden by alert banner — flex column layout, maxHeight, header pinned
+  - `a776a81` — fix: move popup to top-right below global header (top: 48px)
+  - `d3cc9e1` — fix: HIGH CONVICTION ALERT banner pinned below ticker header (always visible, not scrolled)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -2122,7 +2137,7 @@ git checkout -- .   # roll back if needed
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
 61. **VIX score tiers are locked (v2.0)** — Investable (VIX < 19) +15 · Edgy (19–23) +10 · Choppy (24–29) +5 · Danger (≥ 30) +0. **Applies to Domestic Equities only** — all other asset classes receive +15 (full credit, no penalty). `get_vix_score()` returns `(vix_score, vix_zone)`. Do not change these thresholds without explicit instruction.
-66. **Quad score is probability-weighted (v2.0)** — `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0/0.0/-1.0. Viewpoint=Neutral → quad_score=0. Aligned: +20 (prob≥0.45) or +15 (prob<0.45). Misaligned: -15 (prob≥0.45) or -11 (prob<0.45). Neutral alignment: 0. `quad_mult` still written to `signal_output` for popup/debug but is informational only — not in the v2.0 formula. Index sectors always return 0.
+66. **Quad score is probability-weighted (v2.0)** — `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0/0.0/-1.0. Viewpoint=Neutral → quad_score=0. Aligned: +20 (prob≥0.45) or +15 (prob<0.45). Misaligned: -15 (prob≥0.45) or -11 (prob<0.45). Neutral alignment: 0. `quad_score` (Integer) is stored in `signal_output` and shown in popup (green/red/grey). `quad_mult` still written to `signal_output` for debug only — not in v2.0 formula and not shown in popup. Index sectors always return 0.
 67. **Quad settings use upsert semantics** — POST to `/api/quad/settings` checks `UNIQUE(country, forecast_month, quad_type)`: updates existing row if found, inserts new row otherwise. `forecast_month` replaces the old `effective_date` key. Conviction reads the US monthly row whose `forecast_month` = current ET month (not most-recent-row). Admin Panel → QUAD SETUP manages this.
 68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.
 71. **International Equities route to country quarterly quads** — `signals.py` `run_output()` routes tickers with `asset_class = "International Equities"` to their country's current-quarter quad (e.g. EWJ sector="Japan" → "JP" → `YYYY-QN` quarterly row) instead of the US monthly quad. `_SECTOR_TO_CODE` dict in `signals.py` maps sector labels to ISO country codes. If no country quarterly quad is set, falls back to no quad (multiplier = 1.00). Dashboard columns for international rows show the country quarterly quad (no probability — quarterly rows always store 1.0); US monthly quad + probability shown for all other rows. Quarterly data fetched in `App.js` from `/api/quad/settings?country=ALL&type=quarterly` on page load, mapped via `CODE_TO_SECTOR` to build `countryQuads` state `{sector: {cur, next}}`.
