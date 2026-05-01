@@ -1180,8 +1180,8 @@ function Dashboard() {
         ];
 
         return (
-          <div style={{ position: "fixed", bottom: "0", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderBottom: "none", borderRight: "none", padding: "20px", zIndex: 100 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+          <div style={{ position: "fixed", bottom: "0", right: "0", width: "380px", background: "#0a1422", border: "1px solid #1a3050", borderBottom: "none", borderRight: "none", zIndex: 100, display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 48px)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 20px 16px 20px", flexShrink: 0 }}>
               <div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
                   <div style={{ fontSize: "22px", fontWeight: "700", color: "#e8f4ff", letterSpacing: "0.1em" }}>{row.ticker}</div>
@@ -1191,7 +1191,8 @@ function Dashboard() {
               </div>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#8899aa", cursor: "pointer", fontSize: "18px" }}>×</button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", maxHeight: "calc(100vh - 140px)", overflowY: "auto" }}>
+            <div style={{ overflowY: "auto", flex: 1, padding: "0 20px 20px 20px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
               {fields.map(([label, val, color, isState, tip], idx) => {
                 if (label === "__section__") {
                   return (
@@ -1230,6 +1231,7 @@ function Dashboard() {
                 ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction
               </div>
             )}
+            </div>
           </div>
         );
       })()}
