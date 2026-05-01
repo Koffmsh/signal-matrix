@@ -712,6 +712,14 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 - Pre-load all existing rows before Yahoo loop (one `IN` query) — same N+1 fix as Schwab path
 - **Result:** Second REFRESH DATA same day → instant (all skip). Normal daily first hit → ~10s instead of ~60s (lightweight 5d fetch × 10 tickers)
 
+### CALCULATE SIGNALS — Hurst + Pivots Skip on Repeat Manual Runs (`signals.py`)
+- **Root problem:** Manual CALCULATE SIGNALS mid-day recomputed Hurst (~130s) + Pivots (~40s) every press, even though both are EOD-only calculations that don't change until new price data arrives
+- **Fix:** `calculate_signals()` checks `calculated_at` date against today ET for both `SignalHurst` and `SignalPivots` before running. If already computed today and `trigger == "manual"`, stage is skipped
+- **Scheduler path unchanged:** `trigger="scheduled"` always runs full pipeline — Hurst + Pivots always recompute at 4 PM EOD
+- **First manual press of the day:** full pipeline (~263s for 95 tickers) — unavoidable, Hurst hasn't run yet
+- **Subsequent manual presses same day:** only output stage runs (~76s) — Hurst + Pivots skipped
+- **Rule:** Never apply this skip to `trigger="scheduled"` — EOD run must always recompute everything with fresh price data
+
 ### IV Fetch — Idempotent on Manual REFRESH DATA (`market_data.py`, `schwab_options.py`)
 - **Root problem:** `market_data.py` called `schwab_fetch_iv(db, force=True)` — bypassed the built-in idempotency check on every manual REFRESH DATA press, running ~65 Schwab options chain calls (~55 seconds) even when IV was already fresh
 - **Fix:** Changed to `schwab_fetch_iv(db, force=False)` — the existing idempotency check now fires: if IV already fetched today, skip entirely
@@ -2025,6 +2033,9 @@ Full table by timeframe:
   - `ecc8ec6` — perf: batch DB commits + pre-load queries in signal calculation
   - `ed472db` — fix: Q FIT viewpoint-independent + separator + schema fixes
   - `90bfca7` — fix: hrr_warn when d_extended uses D not B — BB target compared against extended high/low
+  - `cc64e88` — alembic: merge two heads (a1b2c3d4e5f6 + n1o2p3q4r5s6) before new revision
+  - `312d2ab` — fix: vol_history.implied_vol nullable — allows accumulate_hv_only() HV-only rows
+  - `(pending)` — perf: skip Hurst + Pivots on manual CALCULATE SIGNALS if already computed today
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git

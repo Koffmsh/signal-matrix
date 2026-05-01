@@ -206,6 +206,34 @@ def get_vix_mult(vix_close: float | None, asset_class: str) -> tuple:
         return 0.80, "Danger"
 
 
+def get_vix_score(vix_close: float | None, asset_class: str) -> tuple:
+    """
+    Component 4 — VIX additive score (v2.0).
+    Returns (vix_score, vix_zone).
+
+    Non-equity asset classes receive full credit (+15) — no VIX penalty.
+    Missing VIX row defaults to full credit (no crash assumed).
+
+    Thresholds (locked — same boundaries as v1.9 multiplier):
+      Investable  VIX < 19   +15
+      Edgy        19–23      +10
+      Choppy      24–29      + 5
+      Danger      ≥ 30         0
+    """
+    if asset_class not in VIX_REGIME_ASSET_CLASSES:
+        return 15, "N/A"
+    if vix_close is None:
+        return 15, "Unknown"
+    if vix_close < 19:
+        return 15, "Investable"
+    elif vix_close < 24:
+        return 10, "Edgy"
+    elif vix_close < 30:
+        return  5, "Choppy"
+    else:
+        return  0, "Danger"
+
+
 def get_vix_regime_multiplier(db) -> tuple:
     """Legacy helper — returns (multiplier, zone_label) for non-gated VIX display."""
     vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
@@ -676,45 +704,26 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
 
 
 # ── Conviction Score (v1.8+) ──────────────────────────────────────────────────
-
-def compute_conviction(close: float,
-                       trade_lrr: float | None, trade_hrr: float | None,
-                       trade_dir: str, viewpoint: str,
-                       obv_dir: str, obv_ma20: list) -> tuple:
-    """
-    Conviction Layers 1–3 (proximity + OBV alignment + slope boost).
-    Layers 4 (VIX) and 5 (Quad) are applied in compute_output after this call.
-
-      base             = 50
-      conviction_raw   = 50 × (0.70 + 0.30 × prox)   → 35–50
-      conviction_vol   = conviction_raw × obv_mult      (1.20 / 0.85 / 1.00)
-      conviction_slope = conviction_vol × slope_boost   (1.20 / 1.00)
-
-    Returns (conviction_slope, obv_slope, obv_slope_trend).
-    CRITICAL: caller must blank conviction when Viewpoint = Neutral.
-    """
-    base = 50.0
-
-    prox = 0.5   # neutral default when LRR/HRR unavailable
-    if (trade_lrr is not None and trade_hrr is not None
-            and trade_hrr > trade_lrr):
-        band = trade_hrr - trade_lrr
-        if trade_dir == "Bullish":
-            prox = 1.0 - (close - trade_lrr) / band
-        elif trade_dir == "Bearish":
-            prox = (close - trade_lrr) / band
-        prox = max(0.0, min(1.0, prox))
-
-    conviction_raw = base * (0.70 + 0.30 * prox)
-
-    obv_slope, obv_slope_trend, alignment_mult, slope_boost = _obv_slope_signals(
-        obv_ma20, viewpoint, obv_dir,
-    )
-
-    conviction_vol   = conviction_raw * alignment_mult
-    conviction_slope = conviction_vol * slope_boost
-
-    return round(conviction_slope, 4), obv_slope, obv_slope_trend
+# CONVICTION_V2_CLEANUP — remove after 30 days from v2.0 implementation date (May 2026)
+# compute_conviction() replaced by additive formula in compute_output(); inlined below.
+#
+# def compute_conviction(close, trade_lrr, trade_hrr, trade_dir, viewpoint,
+#                        obv_dir, obv_ma20):
+#     base = 50.0
+#     prox = 0.5
+#     if trade_lrr is not None and trade_hrr is not None and trade_hrr > trade_lrr:
+#         band = trade_hrr - trade_lrr
+#         if trade_dir == "Bullish":
+#             prox = 1.0 - (close - trade_lrr) / band
+#         elif trade_dir == "Bearish":
+#             prox = (close - trade_lrr) / band
+#         prox = max(0.0, min(1.0, prox))
+#     conviction_raw = base * (0.70 + 0.30 * prox)
+#     obv_slope, obv_slope_trend, alignment_mult, slope_boost = _obv_slope_signals(
+#         obv_ma20, viewpoint, obv_dir)
+#     conviction_vol   = conviction_raw * alignment_mult
+#     conviction_slope = conviction_vol * slope_boost
+#     return round(conviction_slope, 4), obv_slope, obv_slope_trend
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -771,13 +780,22 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         obv_dir  = "Neutral"
         obv_ma20 = []
 
-    # OBV MA20 slope — needed for strict vol_signal check before conviction loop
-    if len(obv_ma20) >= 4:
+    # OBV MA20 slope — needed for strict vol_signal check and v2.0 volume_score
+    if len(obv_ma20) >= 6:
         _slope_now  = obv_ma20[-1] - obv_ma20[-4]
-        obv_slope_early = ("rising" if _slope_now > 0 else
+        _slope_prev = obv_ma20[-2] - obv_ma20[-5]
+        obv_slope_early = ("rising"  if _slope_now > 0 else
                            "falling" if _slope_now < 0 else "flat")
+        obv_slope_trend = ("increasing" if _slope_now > _slope_prev else
+                           "decreasing" if _slope_now < _slope_prev else "flat")
+    elif len(obv_ma20) >= 4:
+        _slope_now  = obv_ma20[-1] - obv_ma20[-4]
+        obv_slope_early = ("rising"  if _slope_now > 0 else
+                           "falling" if _slope_now < 0 else "flat")
+        obv_slope_trend = "flat"
     else:
         obv_slope_early = "flat"
+        obv_slope_trend = "flat"
 
     h_map = {
         "trade": getattr(hurst_row, "h_trade", None) if hurst_row else None,
@@ -915,40 +933,79 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         h_trend, h_trend_up, h_trend_down,
     )
 
-    # ── Conviction — BLANK when Viewpoint = Neutral ──────────────────────────
-    conviction      = None
-    quad_align_label = "Neutral"
-    quad_mult_val    = 1.00
-    vix_zone         = "N/A"
-    obv_slope        = "flat"
-    obv_slope_trend  = "flat"
+    # ── Conviction v2.0 — Additive four-component formula ────────────────────
+    # Always calculates regardless of Viewpoint.
+    # Display when conviction_final >= 45 (else None/blank).
+    # Neutral viewpoint: calculates same way; UI renders in grey (#8899aa) when >= 45.
 
-    if viewpoint != "Neutral":
-        trade_lrr = timeframe_results["trade"]["lrr"]
-        trade_hrr = timeframe_results["trade"]["hrr"]
+    # Component 1 — Structural (max 50)
+    # Trade=Bullish + Trend=Bearish (opposing) = 0 — conflicted structure = no conviction.
+    if trade_dir == trend_dir and trade_dir != "Neutral":
+        structural_score = 50    # both Bullish or both Bearish — full alignment
+    elif trade_dir != "Neutral" and trend_dir == "Neutral":
+        structural_score = 25    # trade only
+    elif trade_dir == "Neutral" and trend_dir != "Neutral":
+        structural_score = 25    # trend only (unusual but valid)
+    else:
+        structural_score = 0     # both Neutral, OR opposing directions (conflicted)
 
-        # Layers 1–3: proximity + OBV alignment + slope boost
-        conviction_slope, obv_slope, obv_slope_trend = compute_conviction(
-            price, trade_lrr, trade_hrr, trade_dir, viewpoint,
-            obv_dir, obv_ma20,
-        )
+    # Component 2 — Quad (+20 / 0 / -15, prob-weighted)
+    # Viewpoint gate: Neutral viewpoint → quad_score = 0 (macro tailwind ≠ conviction without structure)
+    if quad_current is not None:
+        _quad_alignment = get_quad_alignment(asset_class, sector, quad_current)
+        if viewpoint == "Neutral" or _quad_alignment == 0.0:
+            quad_score = 0
+            quad_align_label = "Neutral"
+        elif _quad_alignment > 0:
+            quad_score = 20 if quad_prob >= 0.45 else 15
+            quad_align_label = "Aligned"
+        else:
+            quad_score = -15 if quad_prob >= 0.45 else -11
+            quad_align_label = "Misaligned"
+        # Informational quad_mult — stored for popup/debug, not used in v2.0 formula
+        quad_mult_val, _ = get_quad_multiplier(viewpoint, asset_class, sector, quad_current, quad_prob)
+    else:
+        quad_score       = 0
+        quad_align_label = "Neutral"
+        quad_mult_val    = 1.00
 
-        # Layer 4: VIX regime (Domestic Equities only)
-        vix_mult, vix_zone = get_vix_mult(vix_close, asset_class)
-        conviction_vix = conviction_slope * vix_mult
+    # Component 3 — Volume (max 15)
+    # obv_confirming = strict check: regression direction AND MA20 slope both confirm Trade Dir
+    volume_score = 0
+    if obv_confirming:
+        volume_score += 10
+        if ((trade_dir == "Bullish" and obv_slope_trend == "increasing") or
+                (trade_dir == "Bearish" and obv_slope_trend == "decreasing")):
+            volume_score += 5   # acceleration boost: +5 when slope is accelerating (early in move)
 
-        # Layer 5: Quad multiplier
-        quad_mult_val, quad_align_label = get_quad_multiplier(
-            viewpoint, asset_class, sector, quad_current, quad_prob,
-        )
-        conviction_quad = conviction_vix * quad_mult_val
+    # Component 4 — VIX/Vol (max 15, Domestic Equities only)
+    vix_score, vix_zone = get_vix_score(vix_close, asset_class)
 
-        conviction = round(min(conviction_quad, 100.0), 2)
+    # Assembly: sum → floor(0) → dampener → cap(100)
+    conviction_sum = structural_score + quad_score + volume_score + vix_score
+    conviction_sum = max(0.0, conviction_sum)   # floor — quad misalignment can push negative
+
+    # Dampener ×0.92: target-side warn = "BB target can't reach the structural reference"
+    #   Uptrend:   hrr_warn fires (HRR < D when d_extended, HRR < B normally)
+    #   Downtrend: lrr_warn fires (LRR > D when d_extended, LRR > B normally)
+    _tr          = timeframe_results["trade"]
+    _trade_dir   = _tr["direction"]
+    _hrr_warn    = _tr["hrr_warn"]
+    _lrr_warn    = _tr["lrr_warn"]
+    if ((_trade_dir == "Bullish" and _hrr_warn) or
+            (_trade_dir == "Bearish" and _lrr_warn)):
+        conviction_sum = conviction_sum * 0.92
+
+    conviction_final = min(conviction_sum, 100.0)   # cap
+
+    # Display threshold: blank below 45
+    conviction = round(conviction_final, 2) if conviction_final >= 45.0 else None
 
     # ── Alert flag ⚡ ────────────────────────────────────────────────────────
+    # Threshold raised to 80 (v2.0). Still requires non-Neutral viewpoint.
     alert = bool(
         viewpoint != "Neutral" and
-        conviction is not None and conviction >= 65.0
+        conviction is not None and conviction >= 80.0
     )
 
     logger.info(

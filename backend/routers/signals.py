@@ -357,9 +357,44 @@ def snapshot_signals(trigger: str, db: Session) -> dict:
 
 def calculate_signals(db: Session, trigger: str = "manual") -> dict:
     """Run full signal pipeline: hurst → pivots → output. Called by scheduler."""
-    hurst_result  = run_hurst(db)
-    pivots_result = run_pivots(db)
-    output_result = run_output(db)
+    import time
+    t0 = time.time()
+
+    # Skip Hurst if already computed today (manual re-runs mid-day are common;
+    # Hurst is slow ~33s and changes only day-over-day at EOD resolution).
+    # Scheduler always forces recompute via trigger="scheduled".
+    today_et = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    latest_hurst = db.query(SignalHurst).order_by(SignalHurst.calculated_at.desc()).first()
+    hurst_done_today = (
+        trigger == "manual"
+        and latest_hurst is not None
+        and str(latest_hurst.calculated_at)[:10] == today_et
+    )
+    if hurst_done_today:
+        logger.info("calculate_signals: hurst skipped — already computed today")
+        hurst_result = {"calculated": 0, "skipped": True}
+    else:
+        hurst_result = run_hurst(db)
+        logger.info(f"calculate_signals: hurst done in {time.time()-t0:.1f}s")
+
+    # Skip pivots if already computed today (same EOD-only logic as Hurst).
+    t1 = time.time()
+    latest_pivot = db.query(SignalPivots).order_by(SignalPivots.calculated_at.desc()).first()
+    pivots_done_today = (
+        trigger == "manual"
+        and latest_pivot is not None
+        and str(latest_pivot.calculated_at)[:10] == today_et
+    )
+    if pivots_done_today:
+        logger.info("calculate_signals: pivots skipped — already computed today")
+        pivots_result = {"calculated": 0, "skipped": True}
+    else:
+        pivots_result = run_pivots(db)
+        logger.info(f"calculate_signals: pivots done in {time.time()-t1:.1f}s")
+
+    t2 = time.time()
+    output_result = run_output(db); logger.info(f"calculate_signals: output done in {time.time()-t2:.1f}s")
+    logger.info(f"calculate_signals: total {time.time()-t0:.1f}s")
 
     snapshot_result = None
     try:
