@@ -272,7 +272,9 @@ function defaultSort(a, b) {
 const dirIcon    = (d)  => d === "Bullish" ? "▲" : d === "Bearish" ? "▼" : "—";
 const dirColor   = (d)  => d === "Bullish" ? "#00e5a0" : d === "Bearish" ? "#ff4d6d" : "#8899aa";
 const vpColor    = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
-const convColor  = (c)  => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
+const convColor  = (c)        => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
+// v2.0: Neutral viewpoint → always grey regardless of score; Bullish/Bearish → score-based color
+const convColorVP = (c, vp) => vp === "Neutral" ? "#8899aa" : convColor(c);
 const volColor   = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? "#ff4d6d" : "#8899aa";
 const hurstColor = (h)  => h == null ? "#8899aa" : h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
 const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
@@ -693,9 +695,9 @@ function Dashboard() {
           {row.conviction !== null && row.conviction !== undefined ? (
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <div style={{ width: "50px", height: "4px", background: "#1a2535", borderRadius: "2px", overflow: "hidden" }}>
-                <div style={{ width: `${row.conviction}%`, height: "100%", background: convColor(row.conviction), borderRadius: "2px" }} />
+                <div style={{ width: `${row.conviction}%`, height: "100%", background: convColorVP(row.conviction, row.viewpoint), borderRadius: "2px" }} />
               </div>
-              <span style={{ color: convColor(row.conviction), fontVariantNumeric: "tabular-nums" }}>{row.conviction}%</span>
+              <span style={{ color: convColorVP(row.conviction, row.viewpoint), fontVariantNumeric: "tabular-nums" }}>{row.conviction}%</span>
             </div>
           ) : (
             <span style={{ color: "#8899aa" }}>—</span>
@@ -1003,7 +1005,7 @@ function Dashboard() {
               <th style={{ width: "24px", padding: "10px 4px 10px 8px", borderBottom: "1px solid #1a2535" }} />
               {/* Change 2 — tooltip on alert header */}
               <SortHdr label="⚡" k="isAlert"
-                title="⚡ High conviction alert&#10;Viewpoint = Bullish or Bearish&#10;AND conviction ≥ 65" />
+                title="⚡ High conviction alert&#10;Viewpoint = Bullish or Bearish&#10;AND conviction ≥ 80" />
               <SortHdr label="TICKER"      k="ticker" />
               <SortHdr label="DESCRIPTION" k="description" />
               {/* Change 1 — CLOSE / TREND before signal columns; ASSET CLASS / SECTOR at far right */}
@@ -1011,7 +1013,7 @@ function Dashboard() {
               <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Price (base, prox) → Volume (OBV align, slope) → Volatility (VIX regime) → Quad → cap 100&#10;Green ≥70% · Amber 50–69% · Grey &lt;50% · Blank = Neutral · ⚡ ≥ 65" />
+                title="Structural (50) + Quad (±20) + Volume (15) + VIX (15) → floor(0) → dampener → cap 100&#10;Show ≥45 · Green/Red ≥45 (Bullish/Bearish) · Grey ≥45 (Neutral) · ⚡ ≥80" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -1087,7 +1089,7 @@ function Dashboard() {
           ...(row.viewpoint !== "Neutral" && row.viewpointSince ? [
             ["Aligned since", fmtSince(row.viewpointSince),                                               vpColor(row.viewpoint),                 false],
           ] : []),
-          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColor(row.conviction) : "#8899aa", false],
+          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColorVP(row.conviction, row.viewpoint) : "#8899aa", false],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["VIX Regime",   row.vixRegime || "—",
@@ -1099,7 +1101,7 @@ function Dashboard() {
                                false, "Quad framework alignment\nAligned = macro tailwind for viewpoint direction\nMisaligned = macro headwind\nNeutral = no quad mapping for this asset/sector"],
             ["Quad Mult",      row.quadMult != null ? `×${row.quadMult.toFixed(2)}` : "—",
                                row.quadMult == null ? "#8899aa" : row.quadMult > 1.0 ? "#00e5a0" : row.quadMult < 1.0 ? "#ff4d6d" : "#8899aa",
-                               false, "Quad conviction multiplier applied to this ticker\nDriven by current quad, probability, and asset/sector alignment"],
+                               false, "Quad multiplier (informational — v2.0 uses additive quad score, not this multiplier)\nDriven by current quad, probability, and asset/sector alignment"],
           ] : []),
 
           // ── TRADE ────────────────────────────────────────────────────────
@@ -1224,7 +1226,7 @@ function Dashboard() {
             </div>
             {row.isAlert && (
               <div style={{ marginTop: "10px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
-                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction · H_eff &gt; 0.55
+                ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction
               </div>
             )}
           </div>
