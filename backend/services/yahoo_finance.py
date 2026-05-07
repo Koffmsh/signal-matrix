@@ -11,37 +11,6 @@ _ET = ZoneInfo("America/New_York")
 logger = logging.getLogger(__name__)
 
 
-def compute_ma20_regime(prices: list) -> str:
-    """
-    Compute the terminal MA20 price regime using the 2-consecutive-close rule.
-
-    regime = 'uptrend'   when the 2 most-recent closes are BOTH above the rolling MA20
-    regime = 'downtrend' when the 2 most-recent closes are BOTH below the rolling MA20
-    Forgiveness: 1 close on the wrong side does not flip the regime (mirrors BREAK_OF_TRADE logic).
-
-    Scans backward from the most recent bar — O(1) in the common case.
-    Returns 'uptrend' or 'downtrend'.
-    """
-    n = len(prices)
-    if n < 21:
-        return "downtrend"
-
-    arr  = np.array(prices, dtype=float)
-    cs   = np.cumsum(np.insert(arr, 0, 0.0))
-    ma20 = (cs[20:] - cs[:-20]) / 20.0   # ma20[k] = SMA at arr[k + 19]
-    above = arr[19:] > ma20               # above[k] = True if arr[k+19] > MA20[k]
-
-    # Scan backward: find the most recent 2 consecutive closes on the same side
-    for j in range(len(above) - 1, 0, -1):
-        if above[j] and above[j - 1]:
-            return "uptrend"
-        if not above[j] and not above[j - 1]:
-            return "downtrend"
-
-    # Fallback — fewer than 2 valid MA20 observations
-    return "uptrend" if above[-1] else "downtrend"
-
-
 class RateLimitError(Exception):
     """Raised when Yahoo Finance returns a 429 Too Many Requests."""
     pass
@@ -156,21 +125,6 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         else:
             std20 = None
 
-        # MA20 price regime — 2-consecutive-close rule (separate from ABC pivot direction)
-        ma20_regime = compute_ma20_regime(history_prices)
-
-        # ATR (14-day simple MA of True Range) — aligned to history_closes
-        atr = None
-        if len(history_prices) >= 15 and len(history_highs) >= 15 and len(history_lows) >= 15:
-            tr_vals = [
-                max(history_highs[i] - history_lows[i],
-                    abs(history_highs[i] - history_prices[i - 1]),
-                    abs(history_lows[i]  - history_prices[i - 1]))
-                for i in range(1, len(history_prices))
-            ]
-            if len(tr_vals) >= 14:
-                atr = round(float(np.mean(tr_vals[-14:])), 4)
-
         updated = datetime.now(_ET).strftime("%m/%d/%y %H:%M")
 
         time.sleep(0.5)  # Rate limit: pause between Yahoo Finance fetches
@@ -187,7 +141,6 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "ma100":           ma100,
             "ma200":           ma200,
             "std20":           std20,
-            "ma20_regime":     ma20_regime,
             "rel_iv":          rel_iv,
             "spark_prices":    spark_prices,
             "history_prices":  history_prices,
@@ -195,7 +148,6 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "history_highs":   history_highs,
             "history_lows":    history_lows,
             "volume_history":  volume_history,
-            "atr":             atr,
             "updated":         updated,
         }
 

@@ -14,9 +14,10 @@ Tail/LT timeframe: Single MA200 level — structural floor or ceiling.
 
 Reads from:
   - signal_hurst   (h_trade, h_trend, h_lt, h_trend_up, h_trend_down)
-  - signal_pivots  (pivot_a/b/c/d, structural_state)
-  - price_cache    (close, ma20, std20, ma20_regime, ma100, ma200, atr,
-                    history_json, volume_history_json)
+  - signal_pivots  (pivot_a/b/c/d, structural_state, d_extended)
+  - signal_output  (prior hrr_snapped/lrr_snapped — v1.9.1 snap state)
+  - vol_history    (implied_vol / hv30 — for trade RR vol rank lookup)
+  - price_cache    (close, ma200, history_json, volume_history_json)
 
 Never calls yfinance directly.
 """
@@ -696,28 +697,6 @@ def compute_trade_lrr_hrr(
     return round(lrr, 4), round(hrr, 4), hrr_snapped, lrr_snapped
 
 
-# ── Trend timeframe: single MA100 level (v1.7 spec §2.8) ─────────────────────
-
-def compute_trend_level(ma100: float | None, prices: list,
-                        trend_dir: str) -> tuple:
-    """
-    MA100 floor (uptrend) or ceiling (downtrend).
-    Slope window: MA100[today] - MA100[10 trading days ago].
-    Returns (level, None) when slope confirms direction, else (None, None).
-    """
-    if ma100 is None or trend_dir == "Neutral" or len(prices) < 110:
-        return None, None
-
-    ma100_10d_ago = sum(prices[-110:-10]) / 100.0
-    slope = ma100 - ma100_10d_ago
-
-    if slope > 0 and trend_dir == "Bullish":
-        return round(ma100, 4), None
-    if slope < 0 and trend_dir == "Bearish":
-        return round(ma100, 4), None
-    return None, None   # slope contradicts direction — hide level
-
-
 # ── Tail/LT timeframe: single MA200 level (v1.7 spec §2.8) ──────────────────
 
 def compute_tail_level(ma200: float | None, prices: list,
@@ -911,13 +890,11 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     if cache_row and cache_row.volume_history_json:
         volumes = json.loads(cache_row.volume_history_json)
 
-    # MA / vol inputs from price_cache (computed at fetch time — Phase A)
-    ma20        = float(cache_row.ma20)        if (cache_row and cache_row.ma20  is not None) else None
-    ma100       = float(cache_row.ma100)       if (cache_row and cache_row.ma100 is not None) else None
+    # MA200 from price_cache — only consumer is compute_tail_level().
+    # MA20, MA100, STD20, MA20 regime, ATR are populated on price_cache for legacy
+    # / inspection purposes but no longer drive any signal. Trade RR uses dynamic-N
+    # MA/STD computed from raw closes (v1.9.1); Trend Level uses break pivot directly.
     ma200       = float(cache_row.ma200)       if (cache_row and cache_row.ma200 is not None) else None
-    std20       = float(cache_row.std20)       if (cache_row and cache_row.std20 is not None) else None
-    ma20_regime = cache_row.ma20_regime        if cache_row else None
-    atr         = float(cache_row.atr)     if (cache_row and getattr(cache_row, 'atr',     None) is not None) else None
 
     # OBV direction (40-bar regression) + MA20 slope — computed once, used in vol_signal and conviction
     if prices and volumes and len(prices) == len(volumes):
