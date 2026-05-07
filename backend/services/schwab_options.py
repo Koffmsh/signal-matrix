@@ -332,6 +332,33 @@ def _compute_vrp_rank(db: Session, ticker: str, today_vrp: float) -> int | None:
     return max(0, min(100, int(round(rank))))
 
 
+def _compute_hv_rank(db: Session, ticker: str, today_hv30: float) -> int | None:
+    """
+    Compute HV Rank (0-100) — HV30 rank within its own 252-day history.
+    Low rank = realized vol historically low (calm); high rank = vol historically elevated.
+    Returns None when fewer than _RANK_MIN_HISTORY observations exist.
+    Today's row must already be flushed before calling this.
+    """
+    history = (
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.hv30.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
+        .limit(252)
+        .all()
+    )
+    hv_values = [row.hv30 for row in history]
+    if len(hv_values) < _RANK_MIN_HISTORY:
+        return None
+
+    hv_min = min(hv_values)
+    hv_max = max(hv_values)
+    if hv_max <= hv_min:
+        return None
+
+    rank = (today_hv30 - hv_min) / (hv_max - hv_min) * 100
+    return max(0, min(100, int(round(rank))))
+
+
 def _compute_vrp_changes(db: Session, ticker: str) -> tuple:
     """
     Compute VRP change over 1 trading day, 1 week (5 days), 1 month (21 days).
@@ -366,6 +393,7 @@ def _update_price_cache_iv(
     skew_rank: int | None = None,
     put_call_ratio: float | None = None,
     vrp_rank: int | None = None,
+    hv_rank: int | None = None,
     vrp_1d_chg: float | None = None,
     vrp_1w_chg: float | None = None,
     vrp_1m_chg: float | None = None,
@@ -382,6 +410,7 @@ def _update_price_cache_iv(
         row.skew_rank      = skew_rank
         row.put_call_ratio = put_call_ratio
         row.vrp_rank       = vrp_rank
+        row.hv_rank        = hv_rank
         row.vrp_1d_chg     = vrp_1d_chg
         row.vrp_1w_chg     = vrp_1w_chg
         row.vrp_1m_chg     = vrp_1m_chg
@@ -472,9 +501,10 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             )
             db.flush()
 
-            # Compute IV Rank and VRP Rank (skew_rank dropped with skew)
+            # Compute IV Rank, VRP Rank, HV Rank (skew_rank dropped with skew)
             iv_pct   = _compute_iv_percentile(db, ticker, implied_vol)
             vrp_rank = _compute_vrp_rank(db, ticker, vrp) if vrp is not None else None
+            hv_rank  = _compute_hv_rank(db, ticker, hv30) if hv30 is not None else None
 
             # Compute VRP changes (1d, 1w, 1m) from vol_history
             vrp_1d_chg, vrp_1w_chg, vrp_1m_chg = _compute_vrp_changes(db, ticker)
@@ -484,7 +514,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
                     db, ticker, iv_pct, "schwab",
                     iv30=implied_vol, hv30=hv30, hv90=hv90,
                     put_call_ratio=put_call_ratio,
-                    vrp_rank=vrp_rank,
+                    vrp_rank=vrp_rank, hv_rank=hv_rank,
                     vrp_1d_chg=vrp_1d_chg, vrp_1w_chg=vrp_1w_chg, vrp_1m_chg=vrp_1m_chg,
                 )
             else:
@@ -501,7 +531,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
                     db, ticker, proxy_pct, "proxy",
                     iv30=implied_vol, hv30=hv30, hv90=hv90,
                     put_call_ratio=put_call_ratio,
-                    vrp_rank=vrp_rank,
+                    vrp_rank=vrp_rank, hv_rank=hv_rank,
                     vrp_1d_chg=vrp_1d_chg, vrp_1w_chg=vrp_1w_chg, vrp_1m_chg=vrp_1m_chg,
                 )
                 logger.debug(f"IV: {ticker} warmup — using proxy rel_iv={proxy_pct}")
@@ -510,7 +540,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
             logger.debug(
                 f"IV: {ticker} iv={implied_vol:.4f} hv30={hv30} vrp={vrp} "
                 f"vrp_1d={vrp_1d_chg} vrp_1w={vrp_1w_chg} vrp_1m={vrp_1m_chg} "
-                f"pcr={put_call_ratio} iv_pct={iv_pct} vrp_rank={vrp_rank}"
+                f"pcr={put_call_ratio} iv_pct={iv_pct} vrp_rank={vrp_rank} hv_rank={hv_rank}"
             )
 
         except Exception as e:
@@ -578,6 +608,13 @@ def accumulate_hv_only(db: Session) -> dict:
                     created_at  = datetime.utcnow().isoformat(),
                 ))
                 written += 1
+            db.flush()
+
+            # Stamp current values onto price_cache (popup display + Trade RR consumer)
+            hv_rank = _compute_hv_rank(db, ticker, hv30) if hv30 is not None else None
+            pc.hv30    = hv30
+            pc.hv90    = hv90
+            pc.hv_rank = hv_rank
 
         except Exception as e:
             logger.error(f"HV-only accumulation failed for {ticker}: {e}")

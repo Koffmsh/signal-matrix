@@ -379,6 +379,21 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **HV Rank label** — popup `iv_source = 'proxy'` now shows **"HV Rank"** (was "IV Rank — proxy"). The proxy was never implied vol — it was 21-day realized vol ranked within its 252-day history. Tooltip updated to match. `iv_source = 'schwab'` → "IV Rank — schwab" (unchanged). `iv_source = 'price_rank'` → "VVIX Rank — price" (unchanged).
 - **Migration note:** `create_all()` on startup auto-created an empty `vol_history` table before the migration ran; migration handles this by dropping the empty table first before renaming `iv_history`
 
+### HV Rank Column + One-Time HV Backfill (`price_cache.hv_rank`, `scripts/backfill_hv.py`)
+- **`price_cache.hv_rank`** Integer 0–100 column added (migration `p1q2r3s4t5u6`) — HV30 rank within its own 252-day rolling history. Mirrors `vrp_rank`/`skew_rank`/`iv_pct` pattern. Low rank = realized vol historically calm; high rank = vol elevated.
+- **`_compute_hv_rank(db, ticker, today_hv30)`** in `schwab_options.py` — `(today - min_252) / (max_252 - min_252) × 100`, requires `_RANK_MIN_HISTORY = 30` observations.
+- **Wired into both daily paths:** `schwab_fetch_iv` (passes `hv_rank` to `_update_price_cache_iv`) AND `accumulate_hv_only` (Yahoo-only tickers — SPX, NDX, RUT, VIX, $DJI, USD, JPY, /CL, /ZN, /GC, VVIX).
+- **Bug fix in `accumulate_hv_only`:** previously wrote HV30/HV90 to `vol_history` only — never to `price_cache`. That's why all 11 Yahoo-only tickers showed no HV in the popup despite valid history. Now stamps `pc.hv30 / hv90 / hv_rank` on the latest fetch.
+- **One-time backfill — `backend/scripts/backfill_hv.py`:** walks `history_json` + `history_dates_json` per ticker, computes daily HV30/HV90 series, upserts into `vol_history` preserving existing IV/VRP/skew. Recomputes `vrp = iv30 - hv30` wherever IV is present. Stamps current `hv30/hv90/hv_rank/vrp_rank` on `price_cache`. Idempotent — safe to re-run.
+  ```bash
+  # Local (Docker → SQLite):
+  docker exec -e SUPABASE_CONNECTION_STRING= -e SUPABASE_POOLED_CONNECTION_STRING= \
+      -e DATABASE_URL= signal-matrix-backend-1 python -m scripts.backfill_hv [--dry-run]
+  # Production (Fly.io → Supabase):
+  fly ssh console --app signal-matrix-api -C "python -m scripts.backfill_hv"
+  ```
+- **Backfill rationale:** HV columns added recently in migration `k1a2b3c4d5e6` were never backfilled — `vol_history` had only ~13–16 days of HV history vs. 266 days of IV. Backfill produces ~1250 HV rows per ticker (5 years of daily history), making HV Rank a true 252-day rank from day one.
+
 ### Conviction Score — Additive Formula (v2.0)
 - **Architecture: four independent components summed** — replaces v1.9 multiplier chain. Proximity removed entirely.
 - **Formula:**
@@ -830,7 +845,8 @@ signal-matrix/
 │   │       ├── n1o2p3q4r5s6_rename_iv_history_to_vol_history.py                ← renamed iv_history → vol_history; added accumulate_hv_only() for Yahoo-only tickers
 │   │       ├── cc64e88accc0_merge_heads.py                                      ← merge two divergent heads before new revision
 │   │       ├── 312d2abdf53d_vol_history_implied_vol_nullable.py                 ← vol_history.implied_vol nullable (allows HV-only rows)
-│   │       └── o1p2q3r4s5t6_signal_output_add_quad_score.py                    ← added signal_output.quad_score (Integer) — v2.0 additive contribution
+│   │       ├── o1p2q3r4s5t6_signal_output_add_quad_score.py                    ← added signal_output.quad_score (Integer) — v2.0 additive contribution
+│   │       └── p1q2r3s4t5u6_price_cache_add_hv_rank.py                          ← added price_cache.hv_rank (Integer 0–100)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1762,6 +1778,7 @@ price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_reg
                 skew_rank,                  ← Integer 0–100: RR rank within 252-day history (migration l2b3c4d5e6f7)
                 put_call_ratio,             ← total put OI / total call OI across fetched chain (migration l2b3c4d5e6f7)
                 vrp_rank,                   ← Integer 0–100: VRP rank within 252-day history (migration m3c4d5e6f7g8)
+                hv_rank,                    ← Integer 0–100: HV30 rank within 252-day history (migration p1q2r3s4t5u6)
                 UNIQUE(ticker)
 # NOTE: ma20_tp and std20_tp were added (f7a3b2c1d9e6) then dropped (13fb636fe76a) —
 #       MA20_TP center improvement over MA20(close) was negligible (±7 pts on SPX)
@@ -2045,6 +2062,7 @@ Full table by timeframe:
   - `422fb92` — fix: popup header hidden by alert banner — flex column layout, maxHeight, header pinned
   - `a776a81` — fix: move popup to top-right below global header (top: 48px)
   - `d3cc9e1` — fix: HIGH CONVICTION ALERT banner pinned below ticker header (always visible, not scrolled)
+  - `(pending)` — feat: HV Rank column + accumulate_hv_only price_cache fix + one-time HV backfill script (migration p1q2r3s4t5u6)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git

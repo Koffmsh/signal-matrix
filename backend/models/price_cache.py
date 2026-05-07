@@ -39,6 +39,7 @@ class PriceCache(Base):
     skew_rank          = Column(Integer, nullable=True)   # RR rank within 252-day rolling history (0-100)
     put_call_ratio     = Column(Float,  nullable=True)    # total put OI / total call OI
     vrp_rank           = Column(Integer, nullable=True)   # VRP rank within 252-day rolling history (0-100)
+    hv_rank            = Column(Integer, nullable=True)   # HV30 rank within 252-day rolling history (0-100)
     vrp_1d_chg         = Column(Float,   nullable=True)   # VRP change vs 1 trading day ago
     vrp_1w_chg         = Column(Float,   nullable=True)   # VRP change vs 5 trading days ago (≈1 week)
     vrp_1m_chg         = Column(Float,   nullable=True)   # VRP change vs 21 trading days ago (≈1 month)
