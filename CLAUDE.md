@@ -1995,7 +1995,7 @@ Full table by timeframe:
   - `a776a81` — fix: move popup to top-right below global header (top: 48px)
   - `d3cc9e1` — fix: HIGH CONVICTION ALERT banner pinned below ticker header (always visible, not scrolled)
   - `bdaa6f8` — feat: HV Rank column + accumulate_hv_only price_cache fix + one-time HV backfill script (migration p1q2r3s4t5u6)
-  - `(pending)` — feat: v1.9.1 Trade RR BB+Snap formula (dynamic-N, IV-primary HV-fallback, stateful snap; migration q2r3s4t5u6v7)
+  - `f07ed99` — feat: v1.9.1 Trade RR BB+Snap formula (dynamic-N, IV-primary HV-fallback, stateful snap; migration q2r3s4t5u6v7)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
