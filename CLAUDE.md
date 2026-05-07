@@ -256,11 +256,6 @@ Critical issues already resolved — do not reintroduce these bugs:
 - The old duplicate "Vol Signal" row that appeared above OBV Direction was removed — it was a leftover from the price-momentum proxy era
 - **Do not rename** `vol_signal` → `obv_signal` in the DB — "Vol Signal" is the correct trader-facing name
 
-### ATR Buffer Symmetry Fix — Uptrend Normal Case (`conviction_engine.py`)
-- **Problem:** Downtrend normal used `max(MA20, close + 0.5×ATR)` for HRR to prevent the ceiling collapsing to close when price approached MA20 from below. Uptrend normal used `LRR = MA20` exactly — no corresponding buffer. When price pulled back close to MA20 in an uptrend, LRR could sit nearly at close level, providing no meaningful floor.
-- **Fix:** Uptrend normal now uses `min(MA20, close - 0.5×ATR)` for LRR — symmetric with the downtrend HRR buffer. When price is far above MA20, buffer is inactive and LRR = MA20. When price approaches MA20, LRR drops to `close - 0.5×ATR` to maintain meaningful separation.
-- **Rule:** The ATR buffer is symmetric — both sides of the normal case (uptrend LRR, downtrend HRR) use the same 0.5×ATR anchor logic. Do not revert the uptrend case to `LRR = MA20` exactly.
-
 ### Popup Trade Section Order (`App.js`)
 - **Trade Dir and Trade State** are displayed side-by-side in the same row (dual-field `__dual__` renderer)
 - **Order:** Trade Dir | Trade State → Trade LRR → Trade HRR → Trade B → Trade C
@@ -541,12 +536,11 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Code/DB key unchanged:** still `"lt"` everywhere in models and DB; display label only is "Tail"
 - **Trend HRR removed from table and popup** — only one level per Trend/Tail timeframe
 
-### MA20_TP Center Dropped — MA20(close) Is Permanent Center (`conviction_engine.py`, `schwab_market_data.py`)
+### MA20_TP Center Dropped (`conviction_engine.py`, `schwab_market_data.py`) — historical
 - **MA20_TP (typical price center)** was added as a v1.8 interim: TP = (H+L+C)/3 resists downward movement during sell days
 - **Removed (migration `13fb636fe76a`):** TP center improvement over MA20(close) was negligible (±7 pts on SPX). Not worth the schema complexity.
-- `price_cache.ma20_tp` and `price_cache.std20_tp` columns dropped; `conviction_engine.compute_trade_lrr_hrr()` uses `ma20` directly
-- `schwab_market_data._compute_tp_metrics()` function removed; no TP writes anywhere
-- **Rule:** Do not re-add MA20_TP. MA20(close) is the permanent center for the BB LRR/HRR formula.
+- `price_cache.ma20_tp` and `price_cache.std20_tp` columns dropped; `_compute_tp_metrics()` function removed; no TP writes anywhere.
+- **Note (v1.9.1):** v1.8 used MA20(close) as the BB center. v1.9.1 superseded that with dynamic-N MA computed per-run from `closes[-N:]`, where `N` is selected by IV/HV percentile rank. `price_cache.ma20` still populates for legacy/inspection but is not consumed by the trade RR formula. Do not re-add MA20_TP.
 
 ### H/L History 3-Bar Alignment Fix (One-Time Data Migration)
 - **Root cause:** When `history_high_json` / `history_low_json` columns were first added (migration `f7a3b2c1d9e6`), the initial "short" fill started 3 trading days later than the existing close history. Those 3 leading dates never received H/L values, leaving every ticker's H/L array 3 bars shorter than its close array.
@@ -727,7 +721,7 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
   "short"     — gap 6-45 calendar days → 1-month targeted fetch (covers short outages)
   "bootstrap" — no history, < 252 bars, or gap > 45 days → full 5-year fetch
   ```
-- `_append_bar()` — appends close/volume from batch quote to existing `history_json`; recomputes MA20/50/100/200, STD20, spark, ma20_regime from merged history; no API call
+- `_append_bar()` — appends close/volume from batch quote to existing `history_json`; recomputes MA20/50/100/200, STD20, spark from merged history; no API call
 - `_update_quote_only()` — updates close/volume/timestamp only when history already contains today
 - Pre-load all existing cache rows before the ticker loop (one `IN` query) — eliminates another N+1 inside `_schwab_fetch`
 - `time.sleep(0.5)` rate-limit guard only executes when a Schwab history API call is actually made — not on skip/append paths
@@ -1695,12 +1689,13 @@ vol_history:     ticker, iv_date,
                 UNIQUE(ticker, iv_date)
 
 price_cache:    ticker, close, volume, ma20, ma50, ma100, ma200, std20, ma20_regime,
+                                            ← ma20_regime is STALE post v1.9.1 (no longer written or read; column kept for legacy)
                 rel_iv, iv_source, data_source, cache_date,
                 history_json, volume_history_json,
                 history_dates_json, history_high_json, history_low_json,
                 daily_high, daily_low,
                 spark_json, updated_at,
-                atr,                        ← 14-day simple MA of True Range (migration j7e5f3g1h2i0)
+                atr,                        ← 14-day ATR; STALE post v1.9.1 (no longer written or read; column kept for legacy)
                 vov_30d,                    ← Phase 6: 30-day VIX volatility-of-volatility (decimal, e.g. 0.15)
                 vov_rank,                   ← Phase 6: VoV rank within its own 252-day rolling history (0–100)
                 hv30,                       ← annualized realized vol, 21-day (≈30 cal days); decimal (migration l2b3c4d5e6f7)
@@ -2074,7 +2069,7 @@ git checkout -- .   # roll back if needed
 48. **Alembic manages all schema changes** — never modify Supabase tables directly via dashboard
 49. **IV-eligible tickers exclude VIX, $DJI, SPX, NDX** — index options chains have different structure
 50. **data_source column must be written on every price_cache upsert** — 'schwab', 'yahoo', or 'yahoo_fallback'
-51. **MA20 regime (`'uptrend'`/`'downtrend'`) is independent of ABC pivot direction** — do not conflate. Pivots say "what is the structural trend." MA20 regime says "where is price vs MA20 right now." They can disagree.
+51. **`ma20_regime` is no longer computed (v1.9.1)** — was a v1.7/v1.8 concept used by the old ATR-buffer trade RR formula to switch between tight and wide entry-side bands. v1.9.1 replaced that with snap state. The `price_cache.ma20_regime` column still exists in the schema but is never written or read. Don't reintroduce it without a redesign.
 52. **LT timeframe code/DB key stays `"lt"` everywhere** — display label only changes to "Tail" (UI, popup headers, table header). Never rename in models, DB columns, or backend API responses.
 53. **Three independent "extended" concepts — never conflate:**
     - `d_extended` (Boolean field) — D > B + abs(B-C); B becomes break level; drives warn flags and popup `*`; NOT in structural_state
@@ -2106,7 +2101,10 @@ git checkout -- .   # roll back if needed
 76. **Intraday scheduler uses `CronTrigger` — never `"interval"`** — `CronTrigger(day_of_week="mon-fri", hour="9-15", minute="0,15,30,45", timezone="America/New_York")` aligns to clock boundaries, guaranteeing the first fire is exactly 9:30 AM ET. An interval trigger fires relative to container start time and will miss the open if the container starts at an off-minute.
 77. **Trade RR uses v1.9.1 BB+Snap formula** — see "Trade LRR/HRR — v1.9.1 Formula" section. Constants are TOS-validated (`k_extend=2.2, k_max=1.4, k_min=0.4`), not the spec defaults. Vol source is IV-primary (`vol_history.implied_vol`) with HV30 fallback (`vol_history.hv30`). σ stays price-derived. Snap trigger uses **closes** (today's close vs prior 22 closes), never highs/lows. Snap state persists in `signal_output.hrr_snapped/lrr_snapped` — `compute_output` loads prior state before each call. Spec body in `Docs/SignalMatrix_RR_v1_9_1.txt` says "HV-only with IV deferred"; that wording is stale — IV-primary is what ships.
 78. **`compute_trade_lrr_hrr` is pure** — receives `(closes, vol_series, prior_hrr_snapped, prior_lrr_snapped)` and returns `(lrr, hrr, hrr_snapped, lrr_snapped)`. No DB access in the math function. The caller (`compute_output`) handles vol source lookup (`get_trade_rr_vol_series`) and snap state I/O. Cold-start floor: `len(closes) >= 273` (252 rank window + 21 prior bars for oldest HV computation in fallback path).
-79. **ATR + MA20 regime are out of the trade RR path (v1.9.1)** — `price_cache.atr`, `price_cache.ma20`, `price_cache.ma20_regime`, `price_cache.std20` columns remain populated (no schema churn) but `compute_trade_lrr_hrr` no longer reads them. Don't re-add them to the trade-tf branch in `compute_output`.
+79. **ATR + MA20 regime are out of the trade RR path (v1.9.1)** — `compute_trade_lrr_hrr` reads `closes` + `vol_series` only. The columns split into two groups:
+    - **Still updated daily:** `price_cache.ma20`, `ma50`, `ma100`, `ma200`, `std20` — written on every fetch (cheap; useful for popup display, MA200 for Tail Level, future signals).
+    - **Frozen (no longer written):** `price_cache.atr`, `price_cache.ma20_regime` — the writers and computation functions were deleted in the post-v1.9.1 cleanup. Existing rows keep their last-fetched values; new fetches don't touch these columns. Schema kept (no migration needed).
+    - Don't re-add ATR or MA20 regime to the trade-tf branch in `compute_output` without a redesign of the v1.9.1 framework.
 
 ---
 

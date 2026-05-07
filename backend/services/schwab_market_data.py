@@ -112,8 +112,7 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
 def _update_quote_only(existing: PriceCache, close: float, volume: int,
                        today: str, data_source: str,
                        high: float = None, low: float = None) -> None:
-    """Update close/volume/timestamp only — history unchanged (today already stored).
-    Also recomputes ATR so it stays fresh even on same-day skip runs."""
+    """Update close/volume/timestamp only — history unchanged (today already stored)."""
     import pandas as pd
     prices   = json.loads(existing.history_json)       if existing.history_json       else []
     closes_s = pd.Series(prices)
