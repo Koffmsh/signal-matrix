@@ -271,6 +271,8 @@ def run_output(db: Session) -> dict:
                     pivot_c          = tf_data.get("pivot_c"),
                     lrr_extended     = tf_data.get("lrr_extended", False),
                     hrr_extended     = tf_data.get("hrr_extended", False),
+                    hrr_snapped      = bool(tf_data.get("hrr_snapped") or False),
+                    lrr_snapped      = bool(tf_data.get("lrr_snapped") or False),
                     d_extended       = bool(tf_data.get("d_extended") or False),
                     obv_direction    = data.get("obv_direction"),
                     obv_confirming   = data.get("obv_confirming"),
@@ -346,6 +348,8 @@ def snapshot_signals(trigger: str, db: Session) -> dict:
             hrr_warn         = row.hrr_warn,
             pivot_b          = row.pivot_b,
             pivot_c          = row.pivot_c,
+            hrr_snapped      = bool(row.hrr_snapped or False),
+            lrr_snapped      = bool(row.lrr_snapped or False),
             calculated_at    = str(row.calculated_at) if row.calculated_at else None,
             created_at       = now_utc_str,
         ))

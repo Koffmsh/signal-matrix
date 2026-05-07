@@ -25,6 +25,7 @@ import logging
 import numpy as np
 from models.signal_hurst  import SignalHurst
 from models.signal_pivots import SignalPivots
+from models.signal_output import SignalOutput
 from models.price_cache   import PriceCache
 
 logger = logging.getLogger(__name__)
@@ -470,83 +471,229 @@ def _infer_pivot_direction(pivot_row) -> str | None:
 
 # ── Trade timeframe: Bollinger Band LRR/HRR ──────────────────────────────────
 
-def compute_trade_lrr_hrr(ma20: float | None, std20: float | None,
-                           ma20_regime: str | None,
-                           pivot_dir: str | None = None,
-                           close: float | None = None,
-                           atr: float | None = None) -> tuple:
+# ── v1.9.1 Trade RR — BB+Snap framework ──────────────────────────────────────
+# Spec: Docs/SignalMatrix_RR_v1_9_1.txt
+#
+# Replaces v1.8 fixed-N (20) BB formula. Dynamic-N (8-15) BB with stateful
+# snap mechanic on the trailing side that compresses toward MA during impulses.
+# Vol source: IV30 percentile rank (primary) → HV30 rank (fallback).
+# σ stays price-derived; vol rank only drives N selection.
+
+# Locked parameters — TOS-validated values from production tuning.
+# Spec defaults differed (k_extend=2.0, k_max=1.0, k_min=0.3); these reflect
+# k_extend bumped to 2.2 (less leading-side lag) and k_min/k_max widened
+# (0.4/1.4) for smoother snap behavior across SPX/GOOGL/AMZN regimes.
+_RR_RANK_LOOKBACK    = 252
+_RR_SNAP_WINDOW      = 22
+_RR_K_WIDE           = 2.0
+_RR_K_EXTEND         = 2.2   # leading impulse side (opposite the snap)
+_RR_K_MAX            = 1.4   # snap side: max offset from MA
+_RR_K_MIN            = 0.4   # snap side: floor
+_RR_K_DECAY          = 0.5   # how fast k shrinks as proximity grows
+_RR_PROXIMITY_BARS   = 3     # 3-bar EMA on proximity_raw
+
+# 8-bucket lookup, right-inclusive on each upper bound
+_RR_BUCKETS = (
+    (10.0, 8),
+    (20.0, 9),
+    (35.0, 10),
+    (50.0, 11),
+    (64.0, 12),
+    (79.0, 13),
+    (89.0, 14),
+)
+_RR_BUCKET_TOP_N = 15  # for hv_rank > 89
+
+
+def _rr_n_for_rank(rank: float) -> int:
+    """Map vol percentile rank (0–100) to BB window length N (8..15)."""
+    for upper, n in _RR_BUCKETS:
+        if rank <= upper:
+            return n
+    return _RR_BUCKET_TOP_N
+
+
+def _rr_rank_in_window(value: float, window: list[float]) -> float:
+    """Percentile rank of value within window. Returns 50.0 if range is degenerate."""
+    if not window:
+        return 50.0
+    w_min = min(window)
+    w_max = max(window)
+    if w_max <= w_min:
+        return 50.0
+    return ((value - w_min) / (w_max - w_min)) * 100.0
+
+
+def get_trade_rr_vol_series(ticker: str, db) -> tuple[list[float] | None, str | None]:
     """
-    Bollinger Band framework for Trade timeframe.
+    Returns (vol_series, source) where:
+      vol_series = list of vol values (ascending date), at least RR_RANK_LOOKBACK + 3 long
+      source     = 'iv' | 'hv' | None (insufficient history)
 
-    Center:  MA20(close) — standard 20-day simple moving average.
-    Width:   STD20(close) — std(prices[-20:], ddof=0).
-    k_wide = 2.0  (target/exit side — standard 2σ BB, never changes)
-    k_tight = 0.0 (entry side — MA20 exactly; H removed from band width)
-
-    H is calculated and stored in signal_hurst for indicator regime classification
-    (H < 0.45 → oscillators; H > 0.55 → trend-following) but does NOT affect bands.
-
-    Regime flip (2 consecutive closes above/below MA20) switches tight vs wide:
-
-      Uptrend + above MA20 (normal):
-        LRR = min(MA20, close - 0.5×ATR)
-              ATR buffer: when close approaches MA20 from above, ensures LRR
-              sits at least 0.5×ATR below close. Collapses to MA20 when close
-              is far above it (buffer inactive). Mirrors downtrend tight ceiling.
-        HRR = MA20 + 2σ           (BB upper — target)
-
-      Uptrend + below MA20 (counter-trend):
-        LRR = MA20 - 2σ           (BB lower — widens to full band)
-        HRR = MA20 + 2σ           (BB upper — target)
-
-      Downtrend + below MA20 (normal):
-        LRR = MA20 - 2σ           (BB lower — target)
-        HRR = max(MA20, close + 0.5×ATR)
-              ATR buffer: when close approaches MA20 from below, ensures HRR
-              sits at least 0.5×ATR above close. Collapses to MA20 when close
-              is far below it (buffer inactive). Mirror of uptrend tight floor.
-
-      Downtrend + above MA20 (counter-trend / flip):
-        LRR = MA20 - 2σ           (BB lower — target)
-        HRR = MA20 + 2σ           (BB upper — widens to full band)
-
-    Returns (None, None) if any required input is missing.
+    Primary: IV30 from vol_history.implied_vol if >= RR_RANK_LOOKBACK + 3 obs
+    Fallback: HV30 from vol_history.hv30
     """
-    center = ma20
-    vol    = std20
+    from models.vol_history import VolHistory
 
-    if center is None or vol is None:
-        return None, None
-    if vol <= 0:
-        return None, None
+    needed = _RR_RANK_LOOKBACK + 3   # need extra bars for the 3-bar proximity window
 
-    k_wide = 2.0
-    above  = (ma20_regime or "uptrend") == "uptrend"   # close vs MA20(close)
+    iv_rows = (
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.implied_vol.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
+        .limit(needed + 5)
+        .all()
+    )
+    if len(iv_rows) >= needed:
+        values = [r.implied_vol for r in reversed(iv_rows)]
+        return values, "iv"
 
-    if pivot_dir == "downtrend":
-        lrr = round(center - k_wide * vol, 4)
-        if not above:
-            # Normal downtrend: tight HRR = MA20 with ATR buffer near close
-            if atr and close is not None:
-                hrr = round(max(center, close + 0.5 * atr), 4)
-            else:
-                hrr = round(center, 4)
+    hv_rows = (
+        db.query(VolHistory)
+        .filter(VolHistory.ticker == ticker, VolHistory.hv30.isnot(None))
+        .order_by(VolHistory.iv_date.desc())
+        .limit(needed + 5)
+        .all()
+    )
+    if len(hv_rows) >= needed:
+        values = [r.hv30 for r in reversed(hv_rows)]
+        return values, "hv"
+
+    return None, None
+
+
+def compute_trade_lrr_hrr(
+    closes: list[float],
+    vol_series: list[float],
+    prior_hrr_snapped: bool,
+    prior_lrr_snapped: bool,
+) -> tuple:
+    """
+    v1.9.1 Trade RR — BB + Snap.
+
+    Args:
+        closes:       full price history, ascending date order. closes[-1] is
+                      today's EOD close.
+        vol_series:   IV30 or HV30 history aligned to closes. vol_series[-1] is
+                      today's vol value. Length >= 255 (252 rank window + 3
+                      proximity bars).
+        prior_hrr_snapped, prior_lrr_snapped: snap state from yesterday's run.
+
+    Returns:
+        (lrr, hrr, hrr_snapped, lrr_snapped) — bands are floats; snap flags
+        are booleans. Returns (None, None, False, False) on insufficient
+        history.
+    """
+    import math
+
+    # Cold-start guard — need 273+ closes (252 rank window + 21 prior returns
+    # for oldest hv30 if HV path) AND vol_series must cover the rank window
+    # plus 3 proximity bars.
+    if not closes or len(closes) < 273:
+        return None, None, False, False
+    if not vol_series or len(vol_series) < _RR_RANK_LOOKBACK + 3:
+        return None, None, False, False
+
+    # ── Per-bar dynamic N for the last 3 bars (proximity) and today's band ──
+    # vol_series[-1] = today, vol_series[-2] = yesterday, vol_series[-3] = day-before
+    # closes are aligned analogously: closes[-1] = today.
+    bar_offsets = (-3, -2, -1)   # ordered: day-before, yesterday, today
+
+    proximity_raw_bars = []
+    today_n = None
+    today_ma = None
+    today_std = None
+
+    for off in bar_offsets:
+        # Rank window: 252 vol values ending at this bar
+        # vol_series[off] is the value at bar (-1=last). The window is the
+        # 252 values ending at (and including) vol_series[off].
+        end_idx = len(vol_series) + off + 1   # exclusive end
+        start_idx = end_idx - _RR_RANK_LOOKBACK
+        if start_idx < 0:
+            return None, None, False, False
+        window = vol_series[start_idx:end_idx]
+        v_at = vol_series[off]
+        rank_t = _rr_rank_in_window(v_at, window)
+        n_t = _rr_n_for_rank(rank_t)
+
+        # Rolling-N MA + STD on closes ending at this bar
+        c_end = len(closes) + off + 1   # exclusive
+        c_start = c_end - n_t
+        if c_start < 0:
+            return None, None, False, False
+        window_closes = closes[c_start:c_end]
+        ma_n_t = sum(window_closes) / n_t
+
+        # Sample std (ddof=1) — matches ToS StDev() default
+        if n_t > 1:
+            mean = ma_n_t
+            sq_sum = sum((x - mean) ** 2 for x in window_closes)
+            std_n_t = math.sqrt(sq_sum / (n_t - 1))
         else:
-            # Counter-trend flip (2 closes above MA20): widen to BB upper
-            hrr = round(center + k_wide * vol, 4)
+            std_n_t = 0.0
+
+        if std_n_t <= 0:
+            return None, None, False, False
+
+        prox_raw = abs(closes[c_end - 1] - ma_n_t) / std_n_t
+        proximity_raw_bars.append(prox_raw)
+
+        if off == -1:
+            today_n   = n_t
+            today_ma  = ma_n_t
+            today_std = std_n_t
+
+    # ── EMA(3) on the 3 proximity_raw values, alpha=0.5, seed at oldest ──
+    alpha = 2.0 / (_RR_PROXIMITY_BARS + 1)   # = 0.5
+    ema = proximity_raw_bars[0]
+    for v in proximity_raw_bars[1:]:
+        ema = alpha * v + (1 - alpha) * ema
+    proximity = ema
+
+    # k_snap_dyn — clamped to [k_min, k_max]
+    k_snap_dyn = max(_RR_K_MIN, _RR_K_MAX - _RR_K_DECAY * proximity)
+
+    # ── Snap trigger detection (Step 5) ──
+    # Today's close vs the 22 prior closes (closes[-23:-1])
+    today_close       = closes[-1]
+    prior_22_window   = closes[-(_RR_SNAP_WINDOW + 1):-1]
+    prior_22_low      = min(prior_22_window)
+    prior_22_high     = max(prior_22_window)
+    is_22d_low_close  = today_close <= prior_22_low
+    is_22d_high_close = today_close >= prior_22_high
+
+    # ── Snap state update (Step 6) — independent flags ──
+    if is_22d_low_close:
+        hrr_snapped = True
+    elif today_close > today_ma:
+        hrr_snapped = False
     else:
-        # Uptrend
-        hrr = round(center + k_wide * vol, 4)
-        if above:
-            # Normal uptrend: tight LRR = MA20 with ATR buffer near close
-            if atr and close is not None:
-                lrr = round(min(center, close - 0.5 * atr), 4)
-            else:
-                lrr = round(center, 4)
-        else:
-            lrr = round(center - k_wide * vol, 4)  # counter-trend: widen to BB lower
+        hrr_snapped = prior_hrr_snapped
 
-    return lrr, hrr
+    if is_22d_high_close:
+        lrr_snapped = True
+    elif today_close < today_ma:
+        lrr_snapped = False
+    else:
+        lrr_snapped = prior_lrr_snapped
+
+    # Coincidence rule — LRR (uptrend) takes priority
+    if hrr_snapped and lrr_snapped:
+        hrr_snapped = False
+
+    # ── Band computation (Step 8) ──
+    if hrr_snapped:
+        hrr = today_ma + k_snap_dyn * today_std
+        lrr = today_ma - _RR_K_EXTEND * today_std
+    elif lrr_snapped:
+        lrr = today_ma - k_snap_dyn * today_std
+        hrr = today_ma + _RR_K_EXTEND * today_std
+    else:
+        hrr = today_ma + _RR_K_WIDE * today_std
+        lrr = today_ma - _RR_K_WIDE * today_std
+
+    return round(lrr, 4), round(hrr, 4), hrr_snapped, lrr_snapped
 
 
 # ── Trend timeframe: single MA100 level (v1.7 spec §2.8) ─────────────────────
@@ -824,6 +971,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
                 "warning":   False,
                 "lrr_warn":  False, "hrr_warn": False,
                 "lrr_extended": False, "hrr_extended": False,
+                "hrr_snapped": False, "lrr_snapped": False,
                 "pivot_b": None, "pivot_c": None,
             }
             continue
@@ -840,8 +988,26 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
         # ── LRR / HRR by timeframe ───────────────────────────────────────────
         if tf == "trade":
-            lrr, hrr = compute_trade_lrr_hrr(ma20, std20, ma20_regime, pivot_dir,
-                                             close=price, atr=atr)
+            # Load prior snap state from existing signal_output row (yesterday's value)
+            existing_trade_row = db.query(SignalOutput).filter(
+                SignalOutput.ticker    == ticker,
+                SignalOutput.timeframe == "trade",
+            ).first()
+            prior_hrr_snap = bool(getattr(existing_trade_row, "hrr_snapped", False) or False) if existing_trade_row else False
+            prior_lrr_snap = bool(getattr(existing_trade_row, "lrr_snapped", False) or False) if existing_trade_row else False
+
+            # Load vol series (IV primary, HV fallback). Returns None if insufficient.
+            vol_series, vol_source = get_trade_rr_vol_series(ticker, db)
+
+            if vol_series is None or not prices:
+                lrr, hrr, hrr_snapped, lrr_snapped = None, None, False, False
+            else:
+                lrr, hrr, hrr_snapped, lrr_snapped = compute_trade_lrr_hrr(
+                    closes            = prices,
+                    vol_series        = vol_series,
+                    prior_hrr_snapped = prior_hrr_snap,
+                    prior_lrr_snapped = prior_lrr_snap,
+                )
 
             # WARNING: LRR drifted below break level (uptrend) or HRR above break level (downtrend)
             # Break level = C normally; B when d_extended is True.
@@ -872,12 +1038,16 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             warning      = False
             hrr_extended = False
             lrr_extended = False
+            hrr_snapped  = False
+            lrr_snapped  = False
 
         else:  # lt / tail
             lrr, hrr = compute_tail_level(ma200, prices, direction)
             warning      = False
             hrr_extended = False
             lrr_extended = False
+            hrr_snapped  = False
+            lrr_snapped  = False
 
         lrr_warn, hrr_warn = _compute_warn_flags(tf, pivot_dir, lrr, hrr, b, c, d_extended=d_extended, d=d)
 
@@ -892,6 +1062,8 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             "hrr_warn":         hrr_warn,
             "lrr_extended":     lrr_extended,
             "hrr_extended":     hrr_extended,
+            "hrr_snapped":      hrr_snapped,
+            "lrr_snapped":      lrr_snapped,
             "pivot_b":          b,
             "pivot_c":          c,
             "d_extended":       d_extended,

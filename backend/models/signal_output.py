@@ -35,6 +35,8 @@ class SignalOutput(Base):
     quad_alignment   = Column(String(20), nullable=True)  # Aligned | Misaligned | Neutral
     quad_mult        = Column(Float,      nullable=True)  # stored for debugging (informational only in v2.0)
     quad_score       = Column(Integer,    nullable=True)  # additive conviction contribution: +20/+15/0/−11/−15
+    hrr_snapped      = Column(Boolean,    nullable=False, server_default="0")  # v1.9.1 trade RR snap state
+    lrr_snapped      = Column(Boolean,    nullable=False, server_default="0")  # v1.9.1 trade RR snap state
     calculated_at    = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

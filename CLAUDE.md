@@ -463,62 +463,75 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 - Old formula history: v1.6: H-based; v1.7: H_eff×100 + prox; v1.8: base50+prox+OBV+VIX; v1.9: 5-layer multiplier chain — all superseded by v2.0 additive
 
-### Bollinger Band LRR/HRR — v1.8 Formula (MA20 close center + close STD + ATR buffer)
-- **Supersedes:** v1.7 H-modulated k_tight formula and v1.8-interim TP-center formula. All prior sigma/anchor/bc_range/MA20_TP formulas obsolete.
-- **Two k coefficients — fixed, not H-modulated:**
+### Trade LRR/HRR — v1.9.1 Formula (Dynamic-N BB + Snap)
+- **Spec:** `Docs/SignalMatrix_RR_v1_9_1.txt` (authoritative)
+- **Supersedes:** v1.8 fixed-N (20) BB + ATR buffer + MA20-regime switch. ATR + MA20 regime are no longer in the trade RR path. ATR / MA20 / STD20 / `ma20_regime` columns remain on `price_cache` (no schema churn) but stop driving the trade band.
+
+- **Framework:** Dynamic-N Bollinger Band (N from 8 to 15, driven by IV30 percentile rank — HV30 fallback) with stateful snap mechanic on the trailing side that compresses the band toward MA during impulses. EOD-batch: today's `closes[-1]` is today's confirmed close (post-4 PM fetch); the band computed tonight is the operative RR for tomorrow's session. No forward displacement.
+
+- **Constants** (TOS-validated values, hardcoded in `conviction_engine.py`):
   ```
-  k_wide  = 2.0    # target side — standard 2σ BB; never changes
-  k_tight = 0.0    # entry side — MA20(close) exactly; H removed from band width
+  rank_lookback     = 252
+  hv_period_bars    = 21    # 21 returns → HV30 (annualized × √252)
+  snap_window       = 22    # snap trigger window
+  proximity_smooth  = 3     # 3-bar EMA on proximity_raw, α=0.5
+  k_wide            = 2.0   # standard BB multiplier (no snap)
+  k_extend          = 2.2   # leading impulse side (opposite the snap)
+  k_max             = 1.4   # snap side: max offset from MA
+  k_min             = 0.4   # snap side: floor — never collapses below
+  k_decay           = 0.5   # how fast k shrinks as proximity grows
   ```
-  H is still calculated and stored in `signal_hurst` for indicator regime classification
-  (H < 0.45 → oscillators; H > 0.55 → trend-following). H does NOT influence band width.
+  Spec defaults differed (k_extend=2.0, k_max=1.0, k_min=0.3); the constants
+  above reflect post-tuning values that better match Hedgeye visually on SPX/GOOGL/AMZN.
 
-- **Center: MA20(close) — standard 20-day simple moving average of close prices**
-  Stored in `price_cache.ma20`. MA20_TP was tried as an interim center but the improvement
-  over MA20(close) was negligible (±7 pts on SPX) and `ma20_tp` / `std20_tp` columns have
-  been dropped (migration `13fb636fe76a`). MA20(close) is the permanent center.
+- **Vol source — IV-primary, HV-fallback (per ticker):**
+  - **Primary:** IV30 from `vol_history.implied_vol`, ranked over its trailing 252-day window
+  - **Fallback:** HV30 from `vol_history.hv30` when ticker has < 252 IV obs
+  - Per-ticker decision (no source-mixing within one ticker's calc); auto-promotes to IV when enough history accumulates
+  - σ in the bands stays **price-derived** — `std(closes[-N:], ddof=1)` (sample std, matches ToS `StDev()`). IV/HV only drives N selection.
+  - **Note:** spec says HV-only with IV "deferred to post-Schwab phase" — that wording is stale. IV history matured to 266+ days during Phase 5; v1.9.1 ships with IV-primary.
 
-- **STD20: close-based always**
-  `std20 = std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std.
-  Stored in `price_cache.std20` (close-based).
+- **Computation (per spec Steps 1–8):**
+  1. Read 255+ values of IV30 (or HV30 fallback) from `vol_history`, ascending date
+  2. Determine `N_t` for each of last 3 bars (today, yesterday, day-before): rank vol value within its 252-bar trailing window → 8-bucket lookup
+  3. For each of those 3 bars: `ma_N_t = mean(closes[t-N_t+1 : t+1])`, `std_N_t = std(..., ddof=1)`, `proximity_raw[t] = |close[t] − ma_N_t| / std_N_t`
+  4. EMA-3 the 3 `proximity_raw` values (α=0.5, seed = oldest), final value = today's smoothed proximity
+  5. `k_snap_dyn = max(k_min, k_max − k_decay × proximity_smoothed)` — clamped to [0.4, 1.4]
+  6. Snap trigger (today's close vs prior 22 closes): `is_22d_low_close = close[-1] <= min(closes[-23:-1])`; mirror for high
+  7. Update stateful flags from prior values (loaded from `signal_output`); coincidence rule: LRR wins if both True
+  8. Bands: snapped side uses `MA + k_snap_dyn × σ`, opposing side uses `MA + k_extend × σ`; no-snap = `MA ± k_wide × σ`
 
-- **ATR: 14-day simple MA of True Range**
-  `TR[i] = max(H-L, |H-C_prev|, |L-C_prev|)`. Stored in `price_cache.atr`.
-  Added by migration `j7e5f3g1h2i0`. Used in downtrend + normal case HRR to ensure
-  a meaningful ceiling above close when price approaches MA20 from below.
-
-- **Full formula by pivot direction + MA20 regime:**
+- **8-bucket N lookup** (right-inclusive on each upper bound):
   ```
-  center = MA20(close)
-  vol    = STD20(close)
-
-  Structural uptrend + above MA20 (normal):
-    LRR = min(center, close - 0.5 × ATR)          # ATR buffer: ensures LRR sits at least
-                                                   # 0.5×ATR below close; collapses to MA20
-                                                   # when price is far above (buffer inactive)
-    HRR = center + k_wide × vol                    # BB upper — target
-
-  Structural uptrend + below MA20 (counter-trend):
-    LRR = center - k_wide × vol                    # BB lower — widens to full band
-    HRR = center + k_wide × vol                    # BB upper — target
-
-  Structural downtrend + below MA20 (normal):
-    LRR = center - k_wide × vol                    # BB lower — target
-    HRR = max(center, close + 0.5 × ATR)           # ATR buffer: ensures HRR sits at least
-                                                   # 0.5×ATR above close; collapses to MA20
-                                                   # when price is far below (buffer inactive)
-
-  Structural downtrend + above MA20 (counter-trend flip):
-    LRR = center - k_wide × vol                    # BB lower — target
-    HRR = center + k_wide × vol                    # BB upper — widens to full band
+  rank ≤ 10  → N=8     # very low vol regime
+  rank ≤ 20  → N=9
+  rank ≤ 35  → N=10
+  rank ≤ 50  → N=11
+  rank ≤ 64  → N=12
+  rank ≤ 79  → N=13
+  rank ≤ 89  → N=14
+  rank > 89  → N=15    # very high vol regime
   ```
 
-- **MA20 regime switch (2-consecutive-close rule):** independent of ABC pivot direction.
-  1 close on wrong side forgiven; day 2 flips regime. Stored in `price_cache.ma20_regime`.
-  Regime check uses close vs MA20(close).
+- **Snap state — persistent across runs**: `signal_output.hrr_snapped` / `lrr_snapped` BOOLEAN columns (migration `q2r3s4t5u6v7`) + same on `signal_history`. `compute_output()` loads prior values before each call, persists new state after. Each flag updates independently; coincidence rule fires when both would be True simultaneously (vanishingly rare structurally), LRR wins (uptrend bias).
 
-- **Rel IV completely removed from LRR/HRR** — informational display in popup only
-- **MA20 / STD20 / ATR stored in price_cache** — written on every price fetch
+- **Snap trigger uses CLOSES, not high/low** — today's close vs prior 22 closes. Intraday wicks are filtered out — the snap requires the day to actually commit to a 22-day extreme. Per spec Step 5.
+
+- **Cold start:** `len(closes) < 273` (272 + today, where 272 = 252 rank window + 21 oldest HV input bars) → returns `(None, None, False, False)`. Same defensive pattern as the prior insufficient-history path.
+
+- **Function signature change** (v1.8 → v1.9.1):
+  ```python
+  # v1.8:
+  compute_trade_lrr_hrr(ma20, std20, ma20_regime, pivot_dir, close, atr) -> (lrr, hrr)
+  # v1.9.1:
+  compute_trade_lrr_hrr(closes, vol_series, prior_hrr_snapped, prior_lrr_snapped)
+      -> (lrr, hrr, hrr_snapped, lrr_snapped)
+  ```
+  Math function stays pure (no DB I/O). Caller (`compute_output`) handles snap state read/write from `signal_output`. New helper `get_trade_rr_vol_series(ticker, db) -> (vol_series, source)` returns the IV/HV series and which source was used.
+
+- **Helper: `get_trade_rr_vol_series`** in `conviction_engine.py` — queries last ~258 rows of `vol_history` (IV first, HV fallback), returns `(values_ascending, "iv"|"hv"|None)`. Single batched DB call per ticker.
+
+- **Validation** — bands match Hedgeye published RRs within ~0.5% drift on SPX, GOOGL, AMZN visually verified in ToS during spec authoring. The TOS reference indicator uses forward displacement (maN[1]/sdN[1]) to prevent intraday repaint; Signal Matrix uses today's close directly (EOD-batch, no repaint risk) — this produces a one-bar offset relative to ToS plotted band, which is intentional and correct.
 
 ### Trend Level and Tail Level — Single MA (v1.7, replaces dual LRR/HRR for Trend and LT)
 - **Supersedes:** Dual Trend LRR/HRR and LT LRR/HRR bands — only one level per timeframe now
@@ -846,7 +859,8 @@ signal-matrix/
 │   │       ├── cc64e88accc0_merge_heads.py                                      ← merge two divergent heads before new revision
 │   │       ├── 312d2abdf53d_vol_history_implied_vol_nullable.py                 ← vol_history.implied_vol nullable (allows HV-only rows)
 │   │       ├── o1p2q3r4s5t6_signal_output_add_quad_score.py                    ← added signal_output.quad_score (Integer) — v2.0 additive contribution
-│   │       └── p1q2r3s4t5u6_price_cache_add_hv_rank.py                          ← added price_cache.hv_rank (Integer 0–100)
+│   │       ├── p1q2r3s4t5u6_price_cache_add_hv_rank.py                          ← added price_cache.hv_rank (Integer 0–100)
+│   │       └── q2r3s4t5u6v7_add_snap_state_columns.py                           ← v1.9.1 hrr_snapped / lrr_snapped on signal_output + signal_history
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -1555,103 +1569,19 @@ NOT $427.13 (stale C)
 **Uptrend:** Enter at LRR, target HRR (above D)
 **Downtrend:** Enter at HRR (bounce), target LRR (below D)
 
-### LRR / HRR Formula — Bollinger Band Framework v1.8 (`conviction_engine.py`)
+### LRR / HRR Formula — Bollinger Band + Snap Framework v1.9.1 (`conviction_engine.py`)
 
-**SUPERSEDES:** v1.7 H-modulated formula. All prior sigma/anchor/bc_range formulas obsolete. Do not use.
+**SUPERSEDES:** v1.8 fixed-N (20) BB + ATR buffer + MA20-regime switch. ATR/MA20-regime no longer drive the trade band; their columns remain on `price_cache` for legacy/inspection purposes only. See full v1.9.1 doc above ("Trade LRR/HRR — v1.9.1 Formula").
 
-#### Inputs
-```python
-MA20        = 20-day simple MA of close prices                 # stored in price_cache.ma20 (center + regime check)
-STD20       = std(prices[-20:], ddof=0)                        # close-based std
-ATR         = 14-day simple MA of True Range                   # stored in price_cache.atr
-pivot_dir   = 'uptrend' | 'downtrend' | None                   # from ABC pivot structure
-ma20_regime = 'uptrend' | 'downtrend'                          # stored in price_cache.ma20_regime
-# Note: H_trend still computed and stored but NOT used in band formula (v1.8 change)
-# Note: ma20_tp / std20_tp were dropped (migration 13fb636fe76a) — improvement was negligible
-```
+**Authoritative spec:** `Docs/SignalMatrix_RR_v1_9_1.txt`. Constants are TOS-validated values, not the spec defaults — see top of `conviction_engine.py` for current values.
 
-#### k Coefficients — Fixed (v1.8: H removed from band width)
-```python
-k_wide  = 2.0    # standard 2σ BB — target side, never changes
-k_tight = 0.0    # entry side — MA20 exactly; H does not modulate this
-
-# H is still computed + stored (signal_hurst.h_trade / h_trend) for:
-#   H < 0.45 → mean-reverting regime → use oscillators (RSI, Stochastics)
-#   H > 0.55 → trending regime → use trend-following indicators (MA, momentum)
-# H does NOT affect LRR, HRR, or band width.
-```
-
-#### Center: MA20(close)
-```python
-center = ma20   # 20-day simple MA of close prices; stored in price_cache.ma20
-vol    = std20  # close-based std: std(prices[-20:], ddof=0)
-```
-
-#### MA20 Price Regime Switch — 2-Consecutive-Close Rule
-```
-regime = "uptrend"   if 2+ consecutive closes ABOVE MA20(close)
-regime = "downtrend" if 2+ consecutive closes BELOW MA20(close)
-```
-- Independent of ABC pivot structural direction. Pivots say "what is the structural trend." Regime says "where is price vs MA20 right now."
-- 1 close on wrong side of MA20 is forgiven. Day 2 flips regime.
-- Stored in `price_cache.ma20_regime` — written on every price fetch
-
-#### LRR/HRR Formulas — Pivot Direction + Regime Switch (v1.8)
-```python
-# Structural uptrend + above MA20 (normal):
-LRR = min(center, close - 0.5 × atr)     # ATR buffer: meaningful floor below close;
-                                           # collapses to MA20 when close is far above
-HRR = center + k_wide × vol               # BB upper — target
-
-# Structural uptrend + below MA20 (counter-trend):
-LRR = center - k_wide × vol               # BB lower — widens to full band
-HRR = center + k_wide × vol               # BB upper — target
-
-# Structural downtrend + below MA20 (normal):
-LRR = center - k_wide × vol               # BB lower — target
-HRR = max(center, close + 0.5 × atr)     # ATR buffer: meaningful ceiling above close;
-                                           # collapses to MA20 when close is far below
-
-# Structural downtrend + above MA20 (counter-trend flip):
-LRR = center - k_wide × vol               # BB lower — target
-HRR = center + k_wide × vol               # BB upper — widens to full band
-```
-
-#### Role Summary
-```
-Uptrend + above MA20 (normal):          LRR = min(MA20, close - 0.5×ATR),    HRR = BB upper (target)
-Uptrend + below MA20 (counter-trend):   LRR = BB lower (wide),               HRR = BB upper (target)
-Downtrend + below MA20 (normal):        LRR = BB lower (target),              HRR = max(MA20, close+0.5×ATR)
-Downtrend + above MA20 (counter-trend): LRR = BB lower (target),              HRR = BB upper (wide)
-```
-k_wide always defines the target/exit side. Entry side uses ATR buffer anchored to MA20.
-
-#### ATR Buffer Behavior (symmetric on both sides)
-**Uptrend normal — LRR buffer:**
-- When close is far above MA20: `close - 0.5×ATR` > MA20 → LRR = MA20
-- When close approaches MA20 (within 0.5×ATR from above): buffer kicks in → LRR = close - 0.5×ATR
-- Ensures LRR always provides a meaningful floor below close, even during pullbacks to MA20
-
-**Downtrend normal — HRR buffer:**
-- When close is far below MA20: `close + 0.5×ATR` < MA20 → HRR = MA20
-- When close approaches MA20 (within 0.5×ATR from below): buffer kicks in → HRR = close + 0.5×ATR
-- Ensures HRR always provides a meaningful ceiling above close, even during bounces to MA20
-
-- ATR = 14-day simple MA of True Range; stored in `price_cache.atr`
-
-#### Self-Correction Property
-When close drops below LRR → tomorrow's MA20 falls → LRR follows MA20 downward automatically. Formula self-heals within 1–3 sessions.
-
-#### Daily Overshoot Flag (Tactical — Separate from Structural EXTENDED)
+#### Daily Overshoot Flag (Tactical — Unrelated to Snap)
 ```python
 # uptrend:   if today_close > prior_hrr → hrr_extended = True  (↑ flag, "do not chase" tooltip)
 # downtrend: if today_close < prior_lrr → lrr_extended = True  (↓ flag, "do not chase" tooltip)
 # Stored in signal_output.lrr_extended / hrr_extended (Boolean)
-# State cell still shows UPTREND_VALID / DOWNTREND_VALID — NOT the structural EXTENDED state
+# Independent of hrr_snapped/lrr_snapped — different concept.
 ```
-
-#### STD20
-`std(prices[-20:], ddof=0)` — standard Bollinger Band price-level std. Written to `price_cache.std20` on every price fetch.
 
 ### Structural States
 
@@ -1733,6 +1663,8 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 quad_alignment,             ← 'Aligned' | 'Misaligned' | 'Neutral' — quad alignment (stored for popup/debug and Q FIT); NOT viewpoint-dependent in v2.0
                 quad_mult,                  ← Float — informational only in v2.0 (stored for debug only); not applied in additive formula; not shown in popup
                 quad_score,                 ← Integer — additive conviction contribution: +20/+15/0/−11/−15; shown in popup (v2.0)
+                hrr_snapped,                ← Boolean — v1.9.1 trade RR snap state (HRR side, persistent across runs)
+                lrr_snapped,                ← Boolean — v1.9.1 trade RR snap state (LRR side, persistent across runs)
                 calculated_at
                 UNIQUE(ticker, timeframe)
 
@@ -2063,6 +1995,7 @@ Full table by timeframe:
   - `a776a81` — fix: move popup to top-right below global header (top: 48px)
   - `d3cc9e1` — fix: HIGH CONVICTION ALERT banner pinned below ticker header (always visible, not scrolled)
   - `bdaa6f8` — feat: HV Rank column + accumulate_hv_only price_cache fix + one-time HV backfill script (migration p1q2r3s4t5u6)
+  - `(pending)` — feat: v1.9.1 Trade RR BB+Snap formula (dynamic-N, IV-primary HV-fallback, stateful snap; migration q2r3s4t5u6v7)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
@@ -2171,6 +2104,9 @@ git checkout -- .   # roll back if needed
 74. **Intraday monitor uses `schwab_fetch_intraday_quotes` — never `schwab_fetch_all`** — `schwab_fetch_all()` has an idempotency check that freezes `price_cache.close` after the first same-day call. `schwab_fetch_intraday_quotes()` always calls `get_quotes()`, uses `lastPrice` only, and does not update `cache_date`. Swapping them silently breaks the 15-minute price refresh.
 75. **Never call `calculate_signals()` intraday** — pivot states require confirmed EOD closes; running signals intraday produces false BREAK_OF_TRADE states. The intraday monitor is purely observational.
 76. **Intraday scheduler uses `CronTrigger` — never `"interval"`** — `CronTrigger(day_of_week="mon-fri", hour="9-15", minute="0,15,30,45", timezone="America/New_York")` aligns to clock boundaries, guaranteeing the first fire is exactly 9:30 AM ET. An interval trigger fires relative to container start time and will miss the open if the container starts at an off-minute.
+77. **Trade RR uses v1.9.1 BB+Snap formula** — see "Trade LRR/HRR — v1.9.1 Formula" section. Constants are TOS-validated (`k_extend=2.2, k_max=1.4, k_min=0.4`), not the spec defaults. Vol source is IV-primary (`vol_history.implied_vol`) with HV30 fallback (`vol_history.hv30`). σ stays price-derived. Snap trigger uses **closes** (today's close vs prior 22 closes), never highs/lows. Snap state persists in `signal_output.hrr_snapped/lrr_snapped` — `compute_output` loads prior state before each call. Spec body in `Docs/SignalMatrix_RR_v1_9_1.txt` says "HV-only with IV deferred"; that wording is stale — IV-primary is what ships.
+78. **`compute_trade_lrr_hrr` is pure** — receives `(closes, vol_series, prior_hrr_snapped, prior_lrr_snapped)` and returns `(lrr, hrr, hrr_snapped, lrr_snapped)`. No DB access in the math function. The caller (`compute_output`) handles vol source lookup (`get_trade_rr_vol_series`) and snap state I/O. Cold-start floor: `len(closes) >= 273` (252 rank window + 21 prior bars for oldest HV computation in fallback path).
+79. **ATR + MA20 regime are out of the trade RR path (v1.9.1)** — `price_cache.atr`, `price_cache.ma20`, `price_cache.ma20_regime`, `price_cache.std20` columns remain populated (no schema churn) but `compute_trade_lrr_hrr` no longer reads them. Don't re-add them to the trade-tf branch in `compute_output`.
 
 ---
 
