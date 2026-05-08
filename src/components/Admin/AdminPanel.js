@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { useRef, useEffect } from "react";
 import TickerList from "./TickerList";
 import QuadSetup from "./QuadSetup";
+import UserList from "./UserList";
+import { useAuth } from "../../context/AuthContext";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
@@ -18,59 +18,8 @@ const S = {
 const TABS = [
   { label: "TICKERS",    path: "tickers" },
   { label: "QUAD SETUP", path: "quad"    },
+  { label: "USERS",      path: "users"   },
 ];
-
-// ── Password Gate ─────────────────────────────────────────────────────────────
-function PasswordGate({ onSuccess }) {
-  const [pw, setPw]       = useState("");
-  const [error, setError] = useState(false);
-  const inputRef          = useRef(null);
-
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const attempt = () => {
-    const envPw = process.env.REACT_APP_ADMIN_PASSWORD;
-    if (!envPw)    { setError(true); return; }
-    if (pw === envPw) {
-      onSuccess();
-    } else {
-      setError(true);
-      setPw("");
-      setTimeout(() => setError(false), 1500);
-    }
-  };
-
-  return (
-    <div style={{ ...S.page, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "#0a1422", border: "1px solid #1a3050", borderRadius: "4px", padding: "40px 48px", textAlign: "center", minWidth: "320px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", justifyContent: "center", marginBottom: "28px" }}>
-          <div style={{ width: "6px", height: "28px", background: "linear-gradient(180deg, #00e5a0, #0077ff)", borderRadius: "2px" }} />
-          <div>
-            <div style={{ fontSize: "15px", fontWeight: "700", letterSpacing: "0.15em", color: "#e8f4ff" }}>SIGNAL MATRIX</div>
-            <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.2em" }}>ADMIN ACCESS</div>
-          </div>
-        </div>
-        <input
-          ref={inputRef}
-          type="password"
-          value={pw}
-          onChange={e => setPw(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && attempt()}
-          placeholder="Enter password"
-          style={{ ...S.input, marginBottom: "12px", padding: "8px 12px", fontSize: "13px", border: `1px solid ${error ? "#ff4d6d" : "#1a2e45"}`, transition: "border 0.2s" }}
-        />
-        {error && (
-          <div style={{ fontSize: "10px", color: "#ff4d6d", marginBottom: "10px", letterSpacing: "0.05em" }}>
-            {!process.env.REACT_APP_ADMIN_PASSWORD ? "REACT_APP_ADMIN_PASSWORD not set in .env" : "Incorrect password"}
-          </div>
-        )}
-        <button onClick={attempt} style={{ ...S.saveBtn, width: "100%", padding: "8px", fontSize: "11px" }}>
-          ENTER
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // ── Tab nav ───────────────────────────────────────────────────────────────────
 function TabNav() {
@@ -110,10 +59,13 @@ function TabNav() {
 
 // ── Admin shell ───────────────────────────────────────────────────────────────
 export default function AdminPanel() {
-  const [authed, setAuthed] = useState(false);
-  const navigate             = useNavigate();
+  const navigate    = useNavigate();
+  const { logout }  = useAuth();
 
-  if (!authed) return <PasswordGate onSuccess={() => setAuthed(true)} />;
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login");
+  };
 
   return (
     <div style={S.page}>
@@ -129,7 +81,10 @@ export default function AdminPanel() {
             <div style={{ fontSize: "9px", color: "#8899aa", letterSpacing: "0.2em" }}>ADMINISTRATION</div>
           </div>
         </div>
-        <button style={S.backBtn} onClick={() => navigate("/")}>← DASHBOARD</button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button style={S.backBtn} onClick={() => navigate("/")}>← DASHBOARD</button>
+          <button style={S.backBtn} onClick={handleLogout}>LOGOUT</button>
+        </div>
       </div>
 
       {/* Tab nav */}
@@ -139,6 +94,7 @@ export default function AdminPanel() {
       <Routes>
         <Route path="tickers" element={<TickerList />} />
         <Route path="quad"    element={<QuadSetup />} />
+        <Route path="users"   element={<UserList />} />
         <Route path="*"       element={<Navigate to="tickers" replace />} />
       </Routes>
     </div>

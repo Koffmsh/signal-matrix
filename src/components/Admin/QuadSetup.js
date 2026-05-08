@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+import { apiFetch } from "../../services/api";
 
 const QUAD_COLORS = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
 
@@ -99,9 +99,8 @@ function MonthRow({ month, initialQuad, initialProb }) {
     const probVal = parseFloat(p);
     if (isNaN(probVal) || probVal < 0 || probVal > 100) return;
     setSaveStatus("saving");
-    fetch(`${API_BASE}/api/quad/settings`, {
+    apiFetch(`/api/quad/settings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         country:        "US",
         forecast_month: month.key,
@@ -110,7 +109,11 @@ function MonthRow({ month, initialQuad, initialProb }) {
         quad_type:      "monthly",
       }),
     })
-      .then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail || r.status); }); return r.json(); })
+      .then(r => {
+        if (!r) throw new Error("unauthorized");
+        if (!r.ok) return r.json().then(e => { throw new Error(e.detail || r.status); });
+        return r.json();
+      })
       .then(() => {
         setSaveStatus("ok");
         setTimeout(() => setSaveStatus(null), 2000);
@@ -179,9 +182,8 @@ function CountryRow({ country, quarters, initialData }) {
   const handleSelect = (quarterKey, n) => {
     setQuads(prev => ({ ...prev, [quarterKey]: n }));
     setStatuses(prev => ({ ...prev, [quarterKey]: "saving" }));
-    fetch(`${API_BASE}/api/quad/settings`, {
+    apiFetch(`/api/quad/settings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         country:        code,
         forecast_month: quarterKey,
@@ -190,7 +192,11 @@ function CountryRow({ country, quarters, initialData }) {
         quad_type:      "quarterly",
       }),
     })
-      .then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail || r.status); }); return r.json(); })
+      .then(r => {
+        if (!r) throw new Error("unauthorized");
+        if (!r.ok) return r.json().then(e => { throw new Error(e.detail || r.status); });
+        return r.json();
+      })
       .then(() => {
         setStatuses(prev => ({ ...prev, [quarterKey]: "ok" }));
         setTimeout(() => setStatuses(prev => ({ ...prev, [quarterKey]: null })), 2000);
@@ -227,12 +233,12 @@ export default function QuadSetup() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API_BASE}/api/quad/settings?country=US&type=monthly`).then(r => r.json()),
-      fetch(`${API_BASE}/api/quad/settings?country=ALL&type=quarterly`).then(r => r.json()),
+      apiFetch(`/api/quad/settings?country=US&type=monthly`).then(r => r ? r.json() : []),
+      apiFetch(`/api/quad/settings?country=ALL&type=quarterly`).then(r => r ? r.json() : []),
     ])
       .then(([monthly, quarterly]) => {
-        setMonthlyData(monthly);
-        setQuarterlyData(quarterly);
+        setMonthlyData(monthly || []);
+        setQuarterlyData(quarterly || []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));

@@ -1,6 +1,5 @@
 #!/bin/bash
-# Read password directly from .env — avoids BOM and ! history-expansion issues
-REACT_APP_ADMIN_PASSWORD=$(grep -m1 'REACT_APP_ADMIN_PASSWORD=' .env | cut -d'=' -f2-)
-
-fly deploy --config fly.web.toml --app signal-matrix-web \
-  --build-arg "REACT_APP_ADMIN_PASSWORD=${REACT_APP_ADMIN_PASSWORD}"
+# Web deploy — REACT_APP_API_URL is baked at build time via fly.web.toml [build.args].
+# REACT_APP_ADMIN_PASSWORD removed: replaced by the JWT cookie auth layer
+# (see Docs/Auth_User_Management_Spec_v1.0.md).
+fly deploy --config fly.web.toml --app signal-matrix-web

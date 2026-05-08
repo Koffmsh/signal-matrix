@@ -21,6 +21,8 @@ import models.scheduler_log         # noqa: E402
 import models.ticker                # noqa: E402
 import models.schwab_tokens         # noqa: E402
 import models.vol_history           # noqa: E402
+import models.user                  # noqa: E402
+import models.password_reset_token  # noqa: E402
 
 # ── Alembic config ─────────────────────────────────────────────────────────────
 config = context.config

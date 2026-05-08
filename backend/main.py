@@ -1,16 +1,21 @@
+import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from database import engine, Base, SQLALCHEMY_DATABASE_URL
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from database import engine, Base, SQLALCHEMY_DATABASE_URL, SessionLocal
 from routers import market_data, signals
 from routers.scheduler import router as scheduler_router
 from routers.tickers import router as tickers_router, seed_tickers_if_empty
-from routers.auth import router as auth_router
+from routers.auth import schwab_router, router as auth_router, limiter as auth_limiter
+from routers.users import router as users_router
 from routers.quad import router as quad_router
 from routers.vol import router as vol_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from database import SessionLocal
 import models.signal_hurst    # ensure tables are registered before create_all
 import models.signal_pivots   # Task 3.2 — signal_pivots table
 import models.signal_output   # Task 3.3 — signal_output table
@@ -20,10 +25,15 @@ import models.ticker          # Task 4.6 — tickers table
 import models.schwab_tokens   # Task 5.1 — schwab_tokens table
 import models.vol_history     # renamed from iv_history — stores all vol metrics (IV + HV)
 import models.quad_settings   # v1.9 — quad_settings table
+import models.user                  # Auth — users table
+import models.password_reset_token  # Auth — password_reset_tokens table
 import services.scheduler as scheduler_svc
+from services.auth_service import seed_admin_if_empty, get_user_from_token, COOKIE_NAME
 import logging
 
 logging.basicConfig(level=logging.INFO)
+
+IS_PRODUCTION = os.getenv("ENVIRONMENT", "development") == "production"
 
 # Create all database tables on startup
 Base.metadata.create_all(bind=engine)
@@ -70,10 +80,10 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Seed tickers table on first startup
     db: Session = SessionLocal()
     try:
         seed_tickers_if_empty(db)
+        seed_admin_if_empty(db)
     finally:
         db.close()
     scheduler_svc.start()
@@ -87,7 +97,14 @@ app = FastAPI(
     description="Market data backend for Signal Matrix Platform",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
+
+# slowapi rate limiter (used by auth router)
+app.state.limiter = auth_limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -100,11 +117,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Session middleware ───────────────────────────────────────────────────────
+PUBLIC_PATHS = {
+    "/",
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/auth/register",
+    "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/check",
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
+    "/api/auth/schwab/callback",   # Schwab OAuth — never gate
+    "/api/auth/schwab/login",      # Initiates Schwab OAuth
+}
+
+
+@app.middleware("http")
+async def session_middleware(request: Request, call_next):
+    if request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    # Allow CORS preflight to pass through unauthenticated
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    db = SessionLocal()
+    try:
+        user = get_user_from_token(token, db)
+    finally:
+        db.close()
+
+    if not user or user.status != "active":
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    request.state.user = user
+    return await call_next(request)
+
+
 app.include_router(market_data.router)
 app.include_router(signals.router)
 app.include_router(scheduler_router)
 app.include_router(tickers_router)
+app.include_router(schwab_router)
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(quad_router)
 app.include_router(vol_router)
 

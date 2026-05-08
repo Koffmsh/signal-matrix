@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from services.auth_service import require_admin_user
 from sqlalchemy.orm import Session, load_only
 from database import get_db
 from models.price_cache import PriceCache
@@ -302,12 +303,14 @@ def get_cached(db: Session = Depends(get_db)):
 
 
 @router.get("/batch")
-def get_batch(db: Session = Depends(get_db)):
+def get_batch(request: Request, db: Session = Depends(get_db)):
     """
     Fetch market data for all active tickers.
     Tries Schwab first; falls back to Yahoo Finance.
     Only called by the REFRESH DATA button — never on page load.
+    Admin-only — full Schwab+Yahoo fetch is expensive; viewers see cached data.
     """
+    require_admin_user(request, db)
     return refresh_data(db)
 
 

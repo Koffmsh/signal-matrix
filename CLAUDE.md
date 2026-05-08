@@ -778,6 +778,27 @@ Buttons change color to communicate data/signal state — no separate status dot
 - Both go grey with "⟳ LOADING..." text while running; REFRESH DATA also shows "⟳ LOADING..." during initial page load
 - `calculated_at` exposed in `/api/signals/stored` response for freshness comparison
 - Freshness logic lives in the button render block in `App.js`
+- **Admin-only:** both buttons are hidden for non-admin users (`isAdmin` check in App.js); backend endpoints `/api/market-data/batch` and `/api/signals/calculate` enforce the same with `require_admin_user`
+
+### Auth & User Management — JWT Cookie + RBAC ✅
+- Replaced `REACT_APP_ADMIN_PASSWORD` (shared client-side gate) with full session-auth layer
+- JWT in httpOnly cookie (`sm_session`), 12-hour expiry, `samesite="lax"`, `secure=IS_PRODUCTION`
+- Two new tables: `users`, `password_reset_tokens` (UUID primary keys; SQLAlchemy stores as TEXT in SQLite, native UUID in Postgres)
+- Two new routers: `routers/auth.py` (renamed existing `router` → `schwab_router`, added new JWT auth `router`) and `routers/users.py` (admin-only user CRUD)
+- New service: `services/auth_service.py` — bcrypt hashing, JWT encode/decode, password strength validation, reset tokens, `seed_admin_if_empty`, `require_admin_user` dependency
+- Self-registration → `pending` state → admin approval → `active` flow
+- Password reset via email link; 15-minute token TTL; reset-tokens are one-shot (consume marks `used=True`)
+- Admin Users tab at `/admin/users` (UserList.js): list / activate / disable / change role / reset password (admin-side, no email)
+- Self-protection guards in admin endpoints: cannot disable own account, cannot demote self from admin
+- Session middleware in `main.py` checks cookie → user → status on every request; `PUBLIC_PATHS` set covers auth endpoints + Schwab OAuth callback + `/health` + `/`
+- slowapi rate limits: register 3/hour, login 5/5min, forgot-password 3/hour, reset-password 5/hour
+- Recovery: `backend/scripts/reset_admin.py` (idempotent — creates or resets admin from `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars). Run via `fly ssh console --app signal-matrix-api -C "python -m scripts.reset_admin"`. Documented in `Docs/RUNBOOK_AUTH_RECOVERY.md`.
+- `Base.metadata.create_all()` in `main.py` creates auth tables at startup; alembic migrations are guarded with `if "table_name" not in inspector.get_table_names()` so `alembic upgrade head` post-deploy is idempotent and just stamps the version table.
+- New env vars: `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME`, `ENVIRONMENT`, `APP_BASE_URL` (defaults to `https://signal.suttonmc.com`; local `.env` sets to `http://localhost:3000` for email-link clickthrough during dev).
+- Removed env var: `REACT_APP_ADMIN_PASSWORD` (and accompanying `Dockerfile.web.fly` build arg, `deploy-web.sh` plumbing).
+- Logout clears cookie only; JWT remains valid until natural expiry. To force-revoke a session, set `users.status = "disabled"` — middleware blocks every subsequent request from that user.
+- Frontend: `AuthProvider` (top-level wrapper in `App.js`), `apiFetch` (in `services/api.js`; auto-redirects to `/login` on 401), `ProtectedRoute` (in `components/shared/ProtectedRoute.js`; supports `requireAdmin` prop). Header dropdown displays "Signed in as / email / role badge" + admin panel link (admin only) + sign out.
+- See `Docs/Auth_User_Management_Spec_v1.0.md` for full spec including deferred decisions (token blocklist, useApiFetch hook, Cloudflare WAF rate limiting).
 
 ---
 
@@ -2105,6 +2126,18 @@ git checkout -- .   # roll back if needed
     - **Still updated daily:** `price_cache.ma20`, `ma50`, `ma100`, `ma200`, `std20` — written on every fetch (cheap; useful for popup display, MA200 for Tail Level, future signals).
     - **Frozen (no longer written):** `price_cache.atr`, `price_cache.ma20_regime` — the writers and computation functions were deleted in the post-v1.9.1 cleanup. Existing rows keep their last-fetched values; new fetches don't touch these columns. Schema kept (no migration needed).
     - Don't re-add ATR or MA20 regime to the trade-tf branch in `compute_output` without a redesign of the v1.9.1 framework.
+80. **Cookie config: `secure=IS_PRODUCTION`, `samesite="lax"`** — never hardcode `secure=True` (breaks local dev cookies on `http://localhost:3000`) or `samesite="strict"` (breaks password reset email link clickthroughs). `IS_PRODUCTION` is `os.getenv("ENVIRONMENT") == "production"`.
+81. **Live DB role check in admin endpoints** — `require_admin_user(request, db)` (in `services/auth_service.py`) re-fetches the user from DB and checks `user.role == "admin"`. Never trust the JWT role payload directly (it can be stale up to 12h after a demotion). Use this dependency on every admin-only endpoint (`/api/users/*`, `/api/signals/calculate`, `/api/market-data/batch`).
+82. **`/api/auth/check`, `/api/auth/login`, `/api/auth/logout` use raw `fetch` in `AuthContext.js`** — never `apiFetch`. `/check` returns 200 with `{authenticated: false}` when not logged in (never 401), so the apiFetch 401-redirect path could otherwise loop. Auth pages (`/register`, `/forgot-password`, `/reset-password`) also use raw fetch since the user isn't authenticated yet.
+83. **No approval email to new users** — admin manually activates users via `/admin/users` and notifies them out of band. Do not add an automatic approval email without explicit instruction.
+84. **Recovery: Supabase direct edit is the documented Path 1** — see `Docs/RUNBOOK_AUTH_RECOVERY.md`. Path 2 is the `python -m scripts.reset_admin` recovery script via `fly ssh console`. Path 3 is nuke-and-reseed (last resort).
+85. **Logout is cookie-clear only — JWT remains valid until natural expiry (12h max)** — `POST /api/auth/logout` deletes the cookie client-side. The JWT itself is not blocklisted. For true session revocation (e.g., compromised account), set `users.status = "disabled"` in admin — the middleware checks status on every request and rejects disabled users immediately. See "Deferred decisions" in `Docs/Auth_User_Management_Spec_v1.0.md`.
+86. **`apiFetch` is a static function, not a hook** — hard navigation on 401 (`window.location.href = "/login"`) is intentional. Do not refactor to a `useApiFetch` hook. See "Deferred decisions" in `Docs/Auth_User_Management_Spec_v1.0.md`.
+87. **Email links in `email_alert.py` use `APP_BASE_URL` env var** — defaults to `https://signal.suttonmc.com` if unset. Local `.env` overrides to `http://localhost:3000` so reset/registration emails clickthrough to local during dev. Never hardcode the production URL.
+88. **JWT_SECRET MUST differ between local dev and production** — local in `.env`, production in Fly.io secrets. Never reuse. Rotating JWT_SECRET invalidates every existing session cookie (forces re-login) but does not affect user accounts.
+89. **Local Docker connects to PRODUCTION Supabase** — `SUPABASE_CONNECTION_STRING` in `.env` points at the same DB as production. There is no separate local DB. Therefore: every local backend test/registration writes to production. When iterating on auth or any DB-touching feature, expect test users to appear in production. Clean up test fixtures before and after.
+90. **Idempotent migrations for new tables** — `Base.metadata.create_all()` runs at startup and creates any new tables from SQLAlchemy models, BEFORE alembic gets a chance to run on a fresh deploy. New `op.create_table` migrations must guard with `if "table_name" not in inspector.get_table_names(): ...` (see `add_users_table.py` / `add_password_reset_tokens_table.py` for the pattern). Otherwise `alembic upgrade head` after deploy fails with "table already exists".
+91. **`REFRESH DATA` and `CALCULATE SIGNALS` are admin-only** — both UI buttons (gated by `isAdmin` in App.js) and backend endpoints (`/api/market-data/batch`, `/api/signals/calculate` use `require_admin_user`). Viewers see cached data via `/api/market-data/cached` and `/api/signals/stored`; they cannot trigger expensive recalcs.
 
 ---
 

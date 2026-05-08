@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { apiFetch } from "../../services/api";
 
-const API = `${process.env.REACT_APP_API_URL || "http://localhost:8000"}/api/tickers`;
+const API_PATH = "/api/tickers";
 
 // ── Field mapping ─────────────────────────────────────────────────────────────
 const fromApi = (r) => ({
@@ -155,9 +156,9 @@ export default function TickerList() {
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
 
   useEffect(() => {
-    fetch(API)
-      .then(r => r.json())
-      .then(data => setRows(data.map(fromApi)))
+    apiFetch(API_PATH)
+      .then(r => r ? r.json() : null)
+      .then(data => { if (data) setRows(data.map(fromApi)); })
       .catch(() => showToast("Failed to load tickers"));
   }, []);
 
@@ -169,7 +170,8 @@ export default function TickerList() {
     if (row._isNew) {
       if (field === "ticker" && value) {
         try {
-          const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toApi(row)) });
+          const res = await apiFetch(API_PATH, { method: "POST", body: JSON.stringify(toApi(row)) });
+          if (!res) return;
           if (res.status === 409) { showToast(`${value} already exists`); setRows(rows); return; }
           if (!res.ok) throw new Error();
           setRows(prev => prev.map((r, i) => i === idx ? { ...r, _isNew: false } : r));
@@ -180,8 +182,8 @@ export default function TickerList() {
     }
 
     try {
-      const res = await fetch(`${API}/${row.ticker}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toApi(row)) });
-      if (!res.ok) throw new Error();
+      const res = await apiFetch(`${API_PATH}/${row.ticker}`, { method: "PUT", body: JSON.stringify(toApi(row)) });
+      if (!res || !res.ok) throw new Error();
       showToast("Saved");
     } catch { showToast("Error saving"); }
   };
@@ -196,7 +198,8 @@ export default function TickerList() {
     setLookupLoading(idx);
     setLookupNotes(prev => ({ ...prev, [idx]: null }));
     try {
-      const res  = await fetch(`${API}/lookup/${symbol}`);
+      const res  = await apiFetch(`${API_PATH}/lookup/${symbol}`);
+      if (!res) return;
       const data = await res.json();
       if (data.found && data.suggestions) {
         setRows(prev => prev.map((r, i) => i !== idx ? r : {
@@ -223,8 +226,8 @@ export default function TickerList() {
       return;
     }
     try {
-      const res = await fetch(`${API}/${row.ticker}`, { method: "DELETE" });
-      if (!res.ok) throw new Error();
+      const res = await apiFetch(`${API_PATH}/${row.ticker}`, { method: "DELETE" });
+      if (!res || !res.ok) throw new Error();
       setRows(prev => prev.map((r, i) => i === idx ? { ...r, active: false } : r));
       showToast("Deactivated");
     } catch { showToast("Error deactivating"); }
@@ -233,8 +236,8 @@ export default function TickerList() {
   const reactivate = async (idx) => {
     const row = rows[idx];
     try {
-      const res = await fetch(`${API}/${row.ticker}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...toApi(row), active: true }) });
-      if (!res.ok) throw new Error();
+      const res = await apiFetch(`${API_PATH}/${row.ticker}`, { method: "PUT", body: JSON.stringify({ ...toApi(row), active: true }) });
+      if (!res || !res.ok) throw new Error();
       setRows(prev => prev.map((r, i) => i === idx ? { ...r, active: true } : r));
       showToast("Reactivated");
     } catch { showToast("Error reactivating"); }

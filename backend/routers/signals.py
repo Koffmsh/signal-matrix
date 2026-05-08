@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 from database import get_db
+from services.auth_service import require_admin_user
 from models.signal_hurst import SignalHurst
 from models.signal_pivots import SignalPivots
 from models.signal_output import SignalOutput
@@ -418,12 +419,13 @@ def calculate_signals(db: Session, trigger: str = "manual") -> dict:
 # ── HTTP endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/calculate")
-def run_calculate_signals(db: Session = Depends(get_db)):
+def run_calculate_signals(request: Request, db: Session = Depends(get_db)):
     """
     Task 4.3 — Full signal pipeline + snapshot in one call.
     Called by CALCULATE SIGNALS button: hurst → pivots → output → snapshot.
-    Returns output results in the same shape the frontend expects.
+    Admin-only — full recalc is expensive; viewers see the result via /stored.
     """
+    require_admin_user(request, db)
     result = calculate_signals(db, trigger="manual")
     return result["output"]
 

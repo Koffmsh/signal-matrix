@@ -1,12 +1,19 @@
 ﻿import { useState, useMemo, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
-import { fetchCachedMarketData, fetchBatchMarketData } from "./services/api";
+import { fetchCachedMarketData, fetchBatchMarketData, apiFetch } from "./services/api";
 import AdminPanel from "./components/Admin/AdminPanel";
 import Sidebar from "./components/shared/Sidebar";
 import Header from "./components/shared/Header";
 import TickerAnalysis from "./components/Analysis/TickerAnalysis";
 import SpxVolChart from "./components/Vol/SpxVolChart";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import ProtectedRoute from "./components/shared/ProtectedRoute";
+import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 
+// Used only for top-level browser navigation (Schwab OAuth redirect — not a fetch).
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 // ── API field mapping: snake_case → camelCase ─────────────────────────────────
@@ -27,7 +34,29 @@ function tickerFromApi(r) {
 export default function App() {
   return (
     <BrowserRouter>
-      <AppLayout />
+      <AuthProvider>
+        <Routes>
+          {/* Public auth pages */}
+          <Route path="/login"            element={<LoginPage />} />
+          <Route path="/register"         element={<RegisterPage />} />
+          <Route path="/forgot-password"  element={<ForgotPasswordPage />} />
+          <Route path="/reset-password"   element={<ResetPasswordPage />} />
+
+          {/* Admin — must be authenticated AND have role=admin */}
+          <Route path="/admin/*" element={
+            <ProtectedRoute requireAdmin>
+              <AdminPanel />
+            </ProtectedRoute>
+          } />
+
+          {/* Catch-all — any authenticated user */}
+          <Route path="/*" element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          } />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }
@@ -50,9 +79,8 @@ function AppLayout() {
         <div style={{ flex: 1, overflow: "auto", marginLeft: sidebarWidth, transition: "margin-left 200ms ease" }}>
           <Routes>
             <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
-            <Route path="/vol/*" element={<SpxVolChart />} />
-            <Route path="/admin/*" element={<AdminPanel />} />
-            <Route path="*" element={<Dashboard />} />
+            <Route path="/vol/*"          element={<SpxVolChart />} />
+            <Route path="*"               element={<Dashboard />} />
           </Routes>
         </div>
       </div>
@@ -384,6 +412,8 @@ const VIEWPOINTS = ["All", "Bullish", "Bearish", "Neutral"];
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [classFilter,  setClassFilter]  = useState(new Set());
   const [sectorFilter, setSectorFilter] = useState(new Set());
   const [vpFilter,     setVpFilter]     = useState("All");
@@ -413,9 +443,9 @@ function Dashboard() {
 
   // Load ticker universe from DB on page load
   useEffect(() => {
-    fetch(`${API_BASE}/api/tickers?active=true`)
-      .then(r => r.json())
-      .then(data => setTickerUniverse(data.map(tickerFromApi)))
+    apiFetch(`/api/tickers?active=true`)
+      .then(r => r ? r.json() : null)
+      .then(data => { if (data) setTickerUniverse(data.map(tickerFromApi)); })
       .catch(() => {});
   }, []);
 
@@ -433,9 +463,10 @@ function Dashboard() {
 
   // Load stored signals on page load (no recalculation)
   useEffect(() => {
-    fetch(`${API_BASE}/api/signals/stored`)
-      .then(r => r.json())
+    apiFetch(`/api/signals/stored`)
+      .then(r => r ? r.json() : null)
       .then(data => {
+        if (!data) return;
         const m = new Map();
         (data.results || []).forEach(r => m.set(r.ticker, r));
         setSignalMap(m);
@@ -446,33 +477,34 @@ function Dashboard() {
 
   // Load scheduler status on page load (no polling)
   useEffect(() => {
-    fetch(`${API_BASE}/api/scheduler/status`)
-      .then(r => r.json())
-      .then(data => setSchedulerStatus(data))
+    apiFetch(`/api/scheduler/status`)
+      .then(r => r ? r.json() : null)
+      .then(data => { if (data) setSchedulerStatus(data); })
       .catch(() => {});
   }, []);
 
   // Load Schwab auth status on page load
   useEffect(() => {
-    fetch(`${API_BASE}/api/auth/schwab/status`)
-      .then(r => r.json())
-      .then(data => setSchwabStatus(data))
+    apiFetch(`/api/auth/schwab/status`)
+      .then(r => r ? r.json() : null)
+      .then(data => { if (data) setSchwabStatus(data); })
       .catch(() => {});
   }, []);
 
   // Load quad settings on page load
   useEffect(() => {
-    fetch(`${API_BASE}/api/quad/current`)
-      .then(r => r.json())
-      .then(data => { if (data.monthly) setQuadSettings(data); })
+    apiFetch(`/api/quad/current`)
+      .then(r => r ? r.json() : null)
+      .then(data => { if (data && data.monthly) setQuadSettings(data); })
       .catch(() => {});
   }, []);
 
   // Load country quarterly quads on page load — for International Equities rows
   useEffect(() => {
-    fetch(`${API_BASE}/api/quad/settings?country=ALL&type=quarterly`)
-      .then(r => r.json())
+    apiFetch(`/api/quad/settings?country=ALL&type=quarterly`)
+      .then(r => r ? r.json() : null)
       .then(rows => {
+        if (!rows) return;
         const now   = new Date();
         const curQ  = Math.floor(now.getMonth() / 3) + 1;
         const nextQ = curQ === 4 ? 1 : curQ + 1;
@@ -503,13 +535,15 @@ function Dashboard() {
     if (isCalculating) return;
     setIsCalculating(true);
     setCalcStatus(null);
-    fetch(`${API_BASE}/api/signals/calculate`)
-      .then(r => r.json())
+    apiFetch(`/api/signals/calculate`)
+      .then(r => r ? r.json() : null)
       .then(calcData => {
+        if (!calcData) return null;
         // Fetch /stored after calculate to get complete data including h_trade_delta, vix_regime, etc.
-        return fetch(`${API_BASE}/api/signals/stored`)
-          .then(r => r.json())
+        return apiFetch(`/api/signals/stored`)
+          .then(r => r ? r.json() : null)
           .then(storedData => {
+            if (!storedData) return;
             const m = new Map();
             (storedData.results || []).forEach(r => m.set(r.ticker, r));
             setSignalMap(m);
@@ -877,6 +911,7 @@ function Dashboard() {
             const refreshColor = (isRefreshing || isInitialLoading) ? "#445566" : dataStale ? "#f0b429" : "#00e5a0";
             const refreshBg    = (isRefreshing || isInitialLoading) ? "transparent" : dataStale ? "#1a1000" : "#001a0f";
 
+            if (!isAdmin) return null;
             return (
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
