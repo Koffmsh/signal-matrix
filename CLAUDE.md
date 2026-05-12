@@ -500,7 +500,7 @@ Critical issues already resolved — do not reintroduce these bugs:
   6. Snap trigger (today's close vs prior 22 closes): `is_22d_low_close = close[-1] <= min(closes[-23:-1])`; mirror for high (unchanged)
   7. **Dual release conditions** per side (trigger takes priority over release):
      - **Merge**: unclamped k reaches k_wide → snap line == standard BB. Fires on gradual pullbacks (merge threshold ≈ prox = −1.2, i.e. price 1.2σ below MA). Seamless transition.
-     - **Breach**: `close < snap_lrr` (or `close > snap_hrr`). Fires on sharp/fast moves where EMA lags and price overshoots the lagged snap line before merge fires. Outputs standard BB on release day.
+     - **Breach**: today's **low** < yesterday's published snap_lrr (or today's **high** > yesterday's published snap_hrr). Uses intraday extreme to catch tests that recover by close. Yesterday's snap line is reconstructed from a 2-bar EMA (bars -3, -2) using bar -2 ma/std — approximates the level visible to the trader at the open.
      - Coincidence rule: LRR wins if both True
   8. Bands: `lrr = snap_lrr` / `hrr = snap_hrr` when snapped; opposing side uses `MA ± k_extend × σ`; no-snap = `MA ± k_wide × σ`
 
