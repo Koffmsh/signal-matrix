@@ -536,7 +536,7 @@ def get_trade_rr_vol_series(ticker: str, db) -> tuple[list[float] | None, str | 
     """
     from models.vol_history import VolHistory
 
-    needed = _RR_RANK_LOOKBACK + 3   # need extra bars for the 3-bar proximity window
+    needed = _RR_RANK_LOOKBACK + 4   # 4 bars: yesterday's 3-bar EMA needs bar-4
 
     iv_rows = (
         db.query(VolHistory)
@@ -599,13 +599,14 @@ def compute_trade_lrr_hrr(
     # plus 3 proximity bars.
     if not closes or len(closes) < 273:
         return None, None, False, False
-    if not vol_series or len(vol_series) < _RR_RANK_LOOKBACK + 3:
+    if not vol_series or len(vol_series) < _RR_RANK_LOOKBACK + 4:
         return None, None, False, False
 
-    # ── Per-bar dynamic N for the last 3 bars (proximity) and today's band ──
-    # vol_series[-1] = today, vol_series[-2] = yesterday, vol_series[-3] = day-before
-    # closes are aligned analogously: closes[-1] = today.
-    bar_offsets = (-3, -2, -1)   # ordered: day-before, yesterday, today
+    # ── Per-bar dynamic N for the last 4 bars ──
+    # bar_offsets: -4=two-days-ago, -3=day-before, -2=yesterday, -1=today
+    # 4 bars are needed so both today's and yesterday's snap lines use a full
+    # 3-bar EMA: yesterday = bars[-4,-3,-2]; today = bars[-3,-2,-1].
+    bar_offsets = (-4, -3, -2, -1)
 
     # Directional proximity — signed, not absolute.
     # prox_lrr: positive when price is above maN (LRR snap is "working").
@@ -662,21 +663,28 @@ def compute_trade_lrr_hrr(
             today_ma  = ma_n_t
             today_std = std_n_t
 
-    # ── EMA(3), alpha=0.5, seed at oldest bar ──
+    # ── EMA(3), alpha=0.5, seed at oldest of the 3 relevant bars ──
+    # prox_lrr_raw_bars = [bar-4, bar-3, bar-2, bar-1]
+    # Today's EMA:     seed bar-3 [1], update bar-2 [2], update bar-1 [3]
+    # Yesterday's EMA: seed bar-4 [0], update bar-3 [1], update bar-2 [2]
     alpha = 2.0 / (_RR_PROXIMITY_BARS + 1)   # = 0.5
 
-    prox_lrr = prox_lrr_raw_bars[0]
-    for v in prox_lrr_raw_bars[1:]:
+    prox_lrr = prox_lrr_raw_bars[1]
+    for v in prox_lrr_raw_bars[2:]:
         prox_lrr = alpha * v + (1 - alpha) * prox_lrr
 
-    prox_hrr = prox_hrr_raw_bars[0]
-    for v in prox_hrr_raw_bars[1:]:
+    prox_hrr = prox_hrr_raw_bars[1]
+    for v in prox_hrr_raw_bars[2:]:
         prox_hrr = alpha * v + (1 - alpha) * prox_hrr
 
-    # Yesterday's EMA (2-bar: seed at bar -3, update to bar -2) — approximates
-    # the proximity that drove yesterday's published snap line.
-    prox_lrr_yest = alpha * prox_lrr_raw_bars[1] + (1 - alpha) * prox_lrr_raw_bars[0]
-    prox_hrr_yest = alpha * prox_hrr_raw_bars[1] + (1 - alpha) * prox_hrr_raw_bars[0]
+    # Yesterday's full 3-bar EMA (bars -4, -3, -2)
+    prox_lrr_yest = prox_lrr_raw_bars[0]
+    for v in prox_lrr_raw_bars[1:3]:
+        prox_lrr_yest = alpha * v + (1 - alpha) * prox_lrr_yest
+
+    prox_hrr_yest = prox_hrr_raw_bars[0]
+    for v in prox_hrr_raw_bars[1:3]:
+        prox_hrr_yest = alpha * v + (1 - alpha) * prox_hrr_yest
 
     # Directional k values — each clamped to [k_min, k_wide].
     # When prox goes negative (price crossed to wrong side of maN), the raw k
