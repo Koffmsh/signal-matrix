@@ -486,15 +486,23 @@ Critical issues already resolved — do not reintroduce these bugs:
   - σ in the bands stays **price-derived** — `std(closes[-N:], ddof=1)` (sample std, matches ToS `StDev()`). IV/HV only drives N selection.
   - **Note:** spec says HV-only with IV "deferred to post-Schwab phase" — that wording is stale. IV history matured to 266+ days during Phase 5; v1.9.1 ships with IV-primary.
 
-- **Computation (per spec Steps 1–8):**
+- **Computation (per spec Steps 1–8, v1.9.2 directional proximity):**
   1. Read 255+ values of IV30 (or HV30 fallback) from `vol_history`, ascending date
   2. Determine `N_t` for each of last 3 bars (today, yesterday, day-before): rank vol value within its 252-bar trailing window → 8-bucket lookup
-  3. For each of those 3 bars: `ma_N_t = mean(closes[t-N_t+1 : t+1])`, `std_N_t = std(..., ddof=1)`, `proximity_raw[t] = |close[t] − ma_N_t| / std_N_t`
-  4. EMA-3 the 3 `proximity_raw` values (α=0.5, seed = oldest), final value = today's smoothed proximity
-  5. `k_snap_dyn = max(k_min, k_max − k_decay × proximity_smoothed)` — clamped to [0.4, 1.4]
-  6. Snap trigger (today's close vs prior 22 closes): `is_22d_low_close = close[-1] <= min(closes[-23:-1])`; mirror for high
-  7. Update stateful flags from prior values (loaded from `signal_output`); coincidence rule: LRR wins if both True
-  8. Bands: snapped side uses `MA + k_snap_dyn × σ`, opposing side uses `MA + k_extend × σ`; no-snap = `MA ± k_wide × σ`
+  3. For each of those 3 bars compute **directional** proximity (signed, not absolute):
+     - `prox_lrr[t] = (close[t] − ma_N_t) / std_N_t` — positive when price above MA, negative below
+     - `prox_hrr[t] = (ma_N_t − close[t]) / std_N_t` — positive when price below MA, negative above
+  4. EMA-3 each series independently (α=0.5, seed = oldest): → `prox_lrr`, `prox_hrr`
+  5. Per-side directional k — clamped to [k_min, **k_wide**]:
+     - `k_lrr_dyn = min(k_wide, max(k_min, k_max − k_decay × prox_lrr))`
+     - `k_hrr_dyn = min(k_wide, max(k_min, k_max − k_decay × prox_hrr))`
+     - When `prox_lrr` goes negative (price below MA during LRR snap), raw k grows past k_max toward k_wide; `min(k_wide)` clamp pulls snap line *down* to the BB instead of up into falling price — eliminates LRR inversion
+  6. Snap trigger (today's close vs prior 22 closes): `is_22d_low_close = close[-1] <= min(closes[-23:-1])`; mirror for high (unchanged)
+  7. **Dual release conditions** per side (trigger takes priority over release):
+     - **Merge**: unclamped k reaches k_wide → snap line == standard BB. Fires on gradual pullbacks (merge threshold ≈ prox = −1.2, i.e. price 1.2σ below MA). Seamless transition.
+     - **Breach**: `close < snap_lrr` (or `close > snap_hrr`). Fires on sharp/fast moves where EMA lags and price overshoots the lagged snap line before merge fires. Outputs standard BB on release day.
+     - Coincidence rule: LRR wins if both True
+  8. Bands: `lrr = snap_lrr` / `hrr = snap_hrr` when snapped; opposing side uses `MA ± k_extend × σ`; no-snap = `MA ± k_wide × σ`
 
 - **8-bucket N lookup** (right-inclusive on each upper bound):
   ```
@@ -2120,7 +2128,7 @@ git checkout -- .   # roll back if needed
 74. **Intraday monitor uses `schwab_fetch_intraday_quotes` — never `schwab_fetch_all`** — `schwab_fetch_all()` has an idempotency check that freezes `price_cache.close` after the first same-day call. `schwab_fetch_intraday_quotes()` always calls `get_quotes()`, uses `lastPrice` only, and does not update `cache_date`. Swapping them silently breaks the 15-minute price refresh.
 75. **Never call `calculate_signals()` intraday** — pivot states require confirmed EOD closes; running signals intraday produces false BREAK_OF_TRADE states. The intraday monitor is purely observational.
 76. **Intraday scheduler uses `CronTrigger` — never `"interval"`** — `CronTrigger(day_of_week="mon-fri", hour="9-15", minute="0,15,30,45", timezone="America/New_York")` aligns to clock boundaries, guaranteeing the first fire is exactly 9:30 AM ET. An interval trigger fires relative to container start time and will miss the open if the container starts at an off-minute.
-77. **Trade RR uses v1.9.1 BB+Snap formula** — see "Trade LRR/HRR — v1.9.1 Formula" section. Constants are TOS-validated (`k_extend=2.2, k_max=1.4, k_min=0.4`), not the spec defaults. Vol source is IV-primary (`vol_history.implied_vol`) with HV30 fallback (`vol_history.hv30`). σ stays price-derived. Snap trigger uses **closes** (today's close vs prior 22 closes), never highs/lows. Snap state persists in `signal_output.hrr_snapped/lrr_snapped` — `compute_output` loads prior state before each call. Spec body in `Docs/SignalMatrix_RR_v1_9_1.txt` says "HV-only with IV deferred"; that wording is stale — IV-primary is what ships.
+77. **Trade RR uses v1.9.2 BB+Snap formula with directional proximity** — see "Trade LRR/HRR — v1.9.1 Formula" section (computation steps updated to v1.9.2). Constants unchanged: TOS-validated (`k_extend=2.2, k_max=1.4, k_min=0.4, k_wide=2.0, k_decay=0.5`). Vol source: IV-primary (`vol_history.implied_vol`) with HV30 fallback. σ price-derived. Snap trigger: **closes** vs prior 22 closes (unchanged). **Directional proximity**: `prox_lrr = (close − maN) / sdN` (signed); when price falls below maN, prox goes negative, k_lrr_dyn expands toward k_wide, pulling snap line down to BB — eliminates LRR inversion during price pullback below MA. **Snap releases via merge** (k_dyn reaches k_wide, gradual) **or breach** (price crosses the compressed snap line, fast/sharp moves). Snap state persists in `signal_output.hrr_snapped/lrr_snapped`.
 78. **`compute_trade_lrr_hrr` is pure** — receives `(closes, vol_series, prior_hrr_snapped, prior_lrr_snapped)` and returns `(lrr, hrr, hrr_snapped, lrr_snapped)`. No DB access in the math function. The caller (`compute_output`) handles vol source lookup (`get_trade_rr_vol_series`) and snap state I/O. Cold-start floor: `len(closes) >= 273` (252 rank window + 21 prior bars for oldest HV computation in fallback path).
 79. **ATR + MA20 regime are out of the trade RR path (v1.9.1)** — `compute_trade_lrr_hrr` reads `closes` + `vol_series` only. The columns split into two groups:
     - **Still updated daily:** `price_cache.ma20`, `ma50`, `ma100`, `ma200`, `std20` — written on every fetch (cheap; useful for popup display, MA200 for Tail Level, future signals).

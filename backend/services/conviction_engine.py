@@ -600,15 +600,19 @@ def compute_trade_lrr_hrr(
     # closes are aligned analogously: closes[-1] = today.
     bar_offsets = (-3, -2, -1)   # ordered: day-before, yesterday, today
 
-    proximity_raw_bars = []
+    # Directional proximity — signed, not absolute.
+    # prox_lrr: positive when price is above maN (LRR snap is "working").
+    #           negative when price is below maN — k_lrr_dyn then expands
+    #           toward k_wide, pulling the snap line down to the BB rather
+    #           than up into the falling price.
+    # prox_hrr: mirror — positive when price is below maN.
+    prox_lrr_raw_bars = []
+    prox_hrr_raw_bars = []
     today_n = None
     today_ma = None
     today_std = None
 
     for off in bar_offsets:
-        # Rank window: 252 vol values ending at this bar
-        # vol_series[off] is the value at bar (-1=last). The window is the
-        # 252 values ending at (and including) vol_series[off].
         end_idx = len(vol_series) + off + 1   # exclusive end
         start_idx = end_idx - _RR_RANK_LOOKBACK
         if start_idx < 0:
@@ -637,25 +641,41 @@ def compute_trade_lrr_hrr(
         if std_n_t <= 0:
             return None, None, False, False
 
-        prox_raw = abs(closes[c_end - 1] - ma_n_t) / std_n_t
-        proximity_raw_bars.append(prox_raw)
+        c_at = closes[c_end - 1]
+        prox_lrr_raw_bars.append((c_at - ma_n_t) / std_n_t)
+        prox_hrr_raw_bars.append((ma_n_t - c_at) / std_n_t)
 
         if off == -1:
             today_n   = n_t
             today_ma  = ma_n_t
             today_std = std_n_t
 
-    # ── EMA(3) on the 3 proximity_raw values, alpha=0.5, seed at oldest ──
+    # ── EMA(3), alpha=0.5, seed at oldest bar ──
     alpha = 2.0 / (_RR_PROXIMITY_BARS + 1)   # = 0.5
-    ema = proximity_raw_bars[0]
-    for v in proximity_raw_bars[1:]:
-        ema = alpha * v + (1 - alpha) * ema
-    proximity = ema
 
-    # k_snap_dyn — clamped to [k_min, k_max]
-    k_snap_dyn = max(_RR_K_MIN, _RR_K_MAX - _RR_K_DECAY * proximity)
+    prox_lrr = prox_lrr_raw_bars[0]
+    for v in prox_lrr_raw_bars[1:]:
+        prox_lrr = alpha * v + (1 - alpha) * prox_lrr
 
-    # ── Snap trigger detection (Step 5) ──
+    prox_hrr = prox_hrr_raw_bars[0]
+    for v in prox_hrr_raw_bars[1:]:
+        prox_hrr = alpha * v + (1 - alpha) * prox_hrr
+
+    # Directional k values — each clamped to [k_min, k_wide].
+    # When prox goes negative (price crossed to wrong side of maN), the raw k
+    # grows past k_max toward k_wide. The min() clamp ensures the snap line
+    # can never exceed the standard BB — when k_dyn == k_wide the snap line
+    # has merged cleanly into the BB.
+    k_lrr_dyn = min(_RR_K_WIDE, max(_RR_K_MIN, _RR_K_MAX - _RR_K_DECAY * prox_lrr))
+    k_hrr_dyn = min(_RR_K_WIDE, max(_RR_K_MIN, _RR_K_MAX - _RR_K_DECAY * prox_hrr))
+
+    # Standard BB and snap lines
+    bb_lower  = today_ma - _RR_K_WIDE * today_std
+    bb_upper  = today_ma + _RR_K_WIDE * today_std
+    snap_lrr  = today_ma - k_lrr_dyn * today_std
+    snap_hrr  = today_ma + k_hrr_dyn * today_std
+
+    # ── Snap trigger detection ──
     # Today's close vs the 22 prior closes (closes[-23:-1])
     today_close       = closes[-1]
     prior_22_window   = closes[-(_RR_SNAP_WINDOW + 1):-1]
@@ -664,35 +684,49 @@ def compute_trade_lrr_hrr(
     is_22d_low_close  = today_close <= prior_22_low
     is_22d_high_close = today_close >= prior_22_high
 
-    # ── Snap state update (Step 6) — independent flags ──
-    if is_22d_low_close:
-        hrr_snapped = True
-    elif today_close > today_ma:
-        hrr_snapped = False
-    else:
-        hrr_snapped = prior_hrr_snapped
+    # ── Release conditions ──
+    # Merge:  unclamped k has grown to k_wide → snap line == BB → natural convergence.
+    #         Fires on gradual pullbacks when the EMA tracks price closely.
+    # Breach: price breaks through the compressed snap line before the EMA catches up.
+    #         Fires on sharp/fast moves where the lagged EMA hasn't decayed k yet.
+    lrr_merged   = (_RR_K_MAX - _RR_K_DECAY * prox_lrr) >= _RR_K_WIDE
+    hrr_merged   = (_RR_K_MAX - _RR_K_DECAY * prox_hrr) >= _RR_K_WIDE
+    lrr_breached = today_close < snap_lrr
+    hrr_breached = today_close > snap_hrr
 
+    # ── Snap state update — trigger takes priority over release ──
     if is_22d_high_close:
         lrr_snapped = True
-    elif today_close < today_ma:
+    elif prior_lrr_snapped and (lrr_breached or lrr_merged):
         lrr_snapped = False
     else:
         lrr_snapped = prior_lrr_snapped
+
+    if is_22d_low_close:
+        hrr_snapped = True
+    elif prior_hrr_snapped and (hrr_breached or hrr_merged):
+        hrr_snapped = False
+    else:
+        hrr_snapped = prior_hrr_snapped
 
     # Coincidence rule — LRR (uptrend) takes priority
     if hrr_snapped and lrr_snapped:
         hrr_snapped = False
 
-    # ── Band computation (Step 8) ──
+    # ── Band computation ──
+    # When snap is active, output the snap line.
+    # When released (breach or merge), output the standard BB — on a merge the
+    # snap line already equals the BB so the transition is seamless; on a breach
+    # the jump to bb_lower/bb_upper is intentional (snap support failed).
     if hrr_snapped:
-        hrr = today_ma + k_snap_dyn * today_std
+        hrr = snap_hrr
         lrr = today_ma - _RR_K_EXTEND * today_std
     elif lrr_snapped:
-        lrr = today_ma - k_snap_dyn * today_std
+        lrr = snap_lrr
         hrr = today_ma + _RR_K_EXTEND * today_std
     else:
-        hrr = today_ma + _RR_K_WIDE * today_std
-        lrr = today_ma - _RR_K_WIDE * today_std
+        lrr = bb_lower
+        hrr = bb_upper
 
     return round(lrr, 4), round(hrr, 4), hrr_snapped, lrr_snapped
 
