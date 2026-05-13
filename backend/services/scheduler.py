@@ -16,6 +16,7 @@ import services.schwab_client as schwab_client
 from services.schwab_market_data import schwab_fetch_all
 from services.schwab_options import schwab_fetch_iv, accumulate_hv_only
 from services.intraday_monitor import run_intraday_check
+from services.spx_constituents import compute_and_cache_spx_impact
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,13 @@ def schwab_data_job() -> None:
         sig        = calculate_signals(db, trigger="scheduled")
         signals_ok = sig["output"]["errors"] == 0
         logger.info(f"Schwab data job: signals complete — {sig['output']['calculated']} tickers")
+
+        # 4. SPX constituent impact — one Schwab batch call, ~2s, non-fatal
+        try:
+            spx_result = compute_and_cache_spx_impact(db)
+            logger.info(f"Schwab data job: SPX impact complete — {spx_result}")
+        except Exception as _e:
+            logger.warning(f"Schwab data job: SPX impact failed (non-fatal) — {_e}")
 
         status = "success"
 

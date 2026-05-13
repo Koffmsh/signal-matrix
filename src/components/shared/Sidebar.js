@@ -24,6 +24,17 @@ function GridIcon({ color }) {
   );
 }
 
+function ImpactIcon({ color }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <rect x="1" y="9" width="3" height="6" rx="0.5" fill={color} opacity="0.5" />
+      <rect x="5" y="6" width="3" height="9" rx="0.5" fill={color} opacity="0.7" />
+      <rect x="9" y="3" width="3" height="12" rx="0.5" fill={color} />
+      <rect x="13" y="7" width="3" height="8" rx="0.5" fill={color} opacity="0.4" />
+    </svg>
+  );
+}
+
 function LockIcon({ locked, color }) {
   return locked ? (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -53,6 +64,12 @@ const NAV_ITEMS = [
     path: "/vol",
     exact: false,
     icon: (color) => <VolIcon color={color} />,
+  },
+  {
+    label: "SPX IMPACT",
+    path: "/spx-impact",
+    exact: true,
+    icon: (color) => <ImpactIcon color={color} />,
   },
 ];
 

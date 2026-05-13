@@ -6,6 +6,7 @@ import Sidebar from "./components/shared/Sidebar";
 import Header from "./components/shared/Header";
 import TickerAnalysis from "./components/Analysis/TickerAnalysis";
 import SpxVolChart from "./components/Vol/SpxVolChart";
+import SpxImpactDashboard from "./components/SpxImpact/SpxImpactDashboard";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import ProtectedRoute from "./components/shared/ProtectedRoute";
 import LoginPage from "./pages/LoginPage";
@@ -80,6 +81,7 @@ function AppLayout() {
           <Routes>
             <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
             <Route path="/vol/*"          element={<SpxVolChart />} />
+            <Route path="/spx-impact"     element={<SpxImpactDashboard />} />
             <Route path="*"               element={<Dashboard />} />
           </Routes>
         </div>

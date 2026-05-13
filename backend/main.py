@@ -14,6 +14,7 @@ from routers.auth import schwab_router, router as auth_router, limiter as auth_l
 from routers.users import router as users_router
 from routers.quad import router as quad_router
 from routers.vol import router as vol_router
+from routers.spx_impact import router as spx_impact_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import models.signal_hurst    # ensure tables are registered before create_all
@@ -27,6 +28,7 @@ import models.vol_history     # renamed from iv_history — stores all vol metri
 import models.quad_settings   # v1.9 — quad_settings table
 import models.user                  # Auth — users table
 import models.password_reset_token  # Auth — password_reset_tokens table
+import models.spx_impact_cache      # SPX constituent impact cache
 import services.scheduler as scheduler_svc
 from services.auth_service import seed_admin_if_empty, get_user_from_token, COOKIE_NAME
 import logging
@@ -171,6 +173,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(quad_router)
 app.include_router(vol_router)
+app.include_router(spx_impact_router)
 
 
 @app.get("/health")
