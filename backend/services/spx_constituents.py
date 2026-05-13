@@ -70,11 +70,15 @@ def fetch_spx_weights() -> dict:
     weights = {}
     reader = csv.DictReader(io.StringIO("\n".join(lines[data_start:])))
     for row in reader:
-        ticker     = row.get("Ticker", "").strip().upper()
-        weight_str = row.get("Weight (%)", "").strip()
-        asset_cls  = row.get("Asset Class", "").strip()
+        # DictReader fills short rows (e.g. footer text) with None — coerce before strip
+        ticker     = (row.get("Ticker")      or "").strip().strip('"').upper()
+        weight_str = (row.get("Weight (%)")  or "").strip()
+        asset_cls  = (row.get("Asset Class") or "").strip()
 
         if not ticker or ticker == "-" or not weight_str:
+            continue
+        # Reject footer garbage — valid tickers are ≤ 6 chars with no spaces
+        if len(ticker) > 6 or " " in ticker:
             continue
         # Only equity positions — skip cash, futures, fx hedges
         if asset_cls and "Equity" not in asset_cls:
@@ -123,13 +127,18 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
     tickers = list(weights.keys())
     logger.info(f"SPX impact: fetching quotes for {len(tickers)} constituents")
 
-    try:
-        resp = client.get_quotes(tickers)
-        resp.raise_for_status()
-        quotes = resp.json()
-    except Exception as e:
-        logger.error(f"SPX impact: Schwab batch quote failed — {e}")
-        return {"status": "error", "error": str(e)}
+    # Schwab has a URL length limit — batch into chunks of 200
+    _CHUNK = 200
+    quotes = {}
+    for i in range(0, len(tickers), _CHUNK):
+        chunk = tickers[i : i + _CHUNK]
+        try:
+            resp = client.get_quotes(chunk)
+            resp.raise_for_status()
+            quotes.update(resp.json())
+        except Exception as e:
+            logger.error(f"SPX impact: Schwab batch quote failed (chunk {i}–{i+len(chunk)}) — {e}")
+            return {"status": "error", "error": str(e)}
 
     # ── 3. Compute per-ticker contribution ───────────────────────────────────
     impacts      = []
