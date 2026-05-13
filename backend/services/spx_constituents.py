@@ -156,7 +156,12 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
         if not last_price or not prev_close or prev_close == 0:
             continue
 
-        daily_return_pct = (last_price - prev_close) / prev_close * 100
+        # Strip after-hours move so we use the regular session closing price.
+        # postMarketChange is 0 during/right after market close, positive AH.
+        post_market_change = q.get("postMarketChange") or 0
+        regular_close = last_price - post_market_change
+
+        daily_return_pct = (regular_close - prev_close) / prev_close * 100
         # Contribution to SPX daily return (percentage points)
         contribution = daily_return_pct * (weight_pct / 100)
         spx_total   += contribution
