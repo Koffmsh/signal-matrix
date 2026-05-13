@@ -472,7 +472,7 @@ Critical issues already resolved — do not reintroduce these bugs:
   proximity_smooth  = 3     # 3-bar EMA on proximity_raw, α=0.5
   k_wide            = 2.0   # standard BB multiplier (no snap)
   k_extend          = 2.2   # leading impulse side (opposite the snap)
-  k_max             = 1.0   # snap side: max offset from MA
+  k_max             = 1.2   # snap side: max offset from MA
   k_min             = 0.0   # snap side: floor — fully collapses to MA at peak impulse
   k_decay           = 0.5   # how fast k shrinks as proximity grows
   ```
