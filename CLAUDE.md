@@ -483,7 +483,7 @@ Critical issues already resolved — do not reintroduce these bugs:
   - **Primary:** IV30 from `vol_history.implied_vol`, ranked over its trailing 252-day window
   - **Fallback:** HV30 from `vol_history.hv30` when ticker has < 252 IV obs
   - Per-ticker decision (no source-mixing within one ticker's calc); auto-promotes to IV when enough history accumulates
-  - σ in the bands stays **price-derived** — `std(closes[-N:], ddof=1)` (sample std, matches ToS `StDev()`). IV/HV only drives N selection.
+  - σ in the bands stays **price-derived** — `std(closes[-N:], ddof=0)` (population std, matches ToS `StDev()` and Bollinger Band convention). IV/HV only drives N selection.
   - **Note:** spec says HV-only with IV "deferred to post-Schwab phase" — that wording is stale. IV history matured to 266+ days during Phase 5; v1.9.1 ships with IV-primary.
 
 - **Computation (per spec Steps 1–8, v1.9.2 directional proximity):**

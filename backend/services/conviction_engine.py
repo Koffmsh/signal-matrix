@@ -640,11 +640,11 @@ def compute_trade_lrr_hrr(
         window_closes = closes[c_start:c_end]
         ma_n_t = sum(window_closes) / n_t
 
-        # Sample std (ddof=1) — matches ToS StDev() default
+        # Population std (ddof=0) — matches ToS StDev() and Bollinger Band convention
         if n_t > 1:
             mean = ma_n_t
             sq_sum = sum((x - mean) ** 2 for x in window_closes)
-            std_n_t = math.sqrt(sq_sum / (n_t - 1))
+            std_n_t = math.sqrt(sq_sum / n_t)
         else:
             std_n_t = 0.0
 
