@@ -113,7 +113,7 @@ export default function SpxVolChart() {
     <div style={{
       minHeight: "100vh",
       background: "#060e1a",
-      padding: "28px 32px",
+      padding: "28px 164px",
       boxSizing: "border-box",
     }}>
 
@@ -151,7 +151,7 @@ export default function SpxVolChart() {
 
       {/* ── Chart area ── */}
       {!loading && !error && displayData.length > 0 && (
-        <div style={{ padding: "0 75px" }}>
+        <div>
 
           {/* Legend + Range toggle */}
           <div style={{ display: "flex", alignItems: "center", gap: 24, marginBottom: 14, paddingLeft: 4 }}>

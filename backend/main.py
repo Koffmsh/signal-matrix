@@ -79,6 +79,17 @@ if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
                 _conn.execute(text(_ddl))
         _conn.commit()
 
+    with engine.connect() as _conn:
+        _cols_spx = [row[1] for row in _conn.execute(text("PRAGMA table_info(spx_impact_cache)"))]
+        for _col, _ddl in [
+            ("snapshot_label", "ALTER TABLE spx_impact_cache ADD COLUMN snapshot_label TEXT DEFAULT 'eod'"),
+            ("weights_json",   "ALTER TABLE spx_impact_cache ADD COLUMN weights_json TEXT"),
+        ]:
+            if _col not in _cols_spx:
+                _conn.execute(text(_ddl))
+        _conn.execute(text("UPDATE spx_impact_cache SET snapshot_label = 'eod' WHERE snapshot_label IS NULL"))
+        _conn.commit()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

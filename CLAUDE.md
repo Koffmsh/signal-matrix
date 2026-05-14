@@ -883,24 +883,28 @@ signal-matrix/
 │   │       ├── 312d2abdf53d_vol_history_implied_vol_nullable.py                 ← vol_history.implied_vol nullable (allows HV-only rows)
 │   │       ├── o1p2q3r4s5t6_signal_output_add_quad_score.py                    ← added signal_output.quad_score (Integer) — v2.0 additive contribution
 │   │       ├── p1q2r3s4t5u6_price_cache_add_hv_rank.py                          ← added price_cache.hv_rank (Integer 0–100)
-│   │       └── q2r3s4t5u6v7_add_snap_state_columns.py                           ← v1.9.1 hrr_snapped / lrr_snapped on signal_output + signal_history
+│   │       ├── q2r3s4t5u6v7_add_snap_state_columns.py                           ← v1.9.1 hrr_snapped / lrr_snapped on signal_output + signal_history
+│   │       ├── t5u6v7w8x9y0_add_spx_impact_cache.py                              ← spx_impact_cache table (EOD constituent impact)
+│   │       └── u6v7w8x9y0z1_spx_impact_add_label_weights.py                      ← added snapshot_label + weights_json (intraday snapshot support)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
 │   │   ├── pivot_engine.py                ← Task 3.2 — ABC Pivot Detector ✅
 │   │   ├── conviction_engine.py           ← Task 3.3 — LRR/HRR + Conviction Engine ✅
-│   │   ├── scheduler.py                   ← Task 4.2 — APScheduler EOD + intraday monitor jobs ✅
+│   │   ├── scheduler.py                   ← Task 4.2 — APScheduler EOD + intraday monitor + SPX impact jobs ✅
 │   │   ├── schwab_client.py               ← Task 5.3 — Token management + Schwab client ✅
 │   │   ├── schwab_market_data.py          ← Task 5.4 — EOD quote + history fetch + intraday quotes ✅
 │   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + vol_history write ✅
 │   │   ├── intraday_monitor.py            ← PROXIMITY + RETRACEMENT_50 alert engine ✅
+│   │   ├── spx_constituents.py            ← SPX constituent impact — IVV weights + Schwab batch quotes ✅
 │   │   └── sms.py                         ← Twilio SMS wrapper ✅
 │   └── routers/
 │       ├── market_data.py
 │       ├── signals.py                     ← Task 3.3/3.4/4.3 — Signal endpoints + history ✅
 │       ├── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
 │       ├── auth.py                        ← Task 5.3 — Schwab OAuth endpoints ✅
-│       └── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
+│       ├── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
+│       └── spx_impact.py                  ← GET /api/spx-impact — returns eod + intraday snapshots ✅
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -975,21 +979,32 @@ signal-matrix/
   3. `intraday_monitor` — CronTrigger mon–fri 9:30 AM–3:45 PM ET at :00/:15/:30/:45
 - On startup: catch-up check — if past 4:00 PM ET, trading day, and no successful run today → runs immediately
 - All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
+- **Five registered jobs:** `schwab_data_job` (4 PM EOD), `schwab_refresh` (25 min interval), `intraday_monitor` (15 min market hours), `spx_impact_11am` (11 AM ET Mon-Fri), `spx_impact_1pm` (1 PM ET Mon-Fri)
 
 ### EOD Flow (4:00 PM ET, NYSE trading days) — single chained job
 ```
 APScheduler (schwab_data_job)
-    → schwab_fetch_all()      writes → price_cache (Schwab primary, Yahoo fallback)
-    → schwab_fetch_iv()       writes → price_cache.rel_iv + vol_history (IV-eligible tickers)
-    → accumulate_hv_only()    writes → vol_history hv30/hv90 (Yahoo-only: SPX, NDX, RUT, VIX, $DJI, USD, JPY, futures, VVIX)
-    → calculate_signals()     writes → signal_hurst
-                                     → signal_pivots
-                                     → signal_output
-                                     → signal_history (snapshot)
-    → scheduler_log           writes → success/failure entry
+    → schwab_fetch_all()                writes → price_cache (Schwab primary, Yahoo fallback)
+    → schwab_fetch_iv()                 writes → price_cache.rel_iv + vol_history (IV-eligible tickers)
+    → accumulate_hv_only()              writes → vol_history hv30/hv90 (Yahoo-only: SPX, NDX, RUT, VIX, $DJI, USD, JPY, futures, VVIX)
+    → calculate_signals()               writes → signal_hurst / signal_pivots / signal_output / signal_history
+    → compute_and_cache_spx_impact()    writes → spx_impact_cache (label='eod') — non-fatal step 4
+    → scheduler_log                     writes → success/failure entry
 ```
 Previously two separate jobs (data at 4:00 PM, signals at 4:15 PM). Merged into one — signals run
 immediately after data fetch, both buttons go green together by ~4:02 PM.
+
+### Intraday SPX Impact Snapshots (11 AM + 1 PM ET, Mon-Fri)
+```
+APScheduler (spx_impact_11am / spx_impact_1pm)
+    → Read weights_json from most recent EOD row in spx_impact_cache — no IVV fetch
+    → _batch_schwab_quotes()    3 calls × 200-ticker chunks (~5 seconds total)
+    → _compute_impacts()        no AH strip (lastPrice is live intraday)
+    → Upsert spx_impact_cache   label='11am' or '1pm', computed_date=today_et
+```
+- Non-fatal per-job (each job is standalone, not chained to EOD)
+- Idempotent: re-run same day overwrites the existing intraday row
+- Trading day guard: `_is_trading_day()` check inside job — no-op on holidays/weekends
 
 ### Page Load Flow
 ```

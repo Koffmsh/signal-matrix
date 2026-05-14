@@ -16,7 +16,7 @@ import services.schwab_client as schwab_client
 from services.schwab_market_data import schwab_fetch_all
 from services.schwab_options import schwab_fetch_iv, accumulate_hv_only
 from services.intraday_monitor import run_intraday_check
-from services.spx_constituents import compute_and_cache_spx_impact
+from services.spx_constituents import compute_and_cache_spx_impact, compute_and_cache_spx_impact_intraday
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +217,21 @@ def schwab_data_job() -> None:
         logger.info(f"Schwab data job: complete — status={status}, duration={duration}s")
 
 
+def _spx_impact_intraday_job(label: str) -> None:
+    """Compute and cache an intraday SPX impact snapshot (11am or 1pm ET)."""
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    if not _is_trading_day(now_et.date()):
+        return
+    db = SessionLocal()
+    try:
+        result = compute_and_cache_spx_impact_intraday(db, label)
+        logger.info(f"SPX impact {label}: {result}")
+    except Exception as e:
+        logger.warning(f"SPX impact {label} job failed (non-fatal): {e}")
+    finally:
+        db.close()
+
+
 def _intraday_monitor_job() -> None:
     """
     Fires at :00/:15/:30/:45 each hour, 9:30 AM–3:45 PM ET, NYSE trading days only.
@@ -275,6 +290,18 @@ def start() -> None:
             timezone    = "America/New_York",
         ),
         id="intraday_monitor",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        lambda: _spx_impact_intraday_job("11am"),
+        CronTrigger(day_of_week="mon-fri", hour=11, minute=0, timezone="America/New_York"),
+        id="spx_impact_11am",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        lambda: _spx_impact_intraday_job("1pm"),
+        CronTrigger(day_of_week="mon-fri", hour=13, minute=0, timezone="America/New_York"),
+        id="spx_impact_1pm",
         replace_existing=True,
     )
     scheduler.start()

@@ -1,0 +1,376 @@
+================================================================
+SignalMatrix — Spec: Trade Risk Range Formula v1.9.1
+Status: LOCKED — Ready for Neo implementation
+Supersedes: v1.8 Trade LRR/HRR formula (BB on fixed N=20)
+Scope: Trade timeframe LRR/HRR ONLY
+================================================================
+
+
+PURPOSE
+-------
+Replace the v1.8 fixed-N (20) Bollinger Band Trade LRR/HRR
+formula with a dynamic-N BB+Snap framework that includes:
+
+  - Dynamic N (8 to 15) driven by HV30 percentile rank
+  - Stateful snap mechanic on the trailing side that compresses
+    the band toward MA during impulses
+  - Proximity-driven dynamic k_snap that eases the snap level
+    as price approaches MA
+  - Asymmetric extending side (k_extend) on the opposing side
+    of an active snap
+  - EOD calc on day T uses closes through day T's close. The
+    band computed tonight is the operative RR for day T+1.
+
+Validated visually in ThinkorSwim against Hedgeye published risk
+ranges on SPX, GOOGL, AMZN. The Python implementation reproduces
+the ToS math exactly, with one intentional divergence: ToS uses
+forward displacement (maN[1] / sdN[1]) to prevent intraday chart
+repaint. Signal Matrix is an EOD-batch system with no intraday
+repaint risk, so the band uses the most recent available close
+directly. See "Forward Displacement" section below for detail.
+
+
+SCOPE — WHAT THIS SPEC CHANGES
+------------------------------
+IN SCOPE (Trade timeframe ONLY):
+
+  - conviction_engine.compute_trade_lrr_hrr() — replace v1.8 BB
+    formula with v1.9.1 BB+Snap formula
+  - signal_output table — add 2 new columns:
+      hrr_snapped  BOOLEAN NOT NULL DEFAULT FALSE
+      lrr_snapped  BOOLEAN NOT NULL DEFAULT FALSE
+  - signal_history table — add same 2 columns to snapshots
+
+OUT OF SCOPE — DO NOT TOUCH:
+
+  - pivot_engine.py — UNCHANGED. Still drives direction, breaks,
+    structural states, d_extended.
+  - Trend Level (break pivot — C normally, B when d_extended) —
+    UNCHANGED.
+  - Tail Level (MA200 with slope confirmation) — UNCHANGED.
+  - Conviction engine weights (Trade H 65% / Trend H 35%) —
+    UNCHANGED.
+  - OBV pivot engine, volume multiplier — UNCHANGED.
+  - Viewpoint logic, structural states (FORMING, EXTENDED,
+    BREAK_OF_TRADE, BREAK_OF_TREND, NO_STRUCTURE) — UNCHANGED.
+  - Direction logic (price > c / price < c) — UNCHANGED.
+  - Per-cell warn flags (LRR < C, HRR < B, etc.) — UNCHANGED.
+    These continue to flag pivot-relative concerns even though
+    the LRR/HRR values themselves are now BB-derived.
+  - Signal_output structure for Trend and LT timeframes —
+    UNCHANGED (Trend Level / Tail Level continue to be published
+    via the existing path).
+
+
+PARAMETERS (HARDCODED, LOCKED)
+------------------------------
+All parameters are hardcoded constants in conviction_engine.py.
+Future admin page will refactor to a config source; not in v1.9.1.
+
+  rank_lookback     = 252    # 1 year trailing for HV rank
+  hv_period_bars    = 21     # ~30 calendar days for HV30
+  snap_window       = 22     # 22-bar lookback for snap trigger
+  proximity_smooth  = 3      # EMA bars for proximity smoothing
+  k_wide            = 2.0    # standard BB multiplier
+  k_extend          = 2.0    # extending side during opposite snap
+  k_max             = 1.0    # snap side: max offset from MA
+  k_min             = 0.3    # snap side: floor — never collapses
+                             #   below MA + k_min × σ
+  k_decay           = 0.5    # snap side: how fast k shrinks as
+                             #   price extends from MA
+
+  Volatility source: HV30 (close-based, sample std).
+  IV30 path is deferred to a post-Schwab phase. Not in v1.9.1.
+
+  Average type: SMA (simple moving average) on close prices.
+
+  Standard deviation: SAMPLE std (ddof=1). Matches ToS StDev()
+  default. Use numpy.std(arr, ddof=1) or pandas .std() default.
+
+
+COMPUTATION FLOW
+----------------
+
+The function receives the ticker's close history (history_json,
+sorted chronologically, oldest first) and produces (lrr, hrr,
+hrr_snapped, lrr_snapped). The prior snap state is loaded from
+signal_output before the call.
+
+Notation:
+  closes      = full close history, sorted ascending by date
+  closes[-1]  = most recent close (yesterday's EOD close at
+                EOD scheduler run time)
+  closes[-2]  = the close before that
+
+
+STEP 1 — Compute log returns and HV30
+  log_returns[i] = ln(closes[i] / closes[i-1])    for i >= 1
+
+  hv30 = stdev(log_returns[-21:], ddof=1) * sqrt(252)
+
+
+STEP 2 — Compute HV30 percentile rank over 252 bars
+  Build hv30_history[]: for each bar t in the lookback, compute
+  hv30_t using the prior 21 log returns ending at bar t.
+
+  hv_window = hv30_history[-252:]
+  hv_high   = max(hv_window)
+  hv_low    = min(hv_window)
+  hv_range  = hv_high - hv_low
+
+  if hv_range > 0:
+      hv_rank = ((hv30 - hv_low) / hv_range) * 100
+  else:
+      hv_rank = 50.0
+
+
+STEP 3 — Map HV30 rank to N (8 buckets)
+  Buckets per ToS script (left-inclusive on upper bound):
+
+    hv_rank <= 10  →  N = 8
+    hv_rank <= 20  →  N = 9
+    hv_rank <= 35  →  N = 10
+    hv_rank <= 50  →  N = 11
+    hv_rank <= 64  →  N = 12
+    hv_rank <= 79  →  N = 13
+    hv_rank <= 89  →  N = 14
+    hv_rank >  89  →  N = 15
+
+
+STEP 4 — Compute MA_N and σ_N over the rolling window
+  ma_N  = mean(closes[-N:])
+  std_N = stdev(closes[-N:], ddof=1)
+
+  closes[-N:] ends at closes[-1], the most recent available close
+  (today's close at EOD scheduler run time). The band computed at
+  EOD on day T is the operative RR for day T+1's session.
+
+  Note on ToS divergence: the ToS reference indicator uses
+  maN[1] / sdN[1] (prior bar) to prevent intraday repaint on a
+  live chart. Signal Matrix runs once per day at EOD, so there is
+  no intraday repaint risk. We use the most recent close directly.
+  This produces a one-bar lag relative to the ToS chart's plotted
+  band but is the correct behavior for an EOD-batch system.
+
+
+STEP 5 — Detect snap triggers from today's close vs the prior
+22-bar close window
+  The trigger uses the most recent close (today's close) tested
+  against the 22 closes that came before it.
+
+  today_close      = closes[-1]
+  prior_22_window  = closes[-23:-1]    # 22 closes ending at closes[-2]
+  prior_22_low     = min(prior_22_window)
+  prior_22_high    = max(prior_22_window)
+
+  is_22d_low_close  = today_close <= prior_22_low
+  is_22d_high_close = today_close >= prior_22_high
+
+  Note: <= and >= (not strict <) so floating-point ties register.
+  Note: Variable names in the ToS script say "15" — that is dead
+  naming from an earlier window length. The actual window the
+  ToS code tests against is snap_window = 22.
+
+
+STEP 6 — Maintain stateful snap flags
+  Snap state persists across runs. Load prior values from
+  signal_output:
+
+    hrr_snapped_prev = signal_output.hrr_snapped or False
+    lrr_snapped_prev = signal_output.lrr_snapped or False
+
+  If no prior signal_output row exists for the ticker (cold
+  start of a newly-added ticker), default both to False.
+
+  Each flag updates independently. There is NO direction-flip
+  override.
+
+    HRR snap update:
+        if is_22d_low_close:
+            hrr_snapped = True
+        elif today_close > ma_N:
+            hrr_snapped = False
+        else:
+            hrr_snapped = hrr_snapped_prev
+
+    LRR snap update:
+        if is_22d_high_close:
+            lrr_snapped = True
+        elif today_close < ma_N:
+            lrr_snapped = False
+        else:
+            lrr_snapped = lrr_snapped_prev
+
+  Coincidence rule (defensive only — vanishingly rare):
+    If both flags evaluate to True after the updates, LRR takes
+    priority (uptrend bias):
+        if hrr_snapped and lrr_snapped:
+            hrr_snapped = False
+
+  In practice, coincidence requires a close that is both a
+  22-day high AND below MA, which is structurally implausible.
+
+
+STEP 7 — Compute proximity-driven k_snap_dyn
+  Build proximity_raw history bar-by-bar over the prior bars,
+  then EMA-smooth it.
+
+    proximity_raw[t] = abs(closes[t] - ma_N_t) / std_N_t
+
+  where ma_N_t and std_N_t are the rolling-N values at bar t
+  using the same dynamic-N selection rule (Step 3) at that bar.
+  In practice, smooth proximity_raw with a 3-bar EMA over recent
+  bars; the implementation can use the standard EMA formula with
+  alpha = 2/(N+1) = 2/4 = 0.5.
+
+  EMA initialization: seed with proximity_raw[0]; apply standard
+  EMA recursion. Match ToS ExpAverage() behavior.
+
+    proximity = ExpAverage(proximity_raw, 3)
+              # current value is the EMA at the prior bar
+
+    k_snap_dyn = max(k_min, k_max - k_decay * proximity)
+
+  At proximity = 0 (price at MA):       k_snap_dyn = 1.0
+  At proximity = 1.0:                    k_snap_dyn = 0.5
+  At proximity ≥ 1.4:                    k_snap_dyn = 0.3 (floor)
+
+
+STEP 8 — Compute LRR and HRR
+  if hrr_snapped:
+      hrr = ma_N + k_snap_dyn * std_N
+      lrr = ma_N - k_extend  * std_N
+
+  elif lrr_snapped:
+      lrr = ma_N - k_snap_dyn * std_N
+      hrr = ma_N + k_extend  * std_N
+
+  else:
+      hrr = ma_N + k_wide * std_N
+      lrr = ma_N - k_wide * std_N
+
+  Both bands always plot. Snap state determines the formula,
+  never whether the bands exist.
+
+
+DATABASE CHANGES
+----------------
+signal_output table (existing) — add 2 columns:
+
+    hrr_snapped  BOOLEAN NOT NULL DEFAULT FALSE
+    lrr_snapped  BOOLEAN NOT NULL DEFAULT FALSE
+
+signal_history table (existing) — add same 2 columns so
+historical snapshots can reconstruct state:
+
+    hrr_snapped  BOOLEAN NOT NULL DEFAULT FALSE
+    lrr_snapped  BOOLEAN NOT NULL DEFAULT FALSE
+
+Alembic migration required for both tables.
+
+Diagnostic fields (hv_rank, n_window, k_snap_dyn) are NOT
+persisted in v1.9.1. They will be exposed via a future admin
+diagnostic page, which will define its own storage approach.
+
+
+PERSISTENCE LIFECYCLE
+---------------------
+Every run of conviction_engine for the Trade timeframe must:
+
+  1. LOAD prior hrr_snapped / lrr_snapped from signal_output
+  2. COMPUTE the new state per Step 6
+  3. WRITE the new state back to signal_output (UPSERT)
+  4. INCLUDE the new state in the signal_history snapshot
+
+Failure to persist correctly will cause snap state to flicker
+between runs and produce wrong bands.
+
+When CALCULATE SIGNALS is run multiple times within a single
+day with no new data, snap state must remain unchanged across
+those runs. The snap update logic in Step 6 satisfies this
+naturally (same inputs → same outputs).
+
+
+COLD START
+----------
+Production assumption: every active ticker has at least 252
+bars of close history at v1.9.1 go-live. No fallback required.
+
+If a newly-added ticker reaches the conviction engine with
+fewer than 252 bars (defensive case), the function should
+return None values for lrr/hrr and leave snap flags as False.
+Treat the same as the existing insufficient-history path in
+the conviction engine.
+
+
+REMOVAL OF v1.8 CODE
+--------------------
+The v1.8 BB formula in conviction_engine.compute_trade_lrr_hrr()
+is replaced wholesale. No fallback, no toggle. Git history
+preserves the v1.8 implementation if rollback is needed.
+
+
+VALIDATION CHECKLIST
+--------------------
+After implementation, verify against the ToS reference indicator
+on the same ticker / same period. Any divergence > 0.5% on the
+plotted bands is a bug.
+
+  [ ] On a calm sideways period (no recent 22-day extreme):
+      - hrr_snapped = False, lrr_snapped = False
+      - HRR = MA + 2.0σ, LRR = MA - 2.0σ
+      - Bands match standard BB(N) lines
+
+  [ ] On a sharp drop hitting a 22-day low close:
+      - hrr_snapped flips to True same bar
+      - HRR compresses to MA + k_snap_dyn × σ (above MA)
+      - LRR pushed wider to MA - 2.0 × σ
+      - k_snap_dyn observable in band's distance from MA
+
+  [ ] During a sustained rally with LRR_snapped active:
+      - LRR (now snapped) tracks tight under price as
+        proximity rises and k_snap_dyn floors at 0.3
+      - HRR sits at MA + 2.0σ (k_extend, extending side)
+      - LRR snap persists across the rally; releases only on
+        a close < MA
+
+  [ ] EOD freshness:
+      - Band computed at EOD on day T uses closes through day T's
+        close (today's close included)
+      - That band is the operative RR shown on the dashboard the
+        following morning, before day T+1 trading begins
+      - This intentionally diverges from the ToS chart's
+        forward-displaced band (one-bar lag eliminated)
+
+  [ ] State persistence:
+      - Run conviction engine twice in same day with no new data
+      - Snap flags unchanged between runs
+
+  [ ] Numerical match to ToS:
+      - Pick a ticker with active snap state on a reference date
+      - Compare LRR / HRR / N / hv_rank values to the ToS
+        indicator labels on the *same date's bar* — note that
+        Signal Matrix's value at EOD day T should match what
+        ToS plots at the OPEN of day T+1 (one-bar offset by
+        design — see Forward Displacement note in Step 4)
+      - All values match within rounding (< 0.1% drift acceptable
+        from float precision differences between platforms)
+
+
+OPEN ITEMS — TUNING ONLY, NOT BLOCKING
+--------------------------------------
+- Per-ticker calibration of k_max / k_extend may be desirable
+  later (SPX vs GOOGL vol regimes differ). Adjust empirically
+  after multi-week observation. Not in v1.9.1.
+
+- IV30 path: deferred to post-Schwab IV history accumulation.
+  When ≥ 252 days of clean Schwab IV are available, vol_type
+  toggle becomes implementable. Not in v1.9.1.
+
+- Proximity smoothing window (currently 3 bars). If snap level
+  motion looks jittery on production charts, consider 5. Not in
+  v1.9.1.
+
+
+END OF SPEC
+================================================================
