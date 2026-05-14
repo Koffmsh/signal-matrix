@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { apiFetch } from "../../services/api";
 
 const GREEN   = "#00e5a0";
-const ORANGE  = "#ff7043";
+const ORANGE  = "#ff4d6d";
 const PINK    = "#e879f9";
 const GREY    = "#8899aa";
 const BG      = "#07111f";
