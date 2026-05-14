@@ -111,7 +111,7 @@ export default function SpxImpactDashboard() {
           </h1>
           {data?.spx_return_pct != null && (
             <span style={{ fontSize: 13, fontWeight: 600, color: spxColor }}>
-              Est. SPX {fmtSigned(data.spx_return_pct, 3)}
+              SPX {fmtSigned(data.spx_return_pct, 3)}
             </span>
           )}
         </div>

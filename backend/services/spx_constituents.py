@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 import services.schwab_client as schwab_client_svc
 from models.spx_impact_cache import SpxImpactCache
+from models.price_cache import PriceCache
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
@@ -96,6 +97,26 @@ def fetch_spx_weights() -> dict:
             continue
 
     return weights
+
+
+def _get_spx_actual_return(db: Session, is_eod: bool) -> float | None:
+    """
+    Actual SPX daily % change from price_cache.
+    EOD: history_json[-1] (today's close) vs history_json[-2] (yesterday's close).
+    Intraday: price_cache.close (live intraday) vs history_json[-1] (yesterday's EOD close).
+    """
+    spx = db.query(PriceCache).filter(PriceCache.ticker == "SPX").first()
+    if not spx or not spx.history_json:
+        return None
+    closes = json.loads(spx.history_json)
+    if is_eod:
+        if len(closes) < 2 or not closes[-2]:
+            return None
+        return round((closes[-1] - closes[-2]) / closes[-2] * 100, 4)
+    else:
+        if not spx.close or not closes or not closes[-1]:
+            return None
+        return round((spx.close - closes[-1]) / closes[-1] * 100, 4)
 
 
 def _batch_schwab_quotes(client, tickers: list) -> dict:
@@ -207,12 +228,14 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
     detractors   = list(reversed(impacts[-_TOP_N:]))
 
     # ── 4. Persist ───────────────────────────────────────────────────────────
+    spx_actual = _get_spx_actual_return(db, is_eod=True)
+
     row = existing or SpxImpactCache()
     row.snapshot_label    = "eod"
     row.computed_date     = today_et
     row.contributors_json = json.dumps(contributors)
     row.detractors_json   = json.dumps(detractors)
-    row.spx_return_pct    = round(spx_total, 4)
+    row.spx_return_pct    = spx_actual
     row.tickers_priced    = priced_count
     row.weights_json      = json.dumps(weights)
     row.updated_at        = datetime.utcnow()
@@ -224,13 +247,13 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
     logger.info(
         f"SPX impact EOD: done — {priced_count} priced, "
         f"top: {contributors[0]['ticker']}, worst: {detractors[0]['ticker']}, "
-        f"est. SPX move: {spx_total:+.3f}%"
+        f"SPX actual: {spx_actual:+.3f}% (est: {spx_total:+.3f}%)"
     )
     return {
         "status":         "ok",
         "date":           today_et,
         "tickers_priced": priced_count,
-        "spx_return_pct": round(spx_total, 4),
+        "spx_return_pct": spx_actual,
     }
 
 
@@ -282,12 +305,14 @@ def compute_and_cache_spx_impact_intraday(db: Session, label: str) -> dict:
         SpxImpactCache.computed_date  == today_et,
     ).first()
 
+    spx_actual = _get_spx_actual_return(db, is_eod=False)
+
     row = existing or SpxImpactCache()
     row.snapshot_label    = label
     row.computed_date     = today_et
     row.contributors_json = json.dumps(contributors)
     row.detractors_json   = json.dumps(detractors)
-    row.spx_return_pct    = round(spx_total, 4)
+    row.spx_return_pct    = spx_actual
     row.tickers_priced    = priced_count
     row.updated_at        = datetime.utcnow()
 
@@ -297,7 +322,7 @@ def compute_and_cache_spx_impact_intraday(db: Session, label: str) -> dict:
 
     logger.info(
         f"SPX impact {label}: done — {priced_count} priced, "
-        f"top: {contributors[0]['ticker']}, est. SPX move: {spx_total:+.3f}%"
+        f"top: {contributors[0]['ticker']}, SPX actual: {spx_actual:+.3f}%"
     )
     return {
         "status":         "ok",
