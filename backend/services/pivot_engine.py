@@ -503,11 +503,12 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
             if current_price >= d_price:
                 return round(d_price, 4), d_idx, "UPTREND_VALID", True
             if current_price < b_price:
-                if _check_break_confirmed(prices, b_idx, b_price, d_price, "uptrend"):
+                if _check_break_confirmed(prices, d_idx, b_price, d_price, "uptrend"):
                     return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
                 return round(d_price, 4), d_idx, break_state, True
             # Price between B and D — check for unresolved confirmed break below B
-            if _check_break_confirmed(prices, b_idx, b_price, d_price, "uptrend"):
+            # Scan from d_idx (not b_idx): C pullback before D is structural, not a break
+            if _check_break_confirmed(prices, d_idx, b_price, d_price, "uptrend"):
                 return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
         else:
             # Break level is C
@@ -531,11 +532,12 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
             if current_price <= d_price:
                 return round(d_price, 4), d_idx, "DOWNTREND_VALID", True
             if current_price > b_price:
-                if _check_break_confirmed(prices, b_idx, b_price, d_price, "downtrend"):
+                if _check_break_confirmed(prices, d_idx, b_price, d_price, "downtrend"):
                     return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
                 return round(d_price, 4), d_idx, break_state, True
             # Price between D and B — check for unresolved confirmed break above B
-            if _check_break_confirmed(prices, b_idx, b_price, d_price, "downtrend"):
+            # Scan from d_idx (not b_idx): C bounce before D is structural, not a break
+            if _check_break_confirmed(prices, d_idx, b_price, d_price, "downtrend"):
                 return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
         else:
             # Break level is C
