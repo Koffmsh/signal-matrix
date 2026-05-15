@@ -494,13 +494,20 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
 
     if direction == "uptrend":
         if d_extended:
-            # Break level is B (not C) — price below B triggers break
+            # Break level is B (not C) — price below B triggers break.
+            # Recovery requires closing above D (not just B): once a d_extended
+            # BREAK_CONFIRMED fires, the structure is only restored when price
+            # re-establishes D (proves the extension can be reclaimed).
+            # D is defined as max(prices[first_breach:]), so current_price >= d_price
+            # means today IS D re-establishing — return valid immediately.
+            if current_price >= d_price:
+                return round(d_price, 4), d_idx, "UPTREND_VALID", True
             if current_price < b_price:
-                if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
+                if _check_break_confirmed(prices, b_idx, b_price, d_price, "uptrend"):
                     return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
                 return round(d_price, 4), d_idx, break_state, True
-            # Price at or above B — check for unresolved confirmed break below B
-            if _check_break_confirmed(prices, b_idx, b_price, b_price, "uptrend"):
+            # Price between B and D — check for unresolved confirmed break below B
+            if _check_break_confirmed(prices, b_idx, b_price, d_price, "uptrend"):
                 return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
         else:
             # Break level is C
@@ -518,13 +525,17 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
 
     else:  # downtrend
         if d_extended:
-            # Break level is B (not C) — price above B triggers break
+            # Break level is B (not C) — price above B triggers break.
+            # Recovery requires closing below D (not just B): mirror of uptrend rule.
+            # current_price <= d_price means today IS D re-establishing — valid immediately.
+            if current_price <= d_price:
+                return round(d_price, 4), d_idx, "DOWNTREND_VALID", True
             if current_price > b_price:
-                if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
+                if _check_break_confirmed(prices, b_idx, b_price, d_price, "downtrend"):
                     return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
                 return round(d_price, 4), d_idx, break_state, True
-            # Price at or below B — check for unresolved confirmed break above B
-            if _check_break_confirmed(prices, b_idx, b_price, b_price, "downtrend"):
+            # Price between D and B — check for unresolved confirmed break above B
+            if _check_break_confirmed(prices, b_idx, b_price, d_price, "downtrend"):
                 return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
         else:
             # Break level is C
