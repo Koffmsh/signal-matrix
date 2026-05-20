@@ -454,6 +454,7 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     """
     direction     = abc["direction"]
     c_idx         = abc["c_idx"]
+    a_price       = abc["a"]
     b_price       = abc["b"]
     c_price       = abc["c"]
     current_price = prices[-1]
@@ -485,11 +486,11 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         if direction == "uptrend":
             d_price     = max(d_slice)
             d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
-            d_extended  = d_price > b_price + abs(b_price - c_price)
+            d_extended  = d_price > b_price + 0.5 * abs(b_price - a_price)
         else:
             d_price     = min(d_slice)
             d_local_idx = max(i for i, p in enumerate(d_slice) if p == d_price)
-            d_extended  = d_price < b_price - abs(b_price - c_price)
+            d_extended  = d_price < b_price - 0.5 * abs(b_price - a_price)
         d_idx = first_breach + d_local_idx
 
     if direction == "uptrend":

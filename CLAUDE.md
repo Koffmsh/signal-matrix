@@ -134,12 +134,13 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **FORMING eliminated:** "Pullback from D, no new C yet" is now simply `UPTREND_VALID` / `DOWNTREND_VALID` — the trend is confirmed, the pullback is normal operation, no special state needed
 - **EXTENDED removed from `structural_state`** — EXTENDED is now a dedicated boolean field `d_extended` in `signal_pivots` and `signal_output`. `structural_state` never contains "EXTENDED". The five valid `structural_state` values are: `UPTREND_VALID`, `DOWNTREND_VALID`, `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` — nothing else.
 - **WARNING removed from `structural_state`** — WARNING was a conviction-engine concept that conflicted with pivot-engine states (e.g. both BREAK_OF_TRADE and WARNING active simultaneously). The `warning` boolean flag on LRR/HRR cells already communicates it. Never set `state = "WARNING"` in `conviction_engine.py`.
-- **`d_extended` boolean (dedicated field):** D has pushed more than one full BC range beyond B → `d_extended = True`; B becomes the break level (persistent until new C forms)
+- **`d_extended` boolean (dedicated field):** D has pushed more than 50% of the AB impulse beyond B → `d_extended = True`; B becomes the break level (persistent until new C forms)
   ```python
-  bc_range = abs(B - C)
-  d_extended = (D > B + bc_range)   # uptrend
-  d_extended = (D < B - bc_range)   # downtrend
+  ab_range = abs(B - A)
+  d_extended = (D > B + 0.5 * ab_range)   # uptrend
+  d_extended = (D < B - 0.5 * ab_range)   # downtrend
   ```
+  Using 50% of AB (not BC) prevents shallow-C formations from producing a tiny extension threshold. The two formulas are equivalent when C is at the 50% retracement of AB; the AB-based formula is more stable across varying C depths.
   Reversion: when new C forms (D becomes new B, new C established) → `d_extended` resets to False; break level returns to new C
 - **`d_extended` drives:** (1) B vs C selection in `_compute_warn_flags` and `is_warning`; (2) popup `*` asterisk on active break level (B when True, C when False); (3) the B-based break state machine in `compute_d_and_state` when extension threshold is crossed
 - **`d_extended` is independent of `structural_state`** — when extension fires and price subsequently breaks B, state = `BREAK_OF_TRADE` / `BREAK_CONFIRMED` AND `d_extended = True`. The B/C context survives the state transition.
