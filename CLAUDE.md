@@ -693,6 +693,8 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 - **Routes defined:**
   - `/ticker/:symbol` → `TickerAnalysis` stub (future ticker drill-down analysis page)
   - `/vol/*` → `SpxVolChart`
+  - `/spx-impact` → `SpxImpactDashboard`
+  - `/sector` → `SectorPerformance`
   - `/admin` → `AdminPanel` (no sidebar)
   - `*` → `Dashboard` (catch-all)
 - **Rule:** Add new dashboards by appending to `NAV_ITEMS` in `Sidebar.js` — no other files need changing for basic nav items
@@ -707,6 +709,25 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 - **2Y/MAX toggle:** Default 2Y; `useMemo` filters data by ISO date string comparison; toggle buttons styled with active border/background matching dashboard aesthetic
 - **Layout:** 75px horizontal padding on both sides; chart area has `border: 1px solid #1a2a3a`, `borderRadius: 6`, `background: #07111f`
 - **`position: fixed` sidebar fix:** Sidebar stutter on this page was caused by Recharts `ResponsiveContainer` ResizeObserver firing as the flex-layout content width changed during hover transitions. Fixed by making sidebar `position: fixed` — content width never changes.
+
+### Sector Performance Dashboard (`src/components/Macro/SectorPerformance.js`)
+- Route: `/sector` — sidebar nav item "SECTOR PERF" with pie-sector icon
+- **Data:** `apiFetch("/api/sector-performance")` → `{ absolute, relative, labels, as_of }`
+- **Two tables stacked vertically:**
+  1. **Sector Performance** — 11 sector ETFs + S&P 500 (SPX bolded, double-border separator at top)
+  2. **Sector Relative Performance** — same 11 sectors, % change minus SPX for each period; no SPX row
+- **Columns:** SECTOR | TICKER | PRICE | 1-DAY % | MTD % | QTD % | YTD %
+- **Sub-labels** on period columns: e.g. "May 2026" under MTD %, "Q2 2026" under QTD %, "2026" under YTD %
+- **Cell coloring:** positive → `rgba(0,229,160,0.13)` bg + `#00e5a0` text; negative → `rgba(255,77,109,0.13)` bg + `#ff4d6d` text; null → transparent + grey dash
+- **Header:** title left, "SIGNAL MATRIX / EOD · {date}" right — same layout on both tables
+- **Layout:** `padding: "28px 164px"` — matches SPX Impact page cushion
+- **Backend:** `GET /api/sector-performance` in `backend/routers/sector_performance.py`
+  - Reads `history_json` + `history_dates_json` from `price_cache` for all 12 tickers (single `IN` query + `load_only`)
+  - Uses `bisect_left` on the date array to find period-start prices: last close strictly before YTD/QTD/MTD start dates; `prices[-2]` for 1-day prior
+  - Relative = sector % − SPX % for each period column
+  - Returns `labels` dict `{ mtd, qtd, ytd }` with human-readable strings and `as_of` date string
+- **Sector ticker list (hardcoded in router):** XLY, XLF, XLV, XLK, XLP, XLI, XLB, XLE, XLU, XLRE, XLC, SPX
+- **Rule:** SPX price displayed without `$` prefix (index, not a dollar price); all sector ETFs display with `$` prefix
 
 ### Ticker Analysis Page — Stub (`src/components/Analysis/TickerAnalysis.js`)
 - Route: `/ticker/:symbol` — reads symbol from `useParams()`
@@ -834,6 +855,8 @@ signal-matrix/
 │   │   ├── Analysis/
 │   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
+│   │   ├── Macro/
+│   │   │   └── SectorPerformance.js       ← /sector route; absolute + relative sector perf tables (1D/MTD/QTD/YTD vs SPX)
 │   │   ├── Vol/
 │   │   │   └── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
 │   │   └── shared/
@@ -905,7 +928,8 @@ signal-matrix/
 │       ├── scheduler.py                   ← Task 4.2 — Scheduler status endpoint ✅
 │       ├── auth.py                        ← Task 5.3 — Schwab OAuth endpoints ✅
 │       ├── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
-│       └── spx_impact.py                  ← GET /api/spx-impact — returns eod + intraday snapshots ✅
+│       ├── spx_impact.py                  ← GET /api/spx-impact — returns eod + intraday snapshots ✅
+│       └── sector_performance.py          ← GET /api/sector-performance — 1D/MTD/QTD/YTD absolute + relative sector tables
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -2036,6 +2060,7 @@ Full table by timeframe:
   - `d3cc9e1` — fix: HIGH CONVICTION ALERT banner pinned below ticker header (always visible, not scrolled)
   - `bdaa6f8` — feat: HV Rank column + accumulate_hv_only price_cache fix + one-time HV backfill script (migration p1q2r3s4t5u6)
   - `f07ed99` — feat: v1.9.1 Trade RR BB+Snap formula (dynamic-N, IV-primary HV-fallback, stateful snap; migration q2r3s4t5u6v7)
+  - `9dc3c34` — feat: add Sector Performance dashboard — absolute + relative sector tables (/sector route, bisect-based period calcs)
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
