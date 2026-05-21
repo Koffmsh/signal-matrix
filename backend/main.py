@@ -15,6 +15,7 @@ from routers.users import router as users_router
 from routers.quad import router as quad_router
 from routers.vol import router as vol_router
 from routers.spx_impact import router as spx_impact_router
+from routers.sector_performance import router as sector_performance_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import models.signal_hurst    # ensure tables are registered before create_all
@@ -185,6 +186,7 @@ app.include_router(users_router)
 app.include_router(quad_router)
 app.include_router(vol_router)
 app.include_router(spx_impact_router)
+app.include_router(sector_performance_router)
 
 
 @app.get("/health")

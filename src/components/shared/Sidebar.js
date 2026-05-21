@@ -35,6 +35,23 @@ function ImpactIcon({ color }) {
   );
 }
 
+function SectorIcon({ color }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      {/* Pie wedges representing sectors */}
+      <circle cx="8" cy="8" r="6.5" stroke={color} strokeWidth="1.2" fill="none" opacity="0.4" />
+      {/* Top wedge */}
+      <path d="M8 8 L8 1.5 A6.5 6.5 0 0 1 13.6 4.75 Z" fill={color} opacity="0.9" />
+      {/* Right wedge */}
+      <path d="M8 8 L13.6 4.75 A6.5 6.5 0 0 1 13.6 11.25 Z" fill={color} opacity="0.5" />
+      {/* Bottom wedge */}
+      <path d="M8 8 L13.6 11.25 A6.5 6.5 0 0 1 2.4 11.25 Z" fill={color} opacity="0.7" />
+      {/* Left wedge */}
+      <path d="M8 8 L2.4 11.25 A6.5 6.5 0 0 1 8 1.5 Z" fill={color} opacity="0.35" />
+    </svg>
+  );
+}
+
 function LockIcon({ locked, color }) {
   return locked ? (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -70,6 +87,12 @@ const NAV_ITEMS = [
     path: "/spx-impact",
     exact: true,
     icon: (color) => <ImpactIcon color={color} />,
+  },
+  {
+    label: "SECTOR PERF",
+    path: "/sector",
+    exact: true,
+    icon: (color) => <SectorIcon color={color} />,
   },
 ];
 
