@@ -58,20 +58,20 @@ def _compute_emerging_direction(closes: list) -> str | None:
     high_22 = max(closes[-22:])
     low_22  = min(closes[-22:])
 
-    # Emerging Bullish
+    # Emerging Bullish — within 0.5% of 22-day high qualifies (avoids missing near-ATH recoveries)
     if (c0 > ma50_today
             and ma50_today > ma50_5ago
             and c1 > ma50_1ago
             and c2 > ma50_2ago
-            and c0 >= high_22):
+            and c0 >= high_22 * 0.995):
         return "Bullish"
 
-    # Emerging Bearish
+    # Emerging Bearish — within 0.5% of 22-day low qualifies
     if (c0 < ma50_today
             and ma50_today < ma50_5ago
             and c1 < ma50_1ago
             and c2 < ma50_2ago
-            and c0 <= low_22):
+            and c0 <= low_22 * 1.005):
         return "Bearish"
 
     return None
