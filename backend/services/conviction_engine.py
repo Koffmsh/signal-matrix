@@ -208,7 +208,8 @@ def get_vix_mult(vix_close: float | None, asset_class: str) -> tuple:
         return 0.80, "Danger"
 
 
-def get_vix_score(vix_close: float | None, asset_class: str) -> tuple:
+def get_vix_score(vix_close: float | None, asset_class: str,
+                  vix_hrr: float | None = None) -> tuple:
     """
     Component 4 — VIX additive score (v2.0).
     Returns (vix_score, vix_zone).
@@ -216,22 +217,25 @@ def get_vix_score(vix_close: float | None, asset_class: str) -> tuple:
     Non-equity asset classes receive full credit (+15) — no VIX penalty.
     Missing VIX row defaults to full credit (no crash assumed).
 
-    Thresholds (locked — same boundaries as v1.9 multiplier):
-      Investable  VIX < 19   +15
-      Edgy        19–23      +10
-      Choppy      24–29      + 5
-      Danger      ≥ 30         0
+    Thresholds:
+      Investable+  VIX < 19 AND VIX HRR < 19   +15  (vol firmly locked below threshold)
+      Investable   VIX < 19 (HRR still elevated) +10
+      Edgy         19–23                          + 5
+      Choppy       24–29                            0
+      Danger       ≥ 30                             0
     """
     if asset_class not in VIX_REGIME_ASSET_CLASSES:
         return 15, "N/A"
     if vix_close is None:
         return 15, "Unknown"
     if vix_close < 19:
-        return 15, "Investable"
+        if vix_hrr is not None and vix_hrr < 19:
+            return 15, "Investable"
+        return 10, "Investable"
     elif vix_close < 24:
-        return 10, "Edgy"
+        return  5, "Edgy"
     elif vix_close < 30:
-        return  5, "Choppy"
+        return  0, "Choppy"
     else:
         return  0, "Danger"
 
@@ -1144,9 +1148,14 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
     obv_confirming = vol_signal == "Confirming"
 
-    # ── VIX close — read once; used for Layer 4 and display ─────────────────
+    # ── VIX close + HRR — read once; used for Component 4 and display ───────
     vix_row   = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first() if db else None
     vix_close = float(vix_row.close) if (vix_row and vix_row.close is not None) else None
+    vix_sig_row = db.query(SignalOutput).filter(
+        SignalOutput.ticker    == "VIX",
+        SignalOutput.timeframe == "trade",
+    ).first() if db else None
+    vix_hrr = float(vix_sig_row.hrr) if (vix_sig_row and vix_sig_row.hrr is not None) else None
 
     # ── Effective H — display + regime classification only (not in conviction) ─
     h_eff = get_effective_h_trend(
@@ -1200,7 +1209,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             volume_score += 5   # acceleration boost: +5 when slope is accelerating (early in move)
 
     # Component 4 — VIX/Vol (max 15, Domestic Equities only)
-    vix_score, vix_zone = get_vix_score(vix_close, asset_class)
+    vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr)
 
     # Assembly: sum → floor(0) → dampener → cap(100)
     conviction_sum = structural_score + quad_score + volume_score + vix_score
@@ -1216,6 +1225,16 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     if ((_trade_dir == "Bullish" and _hrr_warn) or
             (_trade_dir == "Bearish" and _lrr_warn)):
         conviction_sum = conviction_sum * 0.92
+
+    # NATH boost ×1.05: Viewpoint=Bullish AND trade HRR projects above all-time high
+    # Mirrors the ×0.92 dampener — "buy every dip" when structure + target both point to new highs
+    ath = float(cache_row.ath) if (cache_row and cache_row.ath is not None) else None
+    _trade_hrr = timeframe_results["trade"]["hrr"]
+    if (viewpoint == "Bullish" and
+            _trade_hrr is not None and
+            ath is not None and
+            _trade_hrr > ath):
+        conviction_sum *= 1.05
 
     conviction_final = min(conviction_sum, 100.0)   # cap
 

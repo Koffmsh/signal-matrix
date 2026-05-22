@@ -428,13 +428,16 @@ Critical issues already resolved — do not reintroduce these bugs:
   - Misaligned OBV → **0** (no penalty; caution shown in popup Vol Signal)
 
 - **Component 4 — VIX/Vol (max 15, Domestic Equities only):**
-  - `vix_score`: VIX < 19 → **+15** (Investable); 19–23 → **+10** (Edgy); 24–29 → **+5** (Choppy); ≥ 30 → **0** (Danger)
+  - `vix_score`: VIX < 19 AND VIX HRR < 19 → **+15** (Investable — vol firmly locked below threshold); VIX < 19 (HRR still elevated) → **+10**; 19–23 → **+5** (Edgy); 24–29 → **0** (Choppy); ≥ 30 → **0** (Danger)
+  - VIX HRR sourced from `signal_output` where ticker='VIX', timeframe='trade' — yesterday's stored value
   - All other asset classes: `+15` (no VIX penalty, full credit)
   - Missing VIX row → `+15` (default full credit, no crash assumed)
 
 - **Dampener (×0.92):** applied after floor, before cap. Fires when target-side warn is active:
   - Uptrend: `hrr_warn` fires (HRR < D when d_extended, HRR < B normally) → momentum fading
   - Downtrend: `lrr_warn` fires (LRR > D when d_extended, LRR > B normally) → momentum fading
+
+- **NATH Boost (×1.05):** applied after dampener, before cap. Fires when Viewpoint = Bullish AND trade HRR > `price_cache.ath` (HRR projects above all-time high). Mirrors the ×0.92 dampener — "buy every dip" signal when structure + target both point to new highs.
 
 - **Display and alert rules (v2.0):**
   - Conviction **always calculates** regardless of Viewpoint
@@ -2152,7 +2155,7 @@ git checkout -- .   # roll back if needed
 58. **BREAK_OF_TRADE / BREAK_OF_TREND do NOT change direction to Neutral** — direction holds (Bullish/Bearish) during provisional break; only BREAK_CONFIRMED flips direction to Neutral
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
-61. **VIX score tiers are locked (v2.0)** — Investable (VIX < 19) +15 · Edgy (19–23) +10 · Choppy (24–29) +5 · Danger (≥ 30) +0. **Applies to Domestic Equities only** — all other asset classes receive +15 (full credit, no penalty). `get_vix_score()` returns `(vix_score, vix_zone)`. Do not change these thresholds without explicit instruction.
+61. **VIX score tiers (v2.1)** — Investable+ (VIX < 19 AND VIX HRR < 19) +15 · Investable (VIX < 19) +10 · Edgy (19–23) +5 · Choppy (24–29) +0 · Danger (≥ 30) +0. VIX HRR read from `signal_output` (ticker='VIX', timeframe='trade'). **Applies to Domestic Equities only** — all other asset classes receive +15. `get_vix_score(vix_close, asset_class, vix_hrr)`. **NATH Boost (×1.05):** Viewpoint=Bullish AND trade HRR > `price_cache.ath` → multiply conviction_sum by 1.05 after dampener, before cap. Do not change without explicit instruction.
 66. **Quad score is probability-weighted (v2.0)** — `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0/0.0/-1.0. Viewpoint=Neutral → quad_score=0. Aligned: +20 (prob≥0.45) or +15 (prob<0.45). Misaligned: -15 (prob≥0.45) or -11 (prob<0.45). Neutral alignment: 0. `quad_score` (Integer) is stored in `signal_output` and shown in popup (green/red/grey). `quad_mult` still written to `signal_output` for debug only — not in v2.0 formula and not shown in popup. Index sectors always return 0.
 67. **Quad settings use upsert semantics** — POST to `/api/quad/settings` checks `UNIQUE(country, forecast_month, quad_type)`: updates existing row if found, inserts new row otherwise. `forecast_month` replaces the old `effective_date` key. Conviction reads the US monthly row whose `forecast_month` = current ET month (not most-recent-row). Admin Panel → QUAD SETUP manages this.
 68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.
