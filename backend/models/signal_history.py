@@ -25,10 +25,11 @@ class SignalHistory(Base):
     hrr_warn         = Column(Boolean, nullable=True)
     pivot_b          = Column(Float,   nullable=True)
     pivot_c          = Column(Float,   nullable=True)
-    hrr_snapped      = Column(Boolean, nullable=False, server_default="0")  # v1.9.1 trade RR snap state
-    lrr_snapped      = Column(Boolean, nullable=False, server_default="0")  # v1.9.1 trade RR snap state
-    calculated_at    = Column(String,  nullable=True)   # ISO string from signal_output
-    created_at       = Column(String,  nullable=True)   # UTC timestamp string — when snapshot was written
+    hrr_snapped         = Column(Boolean, nullable=False, server_default="0")  # v1.9.1 trade RR snap state
+    lrr_snapped         = Column(Boolean, nullable=False, server_default="0")  # v1.9.1 trade RR snap state
+    emerging_direction  = Column(String(10), nullable=True)  # "Bullish"|"Bearish"|null — trade tf only
+    calculated_at       = Column(String,  nullable=True)   # ISO string from signal_output
+    created_at          = Column(String,  nullable=True)   # UTC timestamp string — when snapshot was written
 
     __table_args__ = (
         Index("ix_signal_history_date_ticker", "snapshot_date", "ticker"),

@@ -276,6 +276,7 @@ function mergeSignalData(row, signalMap) {
     qFitSort:       sig.quad_fit === "Best" ? 1 : sig.quad_fit === "Worst" ? -1 : 0,
     hTrendUp:       sig.h_trend_up              ?? null,
     hTrendDown:     sig.h_trend_down            ?? null,
+    emergingDir:    sig.trade?.emerging_direction ?? null,
   };
 }
 
@@ -323,14 +324,14 @@ const warnTip = (dir, which, cVal, bVal, isExtended = false) => {
   if (dir === "Bullish")
     return which === "lrr"
       ? isExtended
-        ? `LRR is below B${b ? ` (${b})` : ""} — approaching break level (EXTENDED: B replaces C)`
-        : `LRR is below C${c ? ` (${c})` : ""} — approaching trade invalidation level`
+        ? `LRR is below SUPPORT B${b ? ` (${b})` : ""} — Potential break (EXTENDED: B replaces C)`
+        : `LRR is below SUPPORT C${c ? ` (${c})` : ""} — Potential break`
       : `HRR is below B${b ? ` (${b})` : ""} — target doesn't reach prior swing high`;
   if (dir === "Bearish")
     return which === "hrr"
       ? isExtended
-        ? `HRR is above B${b ? ` (${b})` : ""} — approaching break level (EXTENDED: B replaces C)`
-        : `HRR is above C${c ? ` (${c})` : ""} — approaching trade invalidation level`
+        ? `HRR is above RESISTANCE B${b ? ` (${b})` : ""} — Potential break (EXTENDED: B replaces C)`
+        : `HRR is above RESISTANCE C${c ? ` (${c})` : ""} — Potential break`
       : `LRR is above B${b ? ` (${b})` : ""} — target doesn't reach prior swing low`;
   return "Warning threshold breached";
 };
@@ -749,7 +750,16 @@ function Dashboard() {
           {row.entrySignal === "SELL" && <span style={{ color: "#ff4d6d", fontWeight: "700", fontSize: "10px", letterSpacing: "0.05em" }}>▼ SELL</span>}
         </td>
         {/* Trade Dir */}
-        <td style={{ padding: "9px 8px", color: dirColor(row.tradeDir), fontWeight: "600" }}>{dirIcon(row.tradeDir)} {row.tradeDir}</td>
+        <td style={{ padding: "9px 8px", fontWeight: "600",
+          color: row.tradeDir === "Neutral" && row.emergingDir
+            ? (row.emergingDir === "Bullish" ? "#00e5a0" : "#ff4d6d")
+            : dirColor(row.tradeDir)
+        }}>
+          {row.tradeDir === "Neutral" && row.emergingDir
+            ? <span title="Emerging — No confirmed ABCD pivot structure.">~ {row.emergingDir}</span>
+            : <>{dirIcon(row.tradeDir)} {row.tradeDir}</>
+          }
+        </td>
         {/* Trade LRR — always show (grey when Neutral, color = direction otherwise) */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.tradeLRR != null ? `$${row.tradeLRR.toFixed(2)}` : "—"}
@@ -762,7 +772,7 @@ function Dashboard() {
           {row.tradeDir !== "Neutral" && row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
           {row.tradeDir !== "Neutral" && row.tradeHrrExtended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↑</span>}
           {row.tradeHRR != null && row.ath != null && row.tradeHRR > row.ath && (
-            <span title="HRR projects above all-time high — no prior resistance overhead" style={{ cursor: "help", color: "#00e5a0" }}> ◆</span>
+            <span title="HRR projects new all-time high" style={{ cursor: "help", color: "#00e5a0" }}> ◆</span>
           )}
         </td>
         {/* Trend Dir */}

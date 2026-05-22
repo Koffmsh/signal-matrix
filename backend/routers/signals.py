@@ -16,10 +16,65 @@ from services.conviction_engine import compute_output
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Optional
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/signals", tags=["signals"])
+
+
+def _compute_emerging_direction(closes: list) -> str | None:
+    """
+    Returns "Bullish", "Bearish", or None.
+    Only called when trade_direction == "Neutral" (NO_STRUCTURE or BREAK_CONFIRMED).
+
+    Emerging Bullish — all four must be true:
+      1. close[-1] > MA50 today
+      2. MA50 today > MA50[5 bars ago]   (slope positive)
+      3. Last 3 closes each above their respective MA50  (persistence)
+      4. close[-1] >= max(closes[-22:])  (22-day closing high breakout)
+
+    Mirror conditions for Emerging Bearish.
+    Requires at least 55 bars (50 for MA50 + 5 for slope lookback).
+    """
+    if len(closes) < 55:
+        return None
+
+    import numpy as np
+
+    def ma50(offset=0):
+        end = len(closes) - offset
+        return float(np.mean(closes[end - 50: end]))
+
+    ma50_today = ma50(0)
+    ma50_5ago  = ma50(5)
+    ma50_1ago  = ma50(1)   # MA50 as of 2 bars ago (for close[-2] check)
+    ma50_2ago  = ma50(2)   # MA50 as of 3 bars ago (for close[-3] check)
+
+    c0 = closes[-1]
+    c1 = closes[-2]
+    c2 = closes[-3]
+
+    high_22 = max(closes[-22:])
+    low_22  = min(closes[-22:])
+
+    # Emerging Bullish
+    if (c0 > ma50_today
+            and ma50_today > ma50_5ago
+            and c1 > ma50_1ago
+            and c2 > ma50_2ago
+            and c0 >= high_22):
+        return "Bullish"
+
+    # Emerging Bearish
+    if (c0 < ma50_today
+            and ma50_today < ma50_5ago
+            and c1 < ma50_1ago
+            and c2 < ma50_2ago
+            and c0 <= low_22):
+        return "Bearish"
+
+    return None
 
 
 def get_active_tickers(db: Session) -> list:
@@ -188,6 +243,22 @@ def run_output(db: Session) -> dict:
         "Australia": "AU", "Eurozone": "EU", "United States": "US",
     }
 
+    # Pre-load price history for emerging_direction computation (trade tf only)
+    from models.price_cache import PriceCache
+    from sqlalchemy.orm import load_only as _load_only
+    pc_rows = (
+        db.query(PriceCache)
+        .options(_load_only(PriceCache.ticker, PriceCache.history_json))
+        .filter(PriceCache.history_json.isnot(None))
+        .all()
+    )
+    price_history_map = {}
+    for pc in pc_rows:
+        try:
+            price_history_map[pc.ticker] = json.loads(pc.history_json)
+        except Exception:
+            pass
+
     # Pre-load all existing signal_output rows to avoid per-ticker queries
     all_output_rows = db.query(SignalOutput).all()
     prior_ranges_map = {}
@@ -246,6 +317,13 @@ def run_output(db: Session) -> dict:
             else:
                 viewpoint_since = None                          # Neutral — clear
 
+            # Emerging direction — only when trade direction is Neutral
+            trade_dir_val = data["trade"].get("direction") if data.get("trade") else None
+            emerging_dir  = None
+            if trade_dir_val == "Neutral":
+                closes = price_history_map.get(ticker, [])
+                emerging_dir = _compute_emerging_direction(closes)
+
             for tf in ("trade", "trend", "lt"):
                 tf_data  = data[tf]
                 row_id   = f"{ticker}_{tf}"
@@ -279,10 +357,11 @@ def run_output(db: Session) -> dict:
                     obv_confirming   = data.get("obv_confirming"),
                     h_trade_delta    = h_trade_delta if tf == "trade" else None,
                     vix_regime       = data.get("vix_regime"),
-                    quad_alignment   = data.get("quad_alignment"),
-                    quad_mult        = data.get("quad_mult"),
-                    quad_score       = data.get("quad_score"),
-                    calculated_at    = now,
+                    quad_alignment      = data.get("quad_alignment"),
+                    quad_mult           = data.get("quad_mult"),
+                    quad_score          = data.get("quad_score"),
+                    emerging_direction  = emerging_dir if tf == "trade" else None,
+                    calculated_at       = now,
                 )
 
                 existing = next(
@@ -349,10 +428,11 @@ def snapshot_signals(trigger: str, db: Session) -> dict:
             hrr_warn         = row.hrr_warn,
             pivot_b          = row.pivot_b,
             pivot_c          = row.pivot_c,
-            hrr_snapped      = bool(row.hrr_snapped or False),
-            lrr_snapped      = bool(row.lrr_snapped or False),
-            calculated_at    = str(row.calculated_at) if row.calculated_at else None,
-            created_at       = now_utc_str,
+            hrr_snapped         = bool(row.hrr_snapped or False),
+            lrr_snapped         = bool(row.lrr_snapped or False),
+            emerging_direction  = row.emerging_direction,
+            calculated_at       = str(row.calculated_at) if row.calculated_at else None,
+            created_at          = now_utc_str,
         ))
         inserted += 1
 
@@ -548,9 +628,10 @@ def get_stored_signals(db: Session = Depends(get_db)):
             "lrr_extended":     bool(row.lrr_extended)  if row.lrr_extended  is not None else False,
             "hrr_extended":     bool(row.hrr_extended)  if row.hrr_extended  is not None else False,
             "d_extended":       bool(row.d_extended)    if row.d_extended    is not None else False,
-            "pivot_b":          row.pivot_b,
-            "pivot_c":          row.pivot_c,
-            "h_trade_delta":    row.h_trade_delta if row.timeframe == "trade" else None,
+            "pivot_b":            row.pivot_b,
+            "pivot_c":            row.pivot_c,
+            "h_trade_delta":      row.h_trade_delta if row.timeframe == "trade" else None,
+            "emerging_direction": row.emerging_direction if row.timeframe == "trade" else None,
         }
         if row.conviction is not None:
             by_ticker[t]["conviction"] = row.conviction
