@@ -83,6 +83,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "vrp_1d_chg":      row.vrp_1d_chg,
         "vrp_1w_chg":      row.vrp_1w_chg,
         "vrp_1m_chg":      row.vrp_1m_chg,
+        "ath":             row.ath,
         "updated":         row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M") if row.updated_at else None,
     }
 
@@ -132,10 +133,13 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
         existing.history_json        = json.dumps(data["history_prices"])
         existing.history_dates_json  = json.dumps(data["history_dates"])
         existing.volume_history_json = json.dumps(data["volume_history"])
+        _hp = data["history_prices"]
+        existing.ath                 = round(float(max(_hp)), 4) if _hp else existing.ath
         existing.cache_date          = today
         existing.updated_at          = datetime.utcnow()
         existing.data_source         = "yahoo"
     else:
+        _hp = data["history_prices"]
         db.add(PriceCache(
             ticker               = data["ticker"],
             yahoo_symbol         = data["yahoo_symbol"],
@@ -151,6 +155,7 @@ def get_or_fetch(ticker: str, today: str, db: Session) -> dict | None:
             history_json         = json.dumps(data["history_prices"]),
             history_dates_json   = json.dumps(data["history_dates"]),
             volume_history_json  = json.dumps(data["volume_history"]),
+            ath                  = round(float(max(_hp)), 4) if _hp else None,
             cache_date           = today,
             data_source          = "yahoo",
         ))
@@ -230,6 +235,28 @@ def refresh_data(db: Session) -> dict:
     except Exception as e:
         logger.warning(f"VVIX price rank computation skipped: {e}")
 
+    # ATH backfill — compute ath for any rows that have history_json but ath IS NULL.
+    # Runs after every REFRESH DATA; cheap (in-memory max on already-fetched history).
+    try:
+        db.expire_all()
+        null_ath_rows = (
+            db.query(PriceCache)
+            .filter(PriceCache.ath.is_(None), PriceCache.history_json.isnot(None))
+            .all()
+        )
+        if null_ath_rows:
+            for pc in null_ath_rows:
+                try:
+                    hp = json.loads(pc.history_json)
+                    if hp:
+                        pc.ath = round(float(max(hp)), 4)
+                except Exception:
+                    pass
+            db.commit()
+            logger.info(f"ATH backfill: stamped {len(null_ath_rows)} rows")
+    except Exception as e:
+        logger.warning(f"ATH backfill skipped: {e}")
+
     # Read all active tickers from cache in one query — avoids N+1 round trips to Supabase.
     # load_only skips history_json / volume_history_json blobs (not needed for page load).
     tickers = get_active_tickers(db)
@@ -243,6 +270,7 @@ def refresh_data(db: Session) -> dict:
             PriceCache.hv30, PriceCache.hv90, PriceCache.iv30,
             PriceCache.risk_reversal, PriceCache.skew_rank, PriceCache.put_call_ratio, PriceCache.vrp_rank,
             PriceCache.vrp_1d_chg, PriceCache.vrp_1w_chg, PriceCache.vrp_1m_chg,
+            PriceCache.ath,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()
@@ -284,6 +312,7 @@ def get_cached(db: Session = Depends(get_db)):
             PriceCache.hv30, PriceCache.hv90, PriceCache.iv30,
             PriceCache.risk_reversal, PriceCache.skew_rank, PriceCache.put_call_ratio, PriceCache.vrp_rank,
             PriceCache.vrp_1d_chg, PriceCache.vrp_1w_chg, PriceCache.vrp_1m_chg,
+            PriceCache.ath,
             PriceCache.spark_json, PriceCache.data_source, PriceCache.updated_at,
         ))
         .all()

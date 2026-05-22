@@ -43,3 +43,4 @@ class PriceCache(Base):
     vrp_1d_chg         = Column(Float,   nullable=True)   # VRP change vs 1 trading day ago
     vrp_1w_chg         = Column(Float,   nullable=True)   # VRP change vs 5 trading days ago (≈1 week)
     vrp_1m_chg         = Column(Float,   nullable=True)   # VRP change vs 21 trading days ago (≈1 month)
+    ath                = Column(Float,   nullable=True)   # all-time high from 5-year price history

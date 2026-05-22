@@ -180,6 +180,7 @@ def _append_bar(existing: PriceCache, close: float, volume: int,
     existing.history_high_json   = json.dumps(highs)
     existing.history_low_json    = json.dumps(lows)
     existing.volume_history_json = json.dumps(vols)
+    existing.ath                 = round(float(max(prices)), 4) if prices else existing.ath
     existing.cache_date          = today
     existing.updated_at          = datetime.utcnow()
     existing.data_source         = data_source
@@ -240,6 +241,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         existing.history_high_json   = json.dumps(new_h) if new_h else existing.history_high_json
         existing.history_low_json    = json.dumps(new_l) if new_l else existing.history_low_json
         existing.volume_history_json = json.dumps(new_v)
+        existing.ath                 = round(float(max(new_p)), 4) if new_p else existing.ath
         existing.cache_date          = today
         existing.updated_at          = datetime.utcnow()
         existing.data_source         = data_source
@@ -270,6 +272,7 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
             history_high_json    = json.dumps(new_h) if new_h else None,
             history_low_json     = json.dumps(new_l) if new_l else None,
             volume_history_json  = json.dumps(data["volume_history"]),
+            ath                  = round(float(max(new_p)), 4) if new_p else None,
             cache_date           = today,
             data_source          = data_source,
         ))

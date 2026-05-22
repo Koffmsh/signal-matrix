@@ -214,6 +214,7 @@ function mergeRealData(mockRow, realDataMap) {
     vrp1dChg:       real.vrp_1d_chg      ?? null,
     vrp1wChg:       real.vrp_1w_chg      ?? null,
     vrp1mChg:       real.vrp_1m_chg      ?? null,
+    ath:            real.ath             ?? null,
   };
 }
 
@@ -760,6 +761,9 @@ function Dashboard() {
           {row.tradeHRR != null ? `$${row.tradeHRR.toFixed(2)}` : "—"}
           {row.tradeDir !== "Neutral" && row.tradeHrrWarn && <span title={warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, row.tradeExtended)} style={{ cursor: "help" }}> ⚠</span>}
           {row.tradeDir !== "Neutral" && row.tradeHrrExtended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help" }}> ↑</span>}
+          {row.tradeHRR != null && row.ath != null && row.tradeHRR > row.ath && (
+            <span title="HRR projects above all-time high — no prior resistance overhead" style={{ cursor: "help", color: "#00e5a0" }}> ◆</span>
+          )}
         </td>
         {/* Trend Dir */}
         <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
