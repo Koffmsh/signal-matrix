@@ -1161,7 +1161,9 @@ function Dashboard() {
           // ── TRADE ────────────────────────────────────────────────────────
           SECTION("TRADE"),
           ["__dual__", [
-            ["Trade Dir", `${dirIcon(row.tradeDir)} ${row.tradeDir}`, dirColor(row.tradeDir), false, null],
+            ["Trade Dir", row.tradeDir === "Neutral" && row.emergingDir ? `~ ${row.emergingDir}` : `${dirIcon(row.tradeDir)} ${row.tradeDir}`,
+                          row.tradeDir === "Neutral" && row.emergingDir ? (row.emergingDir === "Bullish" ? "#00e5a0" : "#ff4d6d") : dirColor(row.tradeDir),
+                          false, row.tradeDir === "Neutral" && row.emergingDir ? "Emerging — No confirmed ABCD pivot structure." : null],
             ["Trade State", row.tradeState || "—", stateColor(row.tradeState), true, null]
           ]],
           ["Trade LRR",    row.tradeLRR != null ? `${fmtPrice(row.tradeLRR)}${row.tradeDir !== "Neutral" && row.tradeLrrWarn ? " ⚠" : ""}${row.tradeDir !== "Neutral" && row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
