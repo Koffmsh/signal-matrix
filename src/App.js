@@ -1148,7 +1148,7 @@ function Dashboard() {
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["VIX Regime",   row.vixRegime || "—",
                            (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Edgy" ? "#8899aa" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
-                           false, "VIX regime at time of signal calculation (v2.0 additive)\nInvestable (VIX < 19) — Domestic Equities +15\nEdgy (19–23) — +10\nChoppy (24–29) — +5\nDanger (≥ 30) — +0\nAll other asset classes: +15 (no VIX penalty)"],
+                           false, "VIX regime at time of signal calculation (v2.1 additive)\nInvestable + HRR < 19 — Domestic Equities +15\nInvestable (VIX < 19, HRR ≥ 19) — +10\nEdgy (19–23) — +5\nChoppy (24–29) — +0\nDanger (≥ 30) — +0\nAll other asset classes: +15 (no VIX penalty)"],
           ...(row.quadAlignment ? [
             ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
                                row.quadAlignment === "Aligned" ? "#00e5a0" : row.quadAlignment === "Misaligned" ? "#ff4d6d" : "#8899aa",
