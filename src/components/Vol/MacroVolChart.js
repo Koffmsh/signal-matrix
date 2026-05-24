@@ -147,7 +147,10 @@ function StatsTable({ stats, tickers }) {
             <th style={{ ...thStyle, textAlign: "left", width: 80 }}>Series</th>
             {cols.map(c => <th key={c.key} style={thStyle}>{c.label}</th>)}
             {changeCols.map(c => (
-              <th key={c.label} style={thStyle} colSpan={2}>{c.label}</th>
+              <>
+                <th key={c.label}     style={thStyle}>{c.label}</th>
+                <th key={c.label+"_"} style={thStyle} />
+              </>
             ))}
           </tr>
           <tr>
