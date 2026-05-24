@@ -52,6 +52,16 @@ function SectorIcon({ color }) {
   );
 }
 
+function MacroVolIcon({ color }) {
+  // Multiple rising vol lines — cross-asset feel
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <polyline points="1,13 4,9 7,11 10,6 13,8 15,5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <polyline points="1,11 4,7 7,9 10,4 13,6 15,3" stroke={color} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.5" />
+    </svg>
+  );
+}
+
 function LockIcon({ locked, color }) {
   return locked ? (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -79,8 +89,14 @@ const NAV_ITEMS = [
   {
     label: "SPX VOL",
     path: "/vol",
-    exact: false,
+    exact: true,
     icon: (color) => <VolIcon color={color} />,
+  },
+  {
+    label: "MACRO VOL",
+    path: "/vol/macro",
+    exact: true,
+    icon: (color) => <MacroVolIcon color={color} />,
   },
   {
     label: "SPX IMPACT",

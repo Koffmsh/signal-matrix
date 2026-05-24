@@ -100,6 +100,20 @@ export async function fetchSpxVolHistory() {
 }
 
 /**
+ * Macro Volatility dashboard — close price history + stats for VIX, VXN, RVX, GVZ, OVX, MOVE.
+ */
+export async function fetchMacroVolHistory() {
+  try {
+    const response = await apiFetch(`/api/vol/macro-history`);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchMacroVolHistory failed", err);
+    return null;
+  }
+}
+
+/**
  * Fetch single ticker quote.
  * Useful for debugging in browser console:
  *   import { fetchQuote } from './services/api';

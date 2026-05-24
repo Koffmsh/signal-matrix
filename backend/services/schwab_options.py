@@ -37,7 +37,11 @@ logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 
 # These tickers are excluded — indices have non-standard chain structure; futures use different chain APIs
-IV_INELIGIBLE = {"VIX", "$DJI", "SPX", "NDX", "RUT", "/CL", "/ZN", "/GC", "VVIX"}
+IV_INELIGIBLE = {
+    "VIX", "$DJI", "SPX", "NDX", "RUT", "/CL", "/ZN", "/GC", "VVIX",
+    # Macro vol indices — no standard options chains
+    "VXN", "RVX", "GVZ", "OVX", "MOVE",
+}
 
 # Minimum vol_history observations required before ranks are meaningful.
 _RANK_MIN_HISTORY = 30
@@ -556,7 +560,11 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
 
 
 # Tickers that route through Yahoo (no Schwab price quote) — HV accumulated daily from price history
-_HV_ONLY_TICKERS = {"SPX", "NDX", "RUT", "VIX", "$DJI", "USD", "JPY", "/CL", "/ZN", "/GC", "VVIX"}
+_HV_ONLY_TICKERS = {
+    "SPX", "NDX", "RUT", "VIX", "$DJI", "USD", "JPY", "/CL", "/ZN", "/GC", "VVIX",
+    # Macro vol indices
+    "VXN", "RVX", "GVZ", "OVX", "MOVE",
+}
 
 
 def accumulate_hv_only(db: Session) -> dict:

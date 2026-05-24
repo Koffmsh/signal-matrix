@@ -28,6 +28,12 @@ YAHOO_SYMBOL_MAP = {
     "/CL":  "CL=F",    # WTI Crude Oil front-month futures
     "/ZN":  "ZN=F",    # 10-Year Treasury Note futures
     "/GC":  "GC=F",    # Gold futures
+    # Macro volatility indices — Schwab-unsupported, Yahoo-only
+    "VXN":  "^VXN",   # Nasdaq 100 Volatility Index
+    "RVX":  "^RVX",   # Russell 2000 Volatility Index
+    "GVZ":  "^GVZ",   # CBOE Gold ETF Volatility Index
+    "OVX":  "^OVX",   # CBOE Crude Oil ETF Volatility Index
+    "MOVE": "^MOVE",  # ICE BofA MOVE Index (bond market volatility)
 }
 
 def get_yahoo_symbol(ticker: str) -> str:
