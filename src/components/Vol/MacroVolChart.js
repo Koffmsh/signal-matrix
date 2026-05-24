@@ -22,10 +22,9 @@ const GREEN   = "#00e5a0";
 const RED     = "#ff4d6d";
 const AMBER   = "#f0b429";
 
-// Tickers shown in chart (MOVE on separate dashboard)
-const CHART_TICKERS = ["VIX", "VXN", "RVX", "GVZ", "OVX"];
-// All tickers in stats table
-const STAT_TICKERS  = ["VIX", "VXN", "RVX", "GVZ", "OVX", "MOVE"];
+// Preferred order — tickers with no data are filtered out automatically at render time
+const CHART_TICKER_ORDER = ["VIX", "VXN", "RVX", "GVZ", "OVX"];
+const STAT_TICKER_ORDER  = ["VIX", "VXN", "RVX", "GVZ", "OVX", "MOVE"];
 
 const LABELS = {
   VIX:  "VIX",
@@ -83,27 +82,25 @@ function XTick({ x, y, payload }) {
 // ── Tooltip ───────────────────────────────────────────────────────────────────
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
+  // Show all series present in payload, in order
+  const entries = payload.filter(p => p.value != null);
   return (
     <div style={{
       background: "#0d1f33", border: "1px solid #1a2a3a",
       borderRadius: 6, padding: "8px 12px", fontSize: 11,
     }}>
       <div style={{ color: LABEL, marginBottom: 6, fontWeight: 600 }}>{label}</div>
-      {CHART_TICKERS.map(tk => {
-        const entry = payload.find(p => p.dataKey === tk);
-        if (!entry || entry.value == null) return null;
-        return (
-          <div key={tk} style={{ color: COLORS[tk], marginBottom: 2 }}>
-            {LABELS[tk]}: {entry.value.toFixed(2)}
-          </div>
-        );
-      })}
+      {entries.map(p => (
+        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? TEXT, marginBottom: 2 }}>
+          {LABELS[p.dataKey] ?? p.dataKey}: {p.value.toFixed(2)}
+        </div>
+      ))}
     </div>
   );
 }
 
 // ── Stats table ───────────────────────────────────────────────────────────────
-function StatsTable({ stats }) {
+function StatsTable({ stats, tickers }) {
   const cols = [
     { key: "last",      label: "Last" },
     { key: "day1",      label: "Prior Day" },
@@ -169,7 +166,7 @@ function StatsTable({ stats }) {
           </tr>
         </thead>
         <tbody>
-          {STAT_TICKERS.map((tk, i) => {
+          {tickers.map((tk, i) => {
             const s = stats[tk];
             const isMOVE = tk === "MOVE";
             const rowBg = i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)";
@@ -251,17 +248,28 @@ export default function MacroVolChart() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Derive which tickers actually have data from the API response
+  const chartTickers = useMemo(() => {
+    if (!rawData?.series) return [];
+    return CHART_TICKER_ORDER.filter(tk => rawData.series[tk]?.length > 0);
+  }, [rawData]);
+
+  const statTickers = useMemo(() => {
+    if (!rawData?.stats) return [];
+    return STAT_TICKER_ORDER.filter(tk => rawData.stats[tk] != null);
+  }, [rawData]);
+
   // Build flat chart rows from {dates, series}
   const allRows = useMemo(() => {
     if (!rawData) return [];
     return rawData.dates.map((d, i) => {
       const row = { date: d };
-      CHART_TICKERS.forEach(tk => {
+      chartTickers.forEach(tk => {
         row[tk] = rawData.series[tk]?.[i] ?? null;
       });
       return row;
     });
-  }, [rawData]);
+  }, [rawData, chartTickers]);
 
   const displayData = useMemo(() => {
     if (range === "max" || allRows.length === 0) return allRows;
@@ -318,7 +326,7 @@ export default function MacroVolChart() {
         <div>
           {/* Legend + Range toggle */}
           <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 14, paddingLeft: 4, flexWrap: "wrap" }}>
-            {CHART_TICKERS.map(tk => (
+            {chartTickers.map(tk => (
               <LegendDot
                 key={tk}
                 color={COLORS[tk]}
@@ -402,7 +410,7 @@ export default function MacroVolChart() {
                 <Tooltip content={<ChartTooltip />} />
 
                 {/* Left-axis lines */}
-                {["VIX", "VXN", "RVX", "GVZ"].map(tk => (
+                {chartTickers.filter(tk => tk !== "OVX").map(tk => (
                   <Line
                     key={tk}
                     yAxisId="left"
@@ -415,22 +423,24 @@ export default function MacroVolChart() {
                   />
                 ))}
 
-                {/* OVX — right axis, slightly thicker */}
-                <Line
-                  yAxisId="right"
-                  dataKey="OVX"
-                  stroke={COLORS.OVX}
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                  connectNulls={false}
-                />
+                {/* OVX — right axis, slightly thicker (only if data present) */}
+                {chartTickers.includes("OVX") && (
+                  <Line
+                    yAxisId="right"
+                    dataKey="OVX"
+                    stroke={COLORS.OVX}
+                    strokeWidth={1.5}
+                    dot={false}
+                    isAnimationActive={false}
+                    connectNulls={false}
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
 
           {/* Stats table */}
-          <StatsTable stats={rawData?.stats ?? {}} />
+          <StatsTable stats={rawData?.stats ?? {}} tickers={statTickers} />
 
           {/* MOVE note */}
           <div style={{ marginTop: 10, fontSize: 9, color: TEXT, letterSpacing: "0.05em" }}>
