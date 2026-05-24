@@ -51,8 +51,19 @@ SCHWAB_SYMBOL_MAP = {
 # Without this routing, Schwab errors leave updated_at stale → REFRESH DATA stays amber
 SCHWAB_UNSUPPORTED = {
     "USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX",
-    # Macro vol indices — Schwab doesn't serve these index vol series; route to Yahoo
+    # Macro vol indices — batch quotes don't work; history API with $ prefix does
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
+}
+
+# Macro vol index tickers fetchable via Schwab get_price_history() using $ prefix.
+# These are a subset of SCHWAB_UNSUPPORTED — excluded from batch quotes but served
+# via per-ticker history calls. Yahoo is the fallback if Schwab is unavailable.
+SCHWAB_INDEX_HISTORY_MAP = {
+    "VXN":  "$VXN",   # Nasdaq 100 Volatility Index
+    "RVX":  "$RVX",   # Russell 2000 Volatility Index
+    "GVZ":  "$GVZ",   # CBOE Gold ETF Volatility Index
+    "OVX":  "$OVX",   # CBOE Crude Oil ETF Volatility Index
+    "MOVE": "$MOVE",  # ICE BofA MOVE Index (bond market vol)
 }
 
 
@@ -464,6 +475,137 @@ def yahoo_fetch_intraday_quotes(db: Session) -> dict:
     return {"fetched": fetched, "errors": errors}
 
 
+# ── Schwab index history fetch ────────────────────────────────────────────────
+
+def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
+    """
+    Fetch price history for macro vol index tickers via Schwab get_price_history().
+
+    These tickers (VXN, RVX, GVZ, OVX, MOVE) are in SCHWAB_UNSUPPORTED because
+    Schwab's batch quotes API cannot quote them.  However, get_price_history() works
+    when the symbol is prefixed with $ (e.g. $VXN, $RVX).
+
+    Same gap-detection modes as the main Schwab path.  The last candle in the
+    history response serves as today's quote (no separate batch quote available).
+    """
+    import pandas as pd
+
+    PH    = schwab.client.Client.PriceHistory
+    today = datetime.now(_ET).strftime("%Y-%m-%d")
+
+    fetched = 0
+    errors  = 0
+
+    existing_map = {
+        r.ticker: r
+        for r in db.query(PriceCache).filter(PriceCache.ticker.in_(tickers)).all()
+    }
+
+    for app_ticker in tickers:
+        schwab_sym = SCHWAB_INDEX_HISTORY_MAP.get(app_ticker)
+        if not schwab_sym:
+            logger.warning(f"Schwab index: no symbol mapping for {app_ticker} — skipping")
+            errors += 1
+            continue
+
+        existing_row = existing_map.get(app_ticker)
+        mode         = _history_fetch_mode(existing_row, today)
+
+        if mode == "skip":
+            logger.debug(f"Schwab index: history current for {app_ticker} — skipping")
+            fetched += 1
+            continue
+
+        # Append and short gaps both use a 1-month fetch (lightweight, covers any gap ≤ 45d).
+        # Bootstrap fetches the full 5-year history.
+        if mode in ("short", "append"):
+            period_type, period = PH.PeriodType.MONTH, PH.Period.ONE_MONTH
+            logger.info(f"Schwab index: gap fill (1m) for {app_ticker}")
+        else:  # bootstrap
+            period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
+            cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
+            logger.info(f"Schwab index: bootstrap (5y) for {app_ticker} ({cached_len} bars cached)")
+
+        try:
+            hist_resp = client.get_price_history(
+                schwab_sym,
+                period_type              = period_type,
+                period                   = period,
+                frequency_type           = PH.FrequencyType.DAILY,
+                frequency                = PH.Frequency.DAILY,
+                need_extended_hours_data = False,
+            )
+            hist_resp.raise_for_status()
+            candles = hist_resp.json().get("candles", [])
+        except Exception as e:
+            logger.warning(f"Schwab index: history fetch failed for {app_ticker}: {e}")
+            errors += 1
+            time.sleep(0.5)
+            continue
+
+        if len(candles) < 2:
+            logger.warning(f"Schwab index: insufficient history ({len(candles)} candles) for {app_ticker}")
+            errors += 1
+            time.sleep(0.5)
+            continue
+
+        # Parse candles
+        history_prices = [round(float(c["close"]),            4) for c in candles]
+        history_highs  = [round(float(c.get("high", c["close"])), 4) for c in candles]
+        history_lows   = [round(float(c.get("low",  c["close"])), 4) for c in candles]
+        history_dates  = [
+            datetime.fromtimestamp(c["datetime"] / 1000, tz=_ET).strftime("%Y-%m-%d")
+            for c in candles
+        ]
+        volume_history = [int(c.get("volume", 0)) for c in candles]
+
+        close = history_prices[-1]
+        high  = history_highs[-1]
+        low   = history_lows[-1]
+        vol   = volume_history[-1]
+
+        if mode == "append" and existing_row:
+            # For append, just tack on the new bar — no need to recompute the full series
+            _append_bar(existing_row, close, vol, today, "schwab",
+                        high=high, low=low)
+        else:
+            # Short gap or bootstrap — full upsert with merge logic
+            closes_s     = pd.Series(history_prices)
+            spark_raw    = history_prices[-60:] if len(history_prices) >= 60 else history_prices
+            spark_prices = [round(p, 2) for p in spark_raw]
+
+            ma20   = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
+            ma50   = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
+            ma100  = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
+            rel_iv = compute_realized_vol_percentile(closes_s)
+
+            _upsert(db, {
+                "ticker":         app_ticker,
+                "schwab_symbol":  schwab_sym,
+                "close":          close,
+                "volume":         vol,
+                "daily_high":     high,
+                "daily_low":      low,
+                "ma20":           ma20,
+                "ma50":           ma50,
+                "ma100":          ma100,
+                "rel_iv":         rel_iv,
+                "spark_prices":   spark_prices,
+                "history_prices": history_prices,
+                "history_dates":  history_dates,
+                "history_highs":  history_highs,
+                "history_lows":   history_lows,
+                "volume_history": volume_history,
+            }, data_source="schwab")
+
+        fetched += 1
+        time.sleep(0.5)  # rate limit guard
+
+    db.commit()
+    logger.info(f"Schwab index histories: {fetched} fetched, {errors} errors")
+    return {"fetched": fetched, "errors": errors}
+
+
 # ── Schwab fetch ──────────────────────────────────────────────────────────────
 
 def _schwab_fetch(db: Session, client, tickers: list) -> dict:
@@ -610,9 +752,14 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
 
     db.commit()
 
-    # Tickers Schwab doesn't carry — fetch from Yahoo tagged as 'yahoo'
-    if unsupported:
-        _yahoo_fetch_subset(db, unsupported, data_source="yahoo")
+    # Split unsupported: index vol tickers go to Schwab history API; rest go to Yahoo
+    yahoo_only   = [t for t in unsupported if t not in SCHWAB_INDEX_HISTORY_MAP]
+    schwab_index = [t for t in unsupported if t in SCHWAB_INDEX_HISTORY_MAP]
+
+    if yahoo_only:
+        _yahoo_fetch_subset(db, yahoo_only, data_source="yahoo")
+    if schwab_index:
+        _schwab_fetch_index_histories(db, schwab_index, client)
 
     logger.info(f"Schwab fetch complete: {fetched} fetched, {errors} errors")
     return {"fetched": fetched, "errors": errors, "data_source": "schwab"}

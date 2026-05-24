@@ -134,8 +134,14 @@ def macro_vol_history(db: Session = Depends(get_db)):
 
     stats: dict[str, dict] = {}
     for ticker, (dates, closes) in ticker_data.items():
-        last = round(closes[-1], 2) if closes else None
-        prev = round(closes[-2], 2) if len(closes) >= 2 else None
+        # Anchor last/prev to the common date axis so weekend bars (Schwab artifact)
+        # don't cause spurious 0-delta when a ticker has a Saturday bar past the
+        # last real trading day.
+        date_to_close = dict(zip(dates, closes))
+        last_date     = common_dates[-1] if common_dates else None
+        prev_date     = common_dates[-2] if len(common_dates) >= 2 else None
+        last = round(date_to_close[last_date], 2) if last_date and last_date in date_to_close else None
+        prev = round(date_to_close[prev_date], 2) if prev_date and prev_date in date_to_close else None
         wk1  = _find_price_n_days_ago(dates, closes, 7)
         mo1  = _find_price_n_days_ago(dates, closes, 30)
         mo3  = _find_price_n_days_ago(dates, closes, 91)
