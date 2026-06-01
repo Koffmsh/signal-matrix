@@ -413,7 +413,8 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 - **Component 2 — Quad (+20 / 0 / −15, prob-weighted):**
   - `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0 / 0.0 / -1.0
-  - Viewpoint = Neutral → `quad_score = 0` (macro tailwind ≠ conviction without structural direction)
+  - `structural_score == 0` AND Viewpoint = Neutral → `quad_score = 0` (no directional evidence in either timeframe)
+  - `structural_score == 25` (one timeframe confirmed, one Neutral) → quad allowed to contribute. Strong uptrends can prevent trade ABC from confirming — macro tailwind still meaningful when at least one timeframe has direction.
   - Aligned (alignment > 0), prob ≥ 0.45 → **+20**; prob < 0.45 → **+15**
   - Neutral (alignment = 0) → **0**
   - Misaligned (alignment < 0), prob ≥ 0.45 → **−15**; prob < 0.45 → **−11**
