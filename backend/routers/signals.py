@@ -328,7 +328,7 @@ def run_output(db: Session) -> dict:
                 tf_data  = data[tf]
                 row_id   = f"{ticker}_{tf}"
 
-                conviction = data["conviction"] if new_viewpoint != "Neutral" else None
+                conviction = data["conviction"]
 
                 fields = dict(
                     ticker           = ticker,
