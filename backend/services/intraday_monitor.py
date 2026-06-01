@@ -282,10 +282,11 @@ def run_intraday_check(db: Session) -> dict:
 
             if level_50 is not None:
                 triggered = (
-                    (piv.structural_state == "UPTREND_VALID"   and close <= level_50) or
-                    (piv.structural_state == "DOWNTREND_VALID" and close >= level_50)
+                    (piv.structural_state == "UPTREND_VALID"   and viewpoint == "Bullish" and close <= level_50) or
+                    (piv.structural_state == "DOWNTREND_VALID" and viewpoint == "Bearish" and close >= level_50)
                 )
-                if triggered and not _already_fired(db, today, ticker, "RETRACEMENT_50", piv.pivot_c):
+                conviction_ok = sig.conviction is not None and sig.conviction >= 85.0
+                if triggered and conviction_ok and not _already_fired(db, today, ticker, "RETRACEMENT_50", piv.pivot_c):
                     # Use stored D for display (clean EOD reference)
                     msg = _retrace_message(
                         ticker, viewpoint, close,
