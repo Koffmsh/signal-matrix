@@ -63,7 +63,7 @@ def _compute_emerging_direction(closes: list) -> str | None:
             and ma50_today > ma50_5ago
             and c1 > ma50_1ago
             and c2 > ma50_2ago
-            and c0 >= high_22):
+            and max(closes[-3:]) >= high_22):
         return "Bullish"
 
     # Emerging Bearish
@@ -71,7 +71,7 @@ def _compute_emerging_direction(closes: list) -> str | None:
             and ma50_today < ma50_5ago
             and c1 < ma50_1ago
             and c2 < ma50_2ago
-            and c0 <= low_22):
+            and min(closes[-3:]) <= low_22):
         return "Bearish"
 
     return None
