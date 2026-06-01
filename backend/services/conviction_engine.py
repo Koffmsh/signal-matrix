@@ -1180,10 +1180,13 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         structural_score = 0     # both Neutral, OR opposing directions (conflicted)
 
     # Component 2 — Quad (+20 / 0 / -15, prob-weighted)
-    # Viewpoint gate: Neutral viewpoint → quad_score = 0 (macro tailwind ≠ conviction without structure)
+    # Viewpoint gate: fully Neutral (structural_score == 0, both timeframes Neutral or opposing)
+    # → quad_score = 0. Partial structure (structural_score == 25, one timeframe confirmed)
+    # → quad allowed to contribute. Macro tailwind is meaningful when at least one timeframe
+    # has directional evidence.
     if quad_current is not None:
         _quad_alignment = get_quad_alignment(asset_class, sector, quad_current)
-        if viewpoint == "Neutral" or _quad_alignment == 0.0:
+        if (structural_score == 0 and viewpoint == "Neutral") or _quad_alignment == 0.0:
             quad_score = 0
             quad_align_label = "Neutral"
         elif _quad_alignment > 0:
