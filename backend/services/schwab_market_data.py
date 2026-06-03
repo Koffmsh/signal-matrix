@@ -516,14 +516,17 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
             fetched += 1
             continue
 
-        # Always fetch the full 5-year history for index vol tickers.
-        # Schwab's 1-month endpoint can return mis-scaled values for these symbols
-        # (observed: MOVE returning ~23 instead of ~75 from the short-period endpoint).
-        # The 5-year fetch is reliable and the upsert merge logic keeps it efficient
-        # (only new bars are appended; the full pull is only costly on the first run).
-        period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
-        cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
-        logger.info(f"Schwab index: {'gap fill' if mode in ('short','append') else 'bootstrap'} (5y) for {app_ticker} ({cached_len} bars cached)")
+        # Period selection:
+        #   append  → 10-day DAY fetch (just enough to pick up 1 new bar; avoids the
+        #             buggy 1-month endpoint that mis-scales MOVE values)
+        #   short / bootstrap → 5-year fetch (reliable; upsert merge is efficient)
+        if mode == "append":
+            period_type, period = PH.PeriodType.DAY, PH.Period.TEN_DAYS
+            logger.info(f"Schwab index: append (10d) for {app_ticker}")
+        else:
+            period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
+            cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
+            logger.info(f"Schwab index: {'gap fill' if mode == 'short' else 'bootstrap'} (5y) for {app_ticker} ({cached_len} bars cached)")
 
         try:
             hist_resp = client.get_price_history(
@@ -563,8 +566,12 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
         low   = history_lows[-1]
         vol   = volume_history[-1]
 
-        # Always full upsert — merge logic is efficient (only appends new bars)
-        if True:
+        if mode == "append" and existing_row:
+            # Append path: just tack on the last candle — no full recompute needed
+            _append_bar(existing_row, close, vol, today, "schwab",
+                        high=high, low=low)
+        else:
+            # Short gap or bootstrap — full upsert with merge logic
             closes_s     = pd.Series(history_prices)
             spark_raw    = history_prices[-60:] if len(history_prices) >= 60 else history_prices
             spark_prices = [round(p, 2) for p in spark_raw]
