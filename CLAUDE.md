@@ -718,7 +718,7 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 ### Macro Volatility Dashboard (`src/components/Vol/MacroVolChart.js`)
 - Route: `/vol/macro` — sidebar nav item "MACRO VOL" with dual-wave SVG icon (`MacroVolIcon`)
 - **Data:** `fetchMacroVolHistory()` → `GET /api/vol/macro-history` — returns `{ dates, series, stats, updated }`
-- **Tickers:** VIX, VXN (NazVol), RVX, GVZ, OVX, MOVE — all 5-year history; MOVE collected but not charted (reserved for Fixed Income dashboard)
+- **Tickers displayed:** VIX, VXN (NazVol), RVX, GVZ, OVX — 5 series on chart and stats table. MOVE is collected in the data pipeline (SCHWAB_INDEX_HISTORY_MAP) and stored in price_cache but intentionally excluded from this dashboard — reserved for the future Fixed Income dashboard.
 - **Chart:** Recharts `ComposedChart` — VIX/VXN/RVX/GVZ on left Y-axis; OVX on right Y-axis (crude oil vol — higher scale). 2Y/MAX toggle. Dynamic filtering: tickers with no API data are excluded automatically.
 - **Stats table:** Last · Prior Day · 1 Wk Ago · 1 Mo Ago · 3 Mo Ago · DoD (Δ bps / %Δ) · WoW · MoM. Vol up = red, vol down = green. MOVE row tagged with "bond" badge. Header labels (DoD/WoW/MoM) are on the Δ bps column (not colspan=2).
 - **Date alignment:** `common_dates` = set intersection of all 6 tickers' date arrays. DoD stats anchored to `common_dates[-1]` / `common_dates[-2]` — avoids 0-delta artifact when Schwab includes weekend bars for some tickers.

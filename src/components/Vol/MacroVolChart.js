@@ -12,7 +12,6 @@ const COLORS = {
   RVX:  "#5577aa",   // slate blue-grey
   GVZ:  "#e07b3a",   // orange
   OVX:  "#4e8fde",   // blue (right axis)
-  MOVE: "#a78bfa",   // purple (bond vol — for future use)
 };
 
 const GRID    = "#1a2a3a";
@@ -24,7 +23,7 @@ const AMBER   = "#f0b429";
 
 // Preferred order — tickers with no data are filtered out automatically at render time
 const CHART_TICKER_ORDER = ["VIX", "VXN", "RVX", "GVZ", "OVX"];
-const STAT_TICKER_ORDER  = ["VIX", "VXN", "RVX", "GVZ", "OVX", "MOVE"];
+const STAT_TICKER_ORDER  = ["VIX", "VXN", "RVX", "GVZ", "OVX"];
 
 const LABELS = {
   VIX:  "VIX",
@@ -32,7 +31,6 @@ const LABELS = {
   RVX:  "RVX",
   GVZ:  "GVZ",
   OVX:  "OVX (RHS)",
-  MOVE: "MOVE",
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -171,7 +169,6 @@ function StatsTable({ stats, tickers }) {
         <tbody>
           {tickers.map((tk, i) => {
             const s = stats[tk];
-            const isMOVE = tk === "MOVE";
             const rowBg = i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)";
             return (
               <tr key={tk} style={{ background: rowBg }}>
@@ -186,9 +183,6 @@ function StatsTable({ stats, tickers }) {
                     <span style={{ color: COLORS[tk] ?? LABEL, fontWeight: 600 }}>
                       {LABELS[tk]}
                     </span>
-                    {isMOVE && (
-                      <span style={{ fontSize: 8, color: TEXT, opacity: 0.7 }}>bond</span>
-                    )}
                   </div>
                 </td>
                 {/* Price columns */}
@@ -445,10 +439,6 @@ export default function MacroVolChart() {
           {/* Stats table */}
           <StatsTable stats={rawData?.stats ?? {}} tickers={statTickers} />
 
-          {/* MOVE note */}
-          <div style={{ marginTop: 10, fontSize: 9, color: TEXT, letterSpacing: "0.05em" }}>
-            MOVE (bond market volatility) is collected but plotted separately in the Fixed Income dashboard.
-          </div>
         </div>
       )}
     </div>
