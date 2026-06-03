@@ -696,7 +696,8 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 - **AppLayout pattern in `App.js`:** `App` renders `<BrowserRouter><AppLayout />` — `AppLayout` renders `<Header />` first (fixed), then a flex container with `paddingTop: 48`; `sidebarWidth = locked ? 180 : 48`; content div uses `marginLeft: sidebarWidth` with matching transition
 - **Routes defined:**
   - `/ticker/:symbol` → `TickerAnalysis` stub (future ticker drill-down analysis page)
-  - `/vol/*` → `SpxVolChart`
+  - `/vol` → `SpxVolChart`
+  - `/vol/macro` → `MacroVolChart`
   - `/spx-impact` → `SpxImpactDashboard`
   - `/sector` → `SectorPerformance`
   - `/admin` → `AdminPanel` (no sidebar)
@@ -713,6 +714,32 @@ Why certain tickers permanently route to Yahoo Finance — this is not a bug or 
 - **2Y/MAX toggle:** Default 2Y; `useMemo` filters data by ISO date string comparison; toggle buttons styled with active border/background matching dashboard aesthetic
 - **Layout:** 75px horizontal padding on both sides; chart area has `border: 1px solid #1a2a3a`, `borderRadius: 6`, `background: #07111f`
 - **`position: fixed` sidebar fix:** Sidebar stutter on this page was caused by Recharts `ResponsiveContainer` ResizeObserver firing as the flex-layout content width changed during hover transitions. Fixed by making sidebar `position: fixed` — content width never changes.
+
+### Macro Volatility Dashboard (`src/components/Vol/MacroVolChart.js`)
+- Route: `/vol/macro` — sidebar nav item "MACRO VOL" with dual-wave SVG icon (`MacroVolIcon`)
+- **Data:** `fetchMacroVolHistory()` → `GET /api/vol/macro-history` — returns `{ dates, series, stats, updated }`
+- **Tickers:** VIX, VXN (NazVol), RVX, GVZ, OVX, MOVE — all 5-year history; MOVE collected but not charted (reserved for Fixed Income dashboard)
+- **Chart:** Recharts `ComposedChart` — VIX/VXN/RVX/GVZ on left Y-axis; OVX on right Y-axis (crude oil vol — higher scale). 2Y/MAX toggle. Dynamic filtering: tickers with no API data are excluded automatically.
+- **Stats table:** Last · Prior Day · 1 Wk Ago · 1 Mo Ago · 3 Mo Ago · DoD (Δ bps / %Δ) · WoW · MoM. Vol up = red, vol down = green. MOVE row tagged with "bond" badge. Header labels (DoD/WoW/MoM) are on the Δ bps column (not colspan=2).
+- **Date alignment:** `common_dates` = set intersection of all 6 tickers' date arrays. DoD stats anchored to `common_dates[-1]` / `common_dates[-2]` — avoids 0-delta artifact when Schwab includes weekend bars for some tickers.
+- **Backend:** `GET /api/vol/macro-history` in `backend/routers/vol.py`
+  - Queries `price_cache` for `_MACRO_VOL_TICKERS = ["VIX", "VXN", "RVX", "GVZ", "OVX", "MOVE"]`
+  - Intersects date sets; builds `series {ticker: [close, ...]}` and `stats {ticker: {...}}` aligned to intersection
+  - Stats use `bisect.bisect_right` for historical lookups (1d/1w/1m/3m)
+
+### Macro Vol — Data Source Architecture
+- **VIX:** Yahoo Finance (`^VIX`) — in `SCHWAB_UNSUPPORTED`, not in `SCHWAB_INDEX_HISTORY_MAP`
+- **VXN, RVX, GVZ, OVX, MOVE:** Schwab `get_price_history()` using `$-prefix` symbols (`$VXN`, `$RVX`, `$GVZ`, `$OVX`, `$MOVE`) — defined in `SCHWAB_INDEX_HISTORY_MAP` in `schwab_market_data.py`
+  - These stay in `SCHWAB_UNSUPPORTED` (batch quotes don't work for them) but are fetched via `_schwab_fetch_index_histories()`
+  - Called from the tail of `_schwab_fetch()` after splitting `unsupported` into `yahoo_only` vs `schwab_index`
+- **Gap detection modes for index history tickers:**
+  - `skip`: no-op (cache_date == today)
+  - `append` (1–5 day gap): 10-day DAY period fetch → `_append_bar` last candle (fast, avoids buggy 1-month endpoint)
+  - `short` (6–45 day gap) / `bootstrap`: 5-year YEAR period fetch → full `_upsert` with merge (reliable; 1-month endpoint mis-scales MOVE values)
+- **Yahoo fallback protection:** `_yahoo_fallback()` excludes `SCHWAB_INDEX_HISTORY_MAP` tickers entirely. When Schwab tokens expire, these tickers keep stale Schwab data rather than being overwritten with Yahoo garbage (Yahoo returns ~73 stale bars for `^RVX` starting from the same date as existing history, causing `_upsert` merge `cut=0` → full history replaced)
+- **`YAHOO_SYMBOL_MAP`** still has entries for VXN/RVX/GVZ/OVX/MOVE (`^VXN` etc.) — used only for intraday Yahoo quotes, not EOD history
+- **`IV_INELIGIBLE` and `_HV_ONLY_TICKERS`** in `schwab_options.py` include all 5 tickers — no options chain fetch; HV30/HV90 accumulated via `accumulate_hv_only()`
+- **Production bootstrap:** After first deploy or after RVX/MOVE data corruption, clear the row and re-run `_schwab_fetch_index_histories(db, list(SCHWAB_INDEX_HISTORY_MAP.keys()), client)` directly in Python
 
 ### Sector Performance Dashboard (`src/components/Macro/SectorPerformance.js`)
 - Route: `/sector` — sidebar nav item "SECTOR PERF" with pie-sector icon
@@ -2065,6 +2092,10 @@ Full table by timeframe:
   - `bdaa6f8` — feat: HV Rank column + accumulate_hv_only price_cache fix + one-time HV backfill script (migration p1q2r3s4t5u6)
   - `f07ed99` — feat: v1.9.1 Trade RR BB+Snap formula (dynamic-N, IV-primary HV-fallback, stateful snap; migration q2r3s4t5u6v7)
   - `9dc3c34` — feat: add Sector Performance dashboard — absolute + relative sector tables (/sector route, bisect-based period calcs)
+  - `0cc78d2` — feat: Macro Vol — Schwab index history fetch + DoD stats fix (SCHWAB_INDEX_HISTORY_MAP, _schwab_fetch_index_histories, common_dates DoD anchor)
+  - `4428b35` — fix: MacroVolChart — align DoD/WoW/MoM headers to first (Δ bps) sub-column
+  - `536e96e` — fix: Macro Vol — prevent Yahoo fallback from corrupting index vol history (_yahoo_fallback excludes SCHWAB_INDEX_HISTORY_MAP)
+  - `37ec9c4` — fix: Macro Vol — use 10-day fetch for append, 5-year for short/bootstrap
 - `.env` excluded from Git
 - `backend/signal_matrix.db` excluded from Git
 - `__pycache__` excluded from Git
