@@ -516,15 +516,14 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
             fetched += 1
             continue
 
-        # Append and short gaps both use a 1-month fetch (lightweight, covers any gap ≤ 45d).
-        # Bootstrap fetches the full 5-year history.
-        if mode in ("short", "append"):
-            period_type, period = PH.PeriodType.MONTH, PH.Period.ONE_MONTH
-            logger.info(f"Schwab index: gap fill (1m) for {app_ticker}")
-        else:  # bootstrap
-            period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
-            cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
-            logger.info(f"Schwab index: bootstrap (5y) for {app_ticker} ({cached_len} bars cached)")
+        # Always fetch the full 5-year history for index vol tickers.
+        # Schwab's 1-month endpoint can return mis-scaled values for these symbols
+        # (observed: MOVE returning ~23 instead of ~75 from the short-period endpoint).
+        # The 5-year fetch is reliable and the upsert merge logic keeps it efficient
+        # (only new bars are appended; the full pull is only costly on the first run).
+        period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
+        cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
+        logger.info(f"Schwab index: {'gap fill' if mode in ('short','append') else 'bootstrap'} (5y) for {app_ticker} ({cached_len} bars cached)")
 
         try:
             hist_resp = client.get_price_history(
@@ -564,12 +563,8 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
         low   = history_lows[-1]
         vol   = volume_history[-1]
 
-        if mode == "append" and existing_row:
-            # For append, just tack on the new bar — no need to recompute the full series
-            _append_bar(existing_row, close, vol, today, "schwab",
-                        high=high, low=low)
-        else:
-            # Short gap or bootstrap — full upsert with merge logic
+        # Always full upsert — merge logic is efficient (only appends new bars)
+        if True:
             closes_s     = pd.Series(history_prices)
             spark_raw    = history_prices[-60:] if len(history_prices) >= 60 else history_prices
             spark_prices = [round(p, 2) for p in spark_raw]
@@ -768,9 +763,19 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
 # ── Yahoo fallback ────────────────────────────────────────────────────────────
 
 def _yahoo_fallback(db: Session, tickers: list) -> dict:
-    """Full Yahoo Finance fallback when Schwab is unavailable."""
-    logger.info(f"Yahoo fallback: fetching {len(tickers)} tickers")
-    return _yahoo_fetch_subset(db, tickers, data_source="yahoo_fallback")
+    """Full Yahoo Finance fallback when Schwab is unavailable.
+
+    SCHWAB_INDEX_HISTORY_MAP tickers (VXN, RVX, GVZ, OVX, MOVE) are excluded —
+    Yahoo Finance cannot reliably serve these vol indices (^RVX is unavailable,
+    others may return stale partial data). Stale Schwab-sourced data is better
+    than corrupt Yahoo data overwriting good history.
+    """
+    yahoo_safe = [t for t in tickers if t not in SCHWAB_INDEX_HISTORY_MAP]
+    skipped    = [t for t in tickers if t in SCHWAB_INDEX_HISTORY_MAP]
+    if skipped:
+        logger.info(f"Yahoo fallback: skipping Schwab-index tickers (no Yahoo data): {skipped}")
+    logger.info(f"Yahoo fallback: fetching {len(yahoo_safe)} tickers")
+    return _yahoo_fetch_subset(db, yahoo_safe, data_source="yahoo_fallback")
 
 
 def _yahoo_fetch_subset(db: Session, tickers: list, data_source: str) -> dict:
