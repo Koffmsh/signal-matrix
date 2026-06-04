@@ -1239,7 +1239,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             _trade_hrr > ath):
         conviction_sum *= 1.05
 
-    conviction_final = min(conviction_sum, 100.0)   # cap
+    conviction_final = min(conviction_sum, 105.0)   # cap — 105 allows NATH boost (×1.05) to be fully visible
 
     # Display threshold: blank below 45
     conviction = round(conviction_final, 2) if conviction_final >= 45.0 else None

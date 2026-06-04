@@ -395,7 +395,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Formula:**
   ```
   conviction_final = structural_score + quad_score + volume_score + vix_score
-                   → floor(0) → ×0.92 dampener (if target-side warn) → cap(100)
+                   → floor(0) → ×0.92 dampener (if target-side warn) → ×1.05 NATH boost → cap(105)
   ```
 
 - **Component 1 — Structural (max 50):**
@@ -459,7 +459,7 @@ Critical issues already resolved — do not reintroduce these bugs:
   - Returns +1.0 (Best), 0.0 (Neutral), -1.0 (Worst) for current quad
   - See `QUAD_ALIGNMENT` dict in `conviction_engine.py` for full quad×category matrix
 
-- **IWM sanity check (v2.0):** Structural +50 + Quad +20 + Volume +15 + VIX +15 = 100. v1.9 was 64.63 (suppressed by proximity). v2.0 correctly scores 100 when all components genuinely favorable.
+- **IWM sanity check (v2.0):** Structural +50 + Quad +20 + Volume +15 + VIX +15 = 100 (base max). NATH boost (×1.05) can push to 105 when trade HRR projects above ATH. v1.9 was 64.63 (suppressed by proximity). v2.0 correctly scores 100 when all components genuinely favorable.
 
 - Old formula history: v1.6: H-based; v1.7: H_eff×100 + prox; v1.8: base50+prox+OBV+VIX; v1.9: 5-layer multiplier chain — all superseded by v2.0 additive
 
@@ -1448,7 +1448,7 @@ H is still calculated and stored for regime classification display only:
   H > 0.55 → trending regime (use trend-following: MA, momentum)
 
 conviction_final = structural_score + quad_score + volume_score + vix_score
-                 → floor(0) → ×0.92 dampener (target-side hrr/lrr_warn) → cap(100)
+                 → floor(0) → ×0.92 dampener (target-side hrr/lrr_warn) → ×1.05 NATH boost → cap(105)
 
 Structural (0 / 25 / 50):
   Both aligned (Bullish+Bullish or Bearish+Bearish) → 50
@@ -1470,8 +1470,18 @@ Volume (0 / +10 / +15):
     obv_slope: sign of 3-bar ROC on OBV MA20: 'rising' | 'falling' | 'flat'
     obv_slope_trend: acceleration: slope_now vs slope_prev: 'increasing' | 'decreasing' | 'flat'
 
-Range: 0–100 (v2.0 additive formula)
-  Max:   Structural 50 + Quad 20 + Volume 15 + VIX 15 = 100
+VIX/Vol (0 / +5 / +10 / +15 — Domestic Equities only; all other asset classes receive +15 flat):
+  VIX < 19 AND VIX HRR < 19 → +15  (Investable+ — vol firmly locked below threshold)
+  VIX < 19 (HRR still elevated) → +10  (Investable)
+  VIX 19–23 → +5  (Edgy)
+  VIX 24–29 → +0  (Choppy)
+  VIX ≥ 30  → +0  (Danger)
+  VIX HRR sourced from signal_output where ticker='VIX', timeframe='trade'
+  Missing VIX row → +15 (default full credit)
+
+Range: 0–105 (v2.0 additive formula; 105 only when NATH boost fires)
+  Base max:  Structural 50 + Quad 20 + Volume 15 + VIX 15 = 100
+  NATH max:  100 × 1.05 = 105 (Viewpoint=Bullish AND trade HRR > ATH)
   Floor: 0 (quad misalignment absorbed by floor before dampener)
 
 Alert threshold: conviction >= 80 (v2.0 — requires full structural + aligned quad + some VIX)
@@ -2193,7 +2203,7 @@ git checkout -- .   # roll back if needed
 68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.
 71. **International Equities route to country quarterly quads** — `signals.py` `run_output()` routes tickers with `asset_class = "International Equities"` to their country's current-quarter quad (e.g. EWJ sector="Japan" → "JP" → `YYYY-QN` quarterly row) instead of the US monthly quad. `_SECTOR_TO_CODE` dict in `signals.py` maps sector labels to ISO country codes. If no country quarterly quad is set, falls back to no quad (multiplier = 1.00). Dashboard columns for international rows show the country quarterly quad (no probability — quarterly rows always store 1.0); US monthly quad + probability shown for all other rows. Quarterly data fetched in `App.js` from `/api/quad/settings?country=ALL&type=quarterly` on page load, mapped via `CODE_TO_SECTOR` to build `countryQuads` state `{sector: {cur, next}}`.
 72. **Quad UI colors (dashboard + QuadSetup)** — Q1: `#007a55` (dark green, white text) · Q2: `#00e5a0` (system green) · Q3: `#f0b429` (system amber) · Q4: `#ff4d6d` (system red). Box style: `background: color + "55"` (33% opacity) + `border: 1px solid color` + white text — matches QuadBtn active style. Do not introduce new quad color values.
-73. **Conviction tooltip — 2-line format (v2.0)** — Line 1: formula `Structural (50) + Quad (±20) + Volume (15) + VIX (15) → floor(0) → dampener → cap(100)`. Line 2: display rules `Show ≥ 45 · Green/Red ≥ 45 (Bullish/Bearish) · Grey ≥ 45 (Neutral) · ⚡ ≥ 80`. Do not revert to proximity/multiplier descriptions.
+73. **Conviction tooltip — 2-line format (v2.0)** — Line 1: formula `Structural (50) + Quad (±20) + Volume (15) + VIX (15) → floor(0) → dampener → NATH boost → cap(105)`. Line 2: display rules `Show ≥ 45 · Green/Red ≥ 45 (Bullish/Bearish) · Grey ≥ 45 (Neutral) · ⚡ ≥ 80`. Do not revert to proximity/multiplier descriptions.
 69. **Slope boost changed to × 1.20 in v1.9** (was × 1.17 in v1.8). Do not revert to 1.17.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
