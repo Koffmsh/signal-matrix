@@ -2477,4 +2477,3 @@ const tickers = [
 ];
 // NOTE: AMZN excluded from Tier 2 seed — already exists as Tier 1. Add via admin panel if needed as Tier 2.
 ```
-                                  
