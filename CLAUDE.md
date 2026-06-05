@@ -87,102 +87,13 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Never hardcode dates in JSX** (`App.js`) — read from data (e.g. first ticker's `updated`).
 - **All trading-day / cache-key dates use ET, never UTC** — see **ADR-001** and rule #34. Never `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for a trading day or cache key (Docker UTC date flips after 8 PM ET → cache miss, false `today_complete`, wrong NYSE day).
 
-### FORMING State Removed — EXTENDED Removed from structural_state (`pivot_engine.py`, `conviction_engine.py`) — v1.7 / post-v1.7
-- **FORMING eliminated:** "Pullback from D, no new C yet" is now simply `UPTREND_VALID` / `DOWNTREND_VALID` — the trend is confirmed, the pullback is normal operation, no special state needed
-- **EXTENDED removed from `structural_state`** — EXTENDED is now a dedicated boolean field `d_extended` in `signal_pivots` and `signal_output`. `structural_state` never contains "EXTENDED". The five valid `structural_state` values are: `UPTREND_VALID`, `DOWNTREND_VALID`, `BREAK_OF_TRADE`, `BREAK_OF_TREND`, `BREAK_CONFIRMED`, `NO_STRUCTURE` — nothing else.
-- **WARNING removed from `structural_state`** — WARNING was a conviction-engine concept that conflicted with pivot-engine states (e.g. both BREAK_OF_TRADE and WARNING active simultaneously). The `warning` boolean flag on LRR/HRR cells already communicates it. Never set `state = "WARNING"` in `conviction_engine.py`.
-- **`d_extended` boolean (dedicated field):** D has pushed more than 50% of the AB impulse beyond B → `d_extended = True`; B becomes the break level (persistent until new C forms)
-  ```python
-  ab_range = abs(B - A)
-  d_extended = (D > B + 0.5 * ab_range)   # uptrend
-  d_extended = (D < B - 0.5 * ab_range)   # downtrend
-  ```
-  Using 50% of AB (not BC) prevents shallow-C formations from producing a tiny extension threshold. The two formulas are equivalent when C is at the 50% retracement of AB; the AB-based formula is more stable across varying C depths.
-  Reversion: when new C forms (D becomes new B, new C established) → `d_extended` resets to False; break level returns to new C
-- **`d_extended` drives:** (1) B vs C selection in `_compute_warn_flags` and `is_warning`; (2) popup `*` asterisk on active break level (B when True, C when False); (3) the B-based break state machine in `compute_d_and_state` when extension threshold is crossed
-- **`d_extended` is independent of `structural_state`** — when extension fires and price subsequently breaks B, state = `BREAK_OF_TRADE` / `BREAK_CONFIRMED` AND `d_extended = True`. The B/C context survives the state transition.
-- **Daily overshoot flag (separate, tactical):** `signals.py` reads existing `signal_output.hrr` / `signal_output.lrr` before overwriting them; passes as `prior_ranges` to `compute_output`; conviction_engine compares today's close against those prior values → sets `lrr_extended` / `hrr_extended` Boolean fields. This is NOT `d_extended` — three independent concepts.
-- **Daily overshoot display:** ↑ flag appears on HRR cell (bullish overshoot) or ↓ flag on LRR cell (bearish overshoot) with "do not chase" tooltip; state cell still shows UPTREND_VALID / DOWNTREND_VALID
-- **BREAK_OF_TRADE does NOT change direction** — direction holds on the first close through the break level (provisional break, first-day forgiveness). Only `BREAK_CONFIRMED` (2+ consecutive closes) changes direction to Neutral.
-- **BREAK_OF_TRADE = amber state cell; BREAK_CONFIRMED = red state cell** — visual distinction in `stateColor()`
-- **States that force Neutral:** `BREAK_CONFIRMED` and `NO_STRUCTURE` only
-- **UPTREND_VALID, DOWNTREND_VALID, BREAK_OF_TRADE, BREAK_OF_TREND** all allow Bullish/Bearish direction
-
-### ABC Pivot Search — A Anchors at Most Extreme Confirmed Pivot (`pivot_engine.py`)
-- **Old behavior:** `_find_uptrend_abc` / `_find_downtrend_abc` used backward-walk (C newest-first) with all A candidates — could select a sub-extreme A when a more extreme confirmed pivot existed in the window
-- **Problem:** XLV trend — A=$158.77 (Nov 25) was selected even though $159.66 (Jan 7) and $160.20 (Feb 27) were higher confirmed pivot highs within the window. "You cannot go back to a lower A" when a higher confirmed high exists (downtrend). The correct structure was A=$160.20, B=$143.26, C=$149.67.
-- **Fixed:** Forward-walk from the most extreme confirmed pivot:
-  - Uptrend: `A = min(pivot_lows)` in window → B = first pivot high after A → C = first pivot low after B with C > A
-  - Downtrend: `A = max(pivot_highs)` in window → B = first pivot low after A → C = first pivot high after B with C < A
-  - A always anchors at the most extreme level — once a more extreme pivot exists, the older less-extreme A is discarded
-- **Rule:** A is always the most extreme confirmed pivot in the lookback window — never retreat to a less extreme A
-
-### A Lookback Window — `_MAX_A_LOOKBACK` (`pivot_engine.py`)
-- Limits how far back A can be selected, preventing the engine from anchoring to pivots irrelevant to the timeframe
-- **Values:** `trade=60 bars` (~3 months), `trend=150 bars` (~7.5 months), `lt=None` (no limit)
-- Applied in `compute_pivots_for_timeframe` by filtering `pivot_highs` / `pivot_lows` before passing to `find_abc_structure`
-- Full price history is still used for D computation and break detection — only the ABC search is constrained
-- Distinct from `_STALE_C_DAYS` (which discards a structure after C gets too old): A lookback prevents an old irrelevant A from being selected in the first place
-- When A eventually drops outside the lookback window (e.g. a long-running uptrend), the engine naturally re-anchors to the next most extreme pivot in the window — A advances to a higher low (uptrend) or lower high (downtrend) automatically
-- **Rule:** Do not increase `_MAX_A_LOOKBACK["trade"]` above 60 bars — going back to September to anchor A for a 3-week trade timeframe is methodologically wrong
-- **A-candidate iteration (V-recovery fix):** `_find_uptrend_abc` and `_find_downtrend_abc` iterate A candidates from most extreme to least extreme rather than returning None when the most extreme A has no confirmed B/C yet. This handles V-recoveries where the sell-off low is too recent to have produced a confirmed follow-through: the engine falls back to the prior structural A and finds the existing ABC. Trend re-establishes as soon as D reclaims the old C — the correct "resumption" signal — rather than waiting months for a new structure to build from the bottom. The 150-bar window is a known edge case: if the prior valid A sits outside 150 bars, the iteration exhausts all candidates and returns None. Accepted as a known limitation.
-
-### B Advancement — `update_b_dynamically` (`pivot_engine.py`)
-- B was historically fixed at the first confirmed pivot after A and never updated, making the BC range and d_extended threshold stale for the lifetime of the structure
-- **Fixed:** After `update_c_dynamically` finalizes C, `update_b_dynamically` advances B to the **most recent** confirmed pivot high (uptrend) or pivot low (downtrend) between A_idx and C_idx
-- B can advance to a higher OR lower price than the initial B — it always reflects the most recent structural reference point before C
-- B is between A and C in **time** (index), not necessarily in price direction — A < C < B in price for uptrend; B < C < A in price for downtrend
-- **D re-computes against new B:** if B advances past the previously established D level, D temporarily un-establishes until price closes through the new B — correct behavior since D must prove the trend beyond the new structural reference
-- **d_extended uses updated B and BC range:** `bc_range = abs(new_B - new_C)`; d_extended fires when D > new_B + bc_range (uptrend) or D < new_B - bc_range (downtrend)
-- **Warn flags use updated B (non-extended) or D (extended):** `hrr_warn = hrr < b` normally (uptrend); when `d_extended=True`, `hrr_warn = hrr < d` — the BB target is compared against D (the extended high), not B. B is the break level; D is the "can the target still reach the peak" reference. See `_compute_warn_flags` in `conviction_engine.py`.
-- **Execution order in `compute_pivots_for_timeframe`:**
-  1. `update_c_dynamically` — walks C to most recent valid structural level
-  2. `update_b_dynamically` — advances B to most recent pivot between A and updated C
-  3. `compute_d_and_state` — uses updated B + C for D, d_extended, and state
-- **Rule:** Do not remove `update_b_dynamically` or swap its order with `update_c_dynamically` — C must be finalized before B can be correctly advanced
-
-### Yahoo Finance `auto_adjust=False` — Actual Close Prices (`yahoo_finance.py`)
-- Old behavior: `yf.Ticker().history()` uses `auto_adjust=True` by default — silently adjusts all historical closes for dividends, making stored prices diverge from actual traded prices
-- **Problem:** SPY Aug 1 2025 showed $616.49 in cache vs $621.72 on Yahoo/ThinkorSwim — gap grows for older bars and any dividend-paying ticker
-- **Fixed:** `auto_adjust=False` on both `history(period="5y")` and `history(period="5d")` calls in `yahoo_finance.py`
-- This only affects Yahoo fallback path — Schwab always returns actual prices
-- **After deploying this fix:** wipe local SQLite history (`UPDATE price_cache SET history_json=NULL, ... cache_date='1970-01-01'`) and run REFRESH DATA + CALCULATE SIGNALS to replace adjusted history with actual prices
-- **Production:** safe — Schwab is primary for all equity/ETF tickers; Yahoo fallback only serves indices (SPX, VIX, etc.) and futures which pay no dividends, so `auto_adjust` has no effect on them
-- **Do not** revert to default `auto_adjust=True`
-
-### EOD Bar Inclusion Fix (`yahoo_finance.py`)
-- Old behavior: `closes.index.date < date.today()` excluded today's close from `history_prices`
-- **Problem:** When the scheduler fetches data at 4 PM ET, today's close IS the confirmed EOD price. Excluding it meant the 5th post-pivot bar didn't count until the next trading day — a confirmed pivot on Mar 20 wouldn't be used in that day's signal calculation even though the data was fetched after close.
-- **Fixed:** `closes.index.date <= date.today()` — include today's EOD bar
-- **Rule:** Do not revert to `<` — today's bar at EOD fetch time is always a confirmed close, not an intraday bar
-
-### Pivot Engine: Intact Structure Preference + BREAK_CONFIRMED Spanning (`pivot_engine.py`)
-- **Problem 1 — Spanning a prior break:** When both uptrend and downtrend ABCs are valid and the most-recent-C tiebreak is used, the winner could span a BREAK_CONFIRMED of a prior same-direction structure. The engine was reaching back to an A that predated a structural break, producing a phantom ABC (e.g. IWM: uptrend A=Nov 20, C=Mar 20 — but the uptrend had a BREAK_CONFIRMED Mar 5-6 at C=$260.03).
-- **Problem 2 — BREAK_CONFIRMED beating intact structure:** GLD, AAPL, NVDA, TLT all had a broken structure in one direction winning over an intact structure in the other direction, causing them to show BREAK_CONFIRMED when a valid directional structure existed.
-- **Fixed:** `_has_prior_break_confirmed()` — scans intermediate pivots between A and C of the candidate ABC for any historical BREAK_CONFIRMED; if found, the ABC is rejected and the other direction is used.
-- **Fixed:** `_price_on_correct_side()` — before applying the most-recent-C tiebreak, prefer the structure where current price is still on the valid side of C (structure intact). A broken structure only wins if both structures are broken or both are intact.
-- **Problem 3 — Prior break check skipped on intact-only early return:** When one structure was intact and the other broken, the intact one was returned immediately (lines 277-280) without calling `_has_prior_break_confirmed`. The check only fired on the tiebreak path (both intact or both broken). FXB example: intact uptrend (A=Nov19, C=Mar30) was returned over a valid downtrend (A=Feb25, B=Mar13, C=Mar23) because the uptrend was price-intact. The uptrend spans the Feb 18-19 BREAK_CONFIRMED — should have been rejected.
-- **Fixed (2026-04-11):** Both early-return cases (lines 277-280) now call `_has_prior_break_confirmed` on the intact winner before returning. If a prior break is found, the other (broken) structure is returned instead.
-- **Selection priority in `find_abc_structure()`:**
-  1. Only one direction found → use it
-  2. Both found, only one intact (price on correct side of C) → use intact, UNLESS it spans a prior BREAK_CONFIRMED → use broken structure instead
-  3. Both intact or both broken → most recent C wins, UNLESS:
-     a. The newer structure has never established D (price never closed through B) → older structure governs. D is the confirmation event: a geometric ABC without D is not a confirmed reversal and cannot override an unbroken prior structure.
-     b. The winner spans a prior BREAK_CONFIRMED of a same-direction structure → use other.
-- **`_d_has_established(abc, prices)`** — returns True if price has ever closed through B (above B for uptrend, below B for downtrend). Guards the tiebreak: without D, the newer ABC is geometric only.
-- **Rule:** Do not simplify `find_abc_structure()` back to "most recent C wins" — the priority logic is load-bearing
-
-### LT Bar Window Reduced: 90 → 50 (`pivot_engine.py`)
-- Old `TIMEFRAMES["lt"] = 90` required 180 bars of surrounding context — major reversals were invisible for ~9 months after they occurred
-- **Problem:** GLD's $495 peak (Jan 2026) was undetectable at bw=90 as late as April 2026 (~50 bars old); showed NO_STRUCTURE despite a clear multi-year uptrend
-- **Fixed:** `TIMEFRAMES["lt"] = 50` — pivots need ~2.5 months of context each side; 5x the trend window (bw=10), still clearly "structural"
-- **Rule:** Do not increase LT bar_window above 50 without verifying that 3–4 month old major reversals still register
-
-### Trend Bar Window Reduced: 20 → 10 (`pivot_engine.py`)
-- Old `TIMEFRAMES["trend"] = 20` required 40 bars of surrounding context to confirm a pivot, making it nearly impossible for the trend engine to detect a new reversal within 40 trading days (~2 months)
-- **Problem:** MSFT's Jan-Mar 2026 collapse was invisible to the trend engine at bw=20 — trend showed NO_STRUCTURE / Neutral despite a clear downtrend
-- **Fixed:** `TIMEFRAMES["trend"] = 10` — still provides meaningful trend-scale pivots while detecting reversals within ~20 trading days
-- **Rule:** Do not increase trend bar_window above 10 without verifying that recent reversals (< 6 weeks) still register
+### Pivot engine guardrails (`pivot_engine.py`)
+- **`structural_state` has exactly 6 values** — UPTREND_VALID, DOWNTREND_VALID, BREAK_OF_TRADE, BREAK_OF_TREND, BREAK_CONFIRMED, NO_STRUCTURE. FORMING was eliminated (a pullback from D is just `*_VALID`); EXTENDED → boolean `d_extended`; WARNING → boolean `warning`. BREAK_OF_TRADE/TREND hold direction (provisional, first-day forgiveness); only BREAK_CONFIRMED (2+ closes) → Neutral. Amber state cell for BREAK_OF_*, red for BREAK_CONFIRMED. See **ADR-002** + rules #53–#60.
+- **`d_extended`** = `D > B + 0.5·abs(B−A)` (50%-of-AB threshold; resets when a new C forms). B becomes the break level while True. Drives B-vs-C selection in warn flags, the popup `*`, and the B-based break machine; independent of `structural_state`. Distinct from the daily-overshoot `lrr_extended`/`hrr_extended` flags — three separate "extended" concepts, never conflate.
+- **ABC selection & dynamic update** — A anchors at the most extreme confirmed pivot in the lookback window (`_MAX_A_LOOKBACK` trade=60 / trend=150 / lt=None; never raise trade above 60), iterating most→least extreme for V-recoveries. B advances to the most recent pivot AFTER C is finalized (`update_b_dynamically` runs after `update_c_dynamically` — never reorder/remove). `find_abc_structure()` prefers the price-intact structure and rejects any ABC spanning a prior BREAK_CONFIRMED (`_has_prior_break_confirmed`, `_price_on_correct_side`, `_d_has_established`). Do not simplify to "most-recent-C-wins" — the priority logic is load-bearing. See **ADR-003**.
+- **Yahoo `auto_adjust=False`** — store actual traded prices, never dividend-adjusted (Yahoo fallback only; Schwab always actual). See **ADR-004**.
+- **EOD bar inclusion:** `closes.index.date <= date.today()` — today's EOD bar is a confirmed close; never revert to `<`.
+- **Bar windows:** `TIMEFRAMES["lt"]=50`, `TIMEFRAMES["trend"]=10` — do not increase without verifying that 3–4-month-old (lt) / <6-week (trend) reversals still register.
 
 ### OBV Pivot Engine Replaces Price-Momentum Proxy (`conviction_engine.py`)
 - Old `_volume_signal` used 5-day / 20-day price momentum — not real volume
