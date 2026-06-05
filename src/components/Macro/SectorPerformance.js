@@ -67,7 +67,7 @@ function PerfTable({ title, rows, labels, showSpxSeparator, asOf }) {
             SIGNAL MATRIX
           </div>
           <div style={{ fontSize: 10, color: GREY, marginTop: 2 }}>
-            {asOf}
+            EOD · {asOf}
           </div>
         </div>
       </div>
@@ -236,7 +236,7 @@ export default function SectorPerformance() {
   const containerStyle = {
     minHeight: "100vh",
     background: BG,
-    padding: "28px 32px",
+    padding: "28px 164px",
     boxSizing: "border-box",
   };
 

@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiFetch } from "../../services/api";
+import { useAuth } from "../../context/AuthContext";
 
 const GREEN   = "#00e5a0";
 const ORANGE  = "#ff4d6d";
@@ -8,6 +9,15 @@ const GREY    = "#8899aa";
 const BG      = "#07111f";
 const BORDER  = "#1a2a3a";
 const HEADER  = "#c8d8e8";
+
+function isWeightsStale(weightsDate) {
+  if (!weightsDate) return false;
+  const d = new Date(weightsDate);
+  const now = new Date();
+  const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+  const qStart = new Date(now.getFullYear(), qStartMonth, 1);
+  return d < qStart;
+}
 
 function fmt(n, digits = 2) {
   if (n == null) return "—";
@@ -83,10 +93,15 @@ const SNAPSHOTS = [
 ];
 
 export default function SpxImpactDashboard() {
+  const { user }                  = useAuth();
+  const isAdmin                   = user?.role === "admin";
+  const fileInputRef              = useRef(null);
   const [snapshots, setSnapshots] = useState({ eod: null, "11am": null, "1pm": null });
   const [active, setActive]       = useState("eod");
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState(null);
 
   useEffect(() => {
     apiFetch("/api/spx-impact")
@@ -94,6 +109,31 @@ export default function SpxImpactDashboard() {
       .then(d => { setSnapshots(d); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
+
+  async function handleWeightsUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadMsg(null);
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const resp = await apiFetch("/api/spx-impact/upload-weights", { method: "POST", body: form });
+      const data = await resp.json();
+      if (resp.ok) {
+        setUploadMsg({ ok: true, text: `✓ ${data.tickers} constituents loaded (${data.weights_date})` });
+        // Refresh displayed weights_date
+        setSnapshots(s => ({ ...s, eod: s.eod ? { ...s.eod, weights_date: data.weights_date } : s.eod }));
+      } else {
+        setUploadMsg({ ok: false, text: data.detail || "Upload failed" });
+      }
+    } catch (err) {
+      setUploadMsg({ ok: false, text: err.message });
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
 
   const data = snapshots[active];
   const spxColor = data?.spx_return_pct == null
@@ -206,8 +246,47 @@ export default function SpxImpactDashboard() {
       )}
 
       {/* ── Footer note ─────────────────────────────────────────────────── */}
-      <div style={{ marginTop: 20, fontSize: 10, color: GREY, letterSpacing: "0.06em" }}>
-        % of Move = |Contribution| ÷ Σ|All Contributions|. Contribution = Daily Return × Weight. Source: iShares IVV holdings (EOD).
+      <div style={{ marginTop: 20, fontSize: 10, color: GREY, letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <span>% of Move = |Contribution| ÷ Σ|All Contributions|. Contribution = Daily Return × Weight. Source: iShares IVV holdings (EOD).</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {snapshots.eod?.weights_date && (
+            <span style={{ color: isWeightsStale(snapshots.eod.weights_date) ? "#f0b429" : GREY }}>
+              Weights updated: {snapshots.eod.weights_date}
+              {isWeightsStale(snapshots.eod.weights_date) && " (stale — rebalance pending)"}
+            </span>
+          )}
+          {uploadMsg && (
+            <span style={{ color: uploadMsg.ok ? GREEN : "#f0b429" }}>{uploadMsg.text}</span>
+          )}
+          {isAdmin && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xls,.xlsx,.csv"
+                style={{ display: "none" }}
+                onChange={handleWeightsUpload}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                style={{
+                  padding: "3px 10px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  borderRadius: 4,
+                  border: `1px solid ${BORDER}`,
+                  background: "transparent",
+                  color: uploading ? GREY : GREY,
+                  cursor: uploading ? "default" : "pointer",
+                }}
+              >
+                {uploading ? "UPLOADING..." : "↑ UPDATE WEIGHTS"}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

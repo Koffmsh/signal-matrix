@@ -193,15 +193,27 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
         return {"status": "skipped", "date": today_et}
 
     # ── 1. Constituent weights ───────────────────────────────────────────────
+    weights_date = today_et
+    weights_stale = False
     try:
         weights = fetch_spx_weights()
+        if not weights:
+            raise ValueError("Empty weights dict from IVV CSV")
         logger.info(f"SPX impact EOD: loaded {len(weights)} constituent weights from IVV")
     except Exception as e:
-        logger.error(f"SPX impact EOD: failed to fetch IVV weights — {e}")
-        return {"status": "error", "error": str(e)}
-
-    if not weights:
-        return {"status": "error", "error": "Empty weights dict from IVV CSV"}
+        logger.warning(f"SPX impact EOD: IVV fetch failed ({e}) — attempting fallback to last known weights")
+        # Fall back to the most recent EOD row that has weights_json
+        fallback = db.query(SpxImpactCache).filter(
+            SpxImpactCache.snapshot_label == "eod",
+            SpxImpactCache.weights_json.isnot(None),
+        ).order_by(SpxImpactCache.computed_date.desc()).first()
+        if not fallback or not fallback.weights_json:
+            logger.error("SPX impact EOD: no fallback weights available — aborting")
+            return {"status": "error", "error": str(e)}
+        weights = json.loads(fallback.weights_json)
+        weights_date = fallback.weights_date or fallback.computed_date
+        weights_stale = True
+        logger.info(f"SPX impact EOD: using fallback weights from {weights_date} ({len(weights)} tickers)")
 
     # ── 2. Batch quote all constituents via Schwab ───────────────────────────
     try:
@@ -237,7 +249,9 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
     row.detractors_json   = json.dumps(detractors)
     row.spx_return_pct    = spx_actual
     row.tickers_priced    = priced_count
-    row.weights_json      = json.dumps(weights)
+    row.weights_date      = weights_date
+    if not weights_stale:
+        row.weights_json  = json.dumps(weights)  # only overwrite on fresh fetch
     row.updated_at        = datetime.utcnow()
 
     if not existing:
@@ -247,13 +261,16 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
     logger.info(
         f"SPX impact EOD: done — {priced_count} priced, "
         f"top: {contributors[0]['ticker']}, worst: {detractors[0]['ticker']}, "
-        f"SPX actual: {spx_actual:+.3f}% (est: {spx_total:+.3f}%)"
+        f"SPX actual: {spx_actual:+.3f}% (est: {spx_total:+.3f}%), "
+        f"weights: {'stale (' + weights_date + ')' if weights_stale else 'fresh'}"
     )
     return {
         "status":         "ok",
         "date":           today_et,
         "tickers_priced": priced_count,
         "spx_return_pct": spx_actual,
+        "weights_date":   weights_date,
+        "weights_stale":  weights_stale,
     }
 
 

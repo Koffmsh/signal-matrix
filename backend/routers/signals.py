@@ -706,3 +706,17 @@ def get_signal_history(
     ]
 
     return {"results": results, "count": len(results)}
+
+
+@router.post("/test-sms")
+def test_sms(request: Request, db: Session = Depends(get_db)):
+    """
+    Admin-only — send a test SMS to all configured TELNYX_TO recipients.
+    """
+    require_admin_user(request, db)
+    from services.sms import send_sms
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%y %H:%M ET")
+    ok = send_sms(f"[Signal Matrix] Test alert — {now}. SMS is working!")
+    return {"sent": ok}
