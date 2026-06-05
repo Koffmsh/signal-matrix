@@ -16,5 +16,6 @@ class SpxImpactCache(Base):
     detractors_json   = Column(Text, nullable=False)
     spx_return_pct    = Column(Float, nullable=True)
     tickers_priced    = Column(Integer, nullable=True)
-    weights_json      = Column(Text, nullable=True)   # full {ticker: weight_pct} — EOD only
+    weights_json      = Column(Text, nullable=True)    # full {ticker: weight_pct} — EOD only
+    weights_date      = Column(String(10), nullable=True)  # ET date of last successful IVV fetch
     updated_at        = Column(DateTime, nullable=True)
