@@ -49,6 +49,36 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 <!-- ADR-001..013 seeded 2026-06-04 from the CLAUDE.md "Known Fixes & Learnings" migration (Phase M2). Dates reflect the recording pass, not original decision dates. -->
 
+## ADR-014 — CLAUDE.md migration stops at ~1,510 lines; current ops content stays
+Date: 2026-06-04
+Status: Active
+Component: CLAUDE.md / DECISIONS.md (documentation governance)
+
+Context:
+  The CLAUDE.md migration (governed by `Docs/CLAUDE_md_Maintenance_Protocol.md` +
+  `Docs/SignalMatrix_CLAUDEmd_Migration_Spec_v1_0.txt`) set an aspirational target of
+  600–900 lines. Section (a) "Known Fixes & Learnings" (796→73) and pass-2 targets
+  (the 68-entry commit-hash list, Phase 3–5 build tables, Task 4.3–4.7 build
+  narratives) were condensed. CLAUDE.md went 2,479 → 1,510 (−39%).
+
+Decision:
+  Stop at ~1,510. Pass-2 item (c) condensed only the *build-narrative framing*;
+  live operational sections were kept intact: EOD Scheduler, Intraday Monitor,
+  "Signal Engine Math — ALL DECISIONS LOCKED", dashboard column + popup-field
+  tables, the numbered Project Rules, and the session/pre-migration checklists.
+
+Why (regression guard):
+  The 600–900 target was aspirational. This project carries an unusually large
+  amount of *current* operational spec; cutting below ~1,500 means deleting live
+  documentation, not trimming history. Do NOT "finish the job" in a future pass by
+  gutting current ops sections — the remaining length is legitimate. Process note:
+  pass-2 (c) was inline-approved (the assessment + a "go", not a separate written
+  TRIAGE table); the execution record is git commits 426865c + 4ee089e. Future
+  passes should still produce a triage table before cutting unless the scope is as
+  unambiguous as the commit-hash delete.
+
+Linked rule: CLAUDE.md "Read order (authoritative)" + Maintenance Protocol
+
 ## ADR-013 — Trade BB+Snap constants are TOS-tuned, not spec defaults
 Date: 2026-06-04
 Status: Active
