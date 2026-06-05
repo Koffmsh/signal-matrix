@@ -1,0 +1,146 @@
+================================================================
+SIGNAL MATRIX — CLAUDE.md MIGRATION SPEC v1.0
+One-time cleanup. Neo executes. Shannon approves the triage gate.
+================================================================
+
+OBJECTIVE
+---------
+Reduce CLAUDE.md from ~2,479 lines to a 600–900 line operating manual by
+routing existing content into the new document architecture. Preserve ALL
+rationale — nothing that explains a non-obvious "why" is lost; it moves to
+DECISIONS.md. This is governed by the CLAUDE.md Maintenance Protocol.
+
+Document architecture (per protocol):
+  CLAUDE.md     = current rules, constraints, active state. Terse. Auto-loaded.
+  DECISIONS.md  = the "why" (ADR-lite). Repo root. Read before methodology/arch changes.
+  Docs/ archive = full superseded specs (v1.6–v1.9 math, retired build sequences).
+  git log       = the "what / when". No commit hashes in CLAUDE.md.
+
+================================================================
+THE ROUTING RULE (apply to every entry)
+================================================================
+Ask: "Will an agent take a wrong action without this line?"
+
+  YES, reason obvious      -> keep-as-rule   (terse imperative in CLAUDE.md)
+  YES, reason non-obvious  -> split-to-ADR   (terse rule in CLAUDE.md + ADR in DECISIONS.md)
+  NO                       -> delete         (the "what" lives in git log)
+  Full superseded detail   -> archive-to-Docs (one-line "superseded by, see Docs/" stays)
+
+Regression-guard test: if dropping the narrative would let someone reintroduce a
+bug or re-litigate a settled trade-off, the "why" is non-obvious -> split-to-ADR.
+When in doubt, default to split-to-ADR. NEVER hard-delete rationale.
+
+================================================================
+PRE-FLIGHT (before any edit)
+================================================================
+1. Commit current CLAUDE.md as-is (recoverable snapshot).
+     git add CLAUDE.md && git commit -m "chore: snapshot CLAUDE.md before migration"
+2. Create DECISIONS.md at repo root if absent. Header + ADR-lite format (template below).
+3. Confirm Docs/ archive location exists for superseded spec detail.
+
+================================================================
+PHASE M1 — TRIAGE  (read-only; produces a table; DO NOT edit CLAUDE.md)
+================================================================
+Scope to triage, in priority order:
+  a. "Known Fixes & Learnings" section (~795 lines) — PRIMARY target.
+  b. Embedded commit-hash list (~68 lines) — almost all -> delete.
+  c. Completed-phase build sequences + per-task detail (Phase 1–5) -> collapse/archive.
+  d. Superseded formula math (v1.6 / v1.7 / v1.8 / v1.9) -> archive-to-Docs.
+
+For EVERY entry, emit one triage row:
+
+  | id/heading | proposed_bucket | one-line reason | proposed terse rule (if keep/split) | proposed ADR title (if split) |
+
+Buckets: keep-as-rule | split-to-ADR | delete | archive-to-Docs
+
+Output the full set as a single new file: TRIAGE.md (repo root, temporary).
+Do NOT touch CLAUDE.md, DECISIONS.md, or Docs/ in this phase.
+
+>>> STOP. Hand TRIAGE.md to Shannon for review. <<<
+Shannon red-lines buckets/rules. The approved TRIAGE.md IS the execution spec.
+No edits proceed without Shannon's approval of the table.
+
+Worked example (for reference — this is the standard you triage to):
+  BEFORE (CLAUDE.md, ~5 lines):
+    "MA20_TP Center Dropped — historical. MA20_TP (typical price center) added
+     v1.8 interim: TP=(H+L+C)/3 resists downward movement on sell days. Removed
+     (migration 13fb636fe76a): improvement over MA20(close) negligible (±7 pts
+     SPX). Not worth schema complexity. Columns dropped, _compute_tp_metrics()
+     removed, no TP writes."
+  AFTER:
+    keep-as-rule (CLAUDE.md): "Never re-add MA20_TP / typical-price center —
+      dropped, negligible gain. See ADR-NNN."
+    split-to-ADR (DECISIONS.md): the ±7-pts-on-SPX rationale + "not worth schema
+      complexity" — the regression guard.
+    delete: migration hash + column/function teardown (lives in git log).
+
+================================================================
+PHASE M2 — EXECUTE  (only after Shannon approves TRIAGE.md)
+================================================================
+Work SECTION BY SECTION. One section = one commit. Never one giant rewrite.
+
+Per approved bucket:
+  keep-as-rule    -> rewrite as a single imperative line; append to the numbered
+                     rules list (extend the existing 53–74 style; do not prepend prose).
+  split-to-ADR    -> write the ADR in DECISIONS.md (newest at top); leave the terse
+                     rule in CLAUDE.md with a "see ADR-NNN" link.
+  delete          -> remove the block. (Verify the "what" is captured in a commit msg.)
+  archive-to-Docs -> move full detail to Docs/<file>; leave a one-line
+                     "superseded by vX — see Docs/<file>" reference in CLAUDE.md.
+
+Commit-hash list (item b): delete entirely. git log reproduces it on demand.
+Completed phases (item c): collapse each to one "Phase N — COMPLETE" line; move any
+  remaining reference-value detail to Docs/.
+
+After each section: commit with a clear message
+  e.g. "refactor(docs): migrate Known Fixes vol-source entries -> rules + ADR-012..014"
+
+================================================================
+PHASE M3 — VERIFY
+================================================================
+1. CLAUDE.md is within 600–900 lines.
+2. Top-of-file pointer block present (see below).
+3. Every "do not revert / never re-add" guard is EITHER a retained rule OR backed
+   by an ADR. No regression guard was silently dropped.
+4. No commit hashes remain in CLAUDE.md.
+5. Delete temporary TRIAGE.md.
+6. Show Shannon the final diff for sign-off.
+
+Top-of-CLAUDE.md pointer block (paste verbatim, after the title):
+  ----------------------------------------------------------------
+  ## Read order (authoritative)
+  1. CLAUDE.md (this file) — current rules, constraints, and state. Authoritative.
+  2. Before ANY methodology or architecture change -> read DECISIONS.md (the "why").
+  3. Before touching a superseded component -> check Docs/ archive.
+  ----------------------------------------------------------------
+
+================================================================
+DECISIONS.md — ADR-LITE TEMPLATE (append newest at top)
+================================================================
+## ADR-NNN — <short decision title>
+Date: YYYY-MM-DD
+Status: Active            (Active | Superseded by ADR-NNN | Reversed)
+Component: <file / subsystem>
+
+Context:
+  <what situation / problem prompted the decision>
+
+Decision:
+  <what was chosen>
+
+Why (regression guard):
+  <the non-obvious reasoning; what NOT to revert to and why>
+
+Linked rule: CLAUDE.md "<rule heading or number>"
+
+Rule: never edit a closed ADR. Supersede with a new ADR and flip the old Status.
+
+================================================================
+GUARDRAILS (standing)
+================================================================
+- Triage (M1) is read-only classification — safe to do in one pass.
+- Execution (M2) is section-by-section, smallest reversible commits.
+- Archive, never hard-delete. When unsure -> split-to-ADR.
+- Shannon approves the TRIAGE table (the spec) and the final diff.
+- One concept at a time. No bundling unrelated rule changes into the migration.
+================================================================

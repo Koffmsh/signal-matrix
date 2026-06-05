@@ -1,5 +1,12 @@
 ﻿# Signal Matrix Platform — Project Context
 
+## Read order (authoritative)
+1. CLAUDE.md (this file) — current rules, constraints, and state. Authoritative.
+2. Before ANY methodology or architecture change → read DECISIONS.md (the "why" / regression guards; ADR-lite).
+3. Before touching a superseded component → check the Docs/ archive.
+
+Document maintenance is governed by `Docs/CLAUDE_md_Maintenance_Protocol.md`. To record a change, the trigger is **"Log this change."**
+
 ## Important Note for Neo
 The `.docx` spec files in `Docs/` cannot be read by Claude Code.
 Readable `.txt` copies exist:
