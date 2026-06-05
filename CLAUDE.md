@@ -121,103 +121,15 @@ Critical issues already resolved — do not reintroduce these bugs:
 ### MA20_TP Center Dropped (historical)
 - MA20_TP / typical-price center was dropped (migration `13fb636fe76a`); v1.9.1 replaced the BB center with dynamic-N MA per-run from `closes[-N:]`. `price_cache.ma20` still populates for legacy only. **Never re-add MA20_TP.** See **ADR-007**.
 
-### H/L History 3-Bar Alignment Fix (One-Time Data Migration)
-- **Root cause:** When `history_high_json` / `history_low_json` columns were first added (migration `f7a3b2c1d9e6`), the initial "short" fill started 3 trading days later than the existing close history. Those 3 leading dates never received H/L values, leaving every ticker's H/L array 3 bars shorter than its close array.
-- **Symptom:** `highs[i]` contained data for `dates[i+3]`, not `dates[i]` — ATR calculations for 14-day windows touching that zone were incorrect (inflated, since misaligned H/L appeared to spike relative to close).
-- **Fix (2026-04-14):** One-time data script padded the front of `history_high_json` and `history_low_json` with the close price for the missing dates (H=L=C proxy), making all arrays equal-length. ATR was recomputed from the corrected arrays for all 63 local (SQLite) and 79 production (Supabase) tickers.
-- **Code is correct:** Both the Schwab path (`_schwab_fetch` uses candles directly) and Yahoo path (`fetch_ticker_data` uses `.reindex(history_closes.index)`) correctly align H/L to close dates. The misalignment was a legacy bootstrap artifact only.
-- **All future fetches:** append/skip/short/bootstrap paths all preserve or rebuild correct alignment — no ongoing issue.
-- **Rule:** If adding new OHLC-based columns (e.g. ATR variants), always verify `len(history_high_json) == len(history_json)` after the first data run.
-
-### Supabase Direct Connection — IPv6 Only from Docker (`alembic/env.py`)
-- `db.wxqioudsteiwaazrgbao.supabase.co:5432` resolves to **IPv6 only** inside the Docker container
-- Docker Desktop on Windows does not route IPv6 egress — connection fails with "Network is unreachable"
-- **Fix:** Use `SUPABASE_POOLED_CONNECTION_STRING` for all `alembic` CLI runs from Docker
-- Pooled host (`aws-1-us-east-1.pooler.supabase.com:6543`) resolves to IPv4 and is reachable from Docker
-- `alembic/env.py` prefers `SUPABASE_CONNECTION_STRING` but falls back to `SUPABASE_POOLED_CONNECTION_STRING` automatically
-- **Do not** attempt alembic migrations via the direct connection string from inside Docker
-
-### Supabase Runtime Uses psycopg2 Sync Engine — Not asyncpg (`database.py`)
-- All FastAPI routers use synchronous SQLAlchemy (`Session`, `Depends(get_db)`) — asyncpg would require rewriting every router
-- `database.py` converts `SUPABASE_POOLED_CONNECTION_STRING` (which has `postgresql+asyncpg://` prefix) to `postgresql+psycopg2://` via `_make_sync_url()`
-- `_make_sync_url()` also URL-encodes the password — the Supabase password contains `@`, `#`, `/` characters that break standard URL parsing if raw
-- **Do not** use `create_async_engine` or `AsyncSession` until a deliberate async migration is planned for all routers
-- The `asyncpg` package is still in `requirements.txt` (Alembic dependency + future use) but is not used by the running app
-
-### Fly.io Web App — Production Build Required (nginx, not CRA dev server)
-- CRA dev server (`npm start`) exits immediately with code 0 on Fly.io Firecracker VMs (no TTY, headless)
-- Root cause was two bugs stacked: (1) no `.dockerignore` → `COPY . .` overwrote Linux node_modules with Windows binaries → instant clean exit; (2) 256MB Firecracker VM too small for webpack compilation
-- **Fix:** `Dockerfile.web.fly` uses a multi-stage build — `npm run build` on Depot's cloud builder (plenty of RAM), then `nginx:alpine` serves the static `build/` folder at runtime
-- Image size: 23MB (vs 403MB dev server image)
-- `REACT_APP_API_URL` is baked in at build time via Docker `ARG` + `ENV`, set in `fly.web.toml` `[build.args]`
-- `REACT_APP_ADMIN_PASSWORD` must also be passed as a build arg — it is NOT available as a Fly.io runtime secret (React env vars bake in at build time)
-- **Rule:** Never deploy CRA with `npm start` to Fly.io — always `npm run build` → nginx
-- **Rule:** `.dockerignore` must always exclude `node_modules` — Windows binaries will crash Linux containers
-- **Rule:** All web deploys must use `deploy-web.sh` — never bare `fly deploy` (password won't bake in)
-
-### nginx SPA Routing — React Router 404 on Direct URL
-- Default nginx config has no fallback rule — `/admin` and any non-root route returns 404 Not Found
-- **Fix:** `nginx.conf` in project root with `try_files $uri $uri/ /index.html` — copied into image via `Dockerfile.web.fly`
-- Requires `COPY nginx.conf /etc/nginx/conf.d/default.conf` in `Dockerfile.web.fly`
-- **Rule:** Any new React route added to the app works automatically — no nginx changes needed
-
-### Web Deploy Script — `deploy-web.sh`
-- All web deploys run via `./deploy-web.sh` in project root — never bare `fly deploy`
-- Script sources `.env` to pick up `REACT_APP_ADMIN_PASSWORD` and passes it as `--build-arg`
-- `REACT_APP_API_URL` still set via `fly.web.toml` `[build.args]` — no duplication needed
-- `deploy-web.sh` is safe to commit (reads from `.env`, contains no secrets)
-
-### Fly.io Secrets — Special Characters in Passwords
-- Fly.io's dotenv-style secret storage mangles passwords containing `#` (comment delimiter) and `$` (variable expansion)
-- Password `k,/2#RY@Jma$8rw` stored as `SUPABASE_POOLED_CONNECTION_STRING` was silently truncated by `#`
-- **Fix:** Store a pre-encoded `DATABASE_URL` secret where the password is already percent-encoded: `k%2C%2F2%23RY%40Jma%248rw` — no special chars to mangle
-- `database.py` checks `DATABASE_URL` first, falls back to `SUPABASE_POOLED_CONNECTION_STRING` (with `_make_sync_url()` encoding pass)
-- **Rule:** For any Fly.io secret containing `#`, `$`, `@`, `,`, or `/` in the password, pre-encode to percent-encoding before setting
-
-### yfinance Asset Class Mapping — ETFs Default to Domestic Equities
-- yfinance returns `quoteType: 'ETF'` for most ETFs but `category` is often empty or uses Morningstar taxonomy
-- The mapping layer falls through to `Domestic Equities` default for international, fixed income, FX, and commodity ETFs
-- **Fix:** `ASSET_CLASS_OVERRIDES` dict in `backend/routers/tickers.py` — checked first before any inference
-- **Rule:** When adding new ETFs via admin panel, always verify asset class after lookup and correct if needed
-- **Known good overrides already in place:** TLT, LQD, HYG, CLOX (Fixed Income); EWG, EWQ, EWP, KWT, KWEB, EWJ, EWW, TUR, UAE (International); GLD, SGOL, FXB, FXE, FXY (FX); USO, SLV, PALL, PPLT, CANE, WOOD, CORN, WEAT (Commodities); IBIT (Digital Assets)
-
-### Futures Tickers — 3-File Checklist
-Futures use continuous front-month symbols stored with a leading slash (e.g. `/CL`). Schwab does not serve continuous futures contracts via its standard quotes API, so all futures route through Yahoo Finance (which uses `XX=F` format for continuous series).
-
-**When adding any new futures ticker:**
-1. **`YAHOO_SYMBOL_MAP`** in `yahoo_finance.py` — add `"/XX": "XX=F"` mapping
-2. **`SCHWAB_UNSUPPORTED`** in `schwab_market_data.py` — add `"/XX"` so it always routes to Yahoo
-3. **`IV_INELIGIBLE`** in `schwab_options.py` — add `"/XX"` to skip options chain fetch
-
-**Currently configured futures:**
-- `/CL` → `CL=F` (WTI Crude Oil)
-- `/ZN` → `ZN=F` (10-Year Treasury Note)
-- `/GC` → `GC=F` (Gold)
-
-**Admin panel note:** Ticker symbol stored with slash (e.g. `/CL`). The PUT/DELETE/lookup endpoints use `{symbol:path}` to allow slashes in URL paths.
-
-**History fetch:** Schwab uses gap detection to determine what history to fetch per ticker — see Gap Detection section below. The merge logic in `_upsert` preserves existing long history when new data is shorter.
-
-**Idempotency check:** Uses first Schwab-supported ticker (excludes `SCHWAB_UNSUPPORTED`) to avoid perpetual cache miss when a Yahoo-only ticker sorts first.
-
-### Schwab API — Instrument Type Limitations (Architectural Decision)
-Why certain tickers permanently route to Yahoo Finance — this is not a bug or a gap to close, it is a deliberate permanent architecture decision based on what the Schwab API actually supports.
-
-- **Equities and ETFs:** Fully supported — `get_quotes()` (batch) + `get_price_history()` (per-ticker). Primary data source for all equity/ETF tickers.
-- **Indices (SPX, NDX, $DJI, VIX, RUT, VVIX):** `SCHWAB_SYMBOL_MAP` translates these to Schwab format (`$SPX.X`, `$NDX.X`, etc.) but `get_quotes()` silently drops them — no error, just missing keys in the response. `get_price_history()` per-ticker may work but requires 6 separate HTTP calls vs. one Yahoo batch; the skip/append gap-detection path makes this near-zero cost on normal daily runs anyway. **Yahoo is the right permanent answer for indices.**
-- **FX (USD = DXY index, JPY = USDJPY):** These are not securities — Schwab's API is equity/ETF-only and has no FX endpoint. DXY and spot FX rates simply do not exist in their quote infrastructure. **Yahoo is the right permanent answer for FX.**
-- **Futures (/CL, /ZN, /GC):** Schwab uses contract-specific symbols (e.g. `/CLM26`). The "continuous front-month" concept used here (`CL=F`, `GC=F`) is a Yahoo abstraction — Yahoo handles the monthly roll automatically. Replicating that on Schwab would require tracking expiration calendars and rolling contracts, significant complexity for no signal quality gain at EOD resolution. **Yahoo is the right permanent answer for futures.**
-- **Speed:** On skip/append days (the normal case after the first fetch), both Yahoo and Schwab are essentially instant due to gap detection. On bootstrap/short fetches Yahoo's batch call is faster than equivalent per-ticker Schwab calls. No speed advantage to switching.
-- **Rule:** Do not attempt to replace Yahoo with Schwab for indices, FX, or futures — the mixed-source architecture is intentional and permanent. When adding new tickers in any of these categories, add them to `SCHWAB_UNSUPPORTED`, `YAHOO_SYMBOL_MAP`, and (if futures) `IV_INELIGIBLE`.
-
-### SCHWAB_UNSUPPORTED Expanded — Indices Now Route to Yahoo (`schwab_market_data.py`)
-- Schwab batch quotes API silently drops index symbols (SPX, NDX, $DJI, VIX) when mixed with equity symbols — no error, just missing keys in the response
-- Without this fix, these tickers never get `updated_at` stamped, causing REFRESH DATA to stay amber even after a successful refresh (SPX is `display_order=1` and its timestamp drives the header)
-- **Fix:** Added `"SPX"`, `"NDX"`, `"$DJI"`, `"VIX"` to `SCHWAB_UNSUPPORTED` set — they always route to Yahoo Finance
-- Full set: `{"USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX"}`
-- **Idempotency fix:** When Schwab cache is fresh and early return fires, the code now still runs `_yahoo_fetch_subset` for the unsupported tickers — without this, SPX/VIX/etc. would never get their `updated_at` stamped on subsequent manual refreshes
-- **RUT added 2026-04-10:** Russell 2000 Index — `YAHOO_SYMBOL_MAP["RUT"] = "^RUT"`, added to `SCHWAB_UNSUPPORTED` and `IV_INELIGIBLE`
-- **VVIX added 2026-04-11:** CBOE VIX of VIX Index — `YAHOO_SYMBOL_MAP["VVIX"] = "^VVIX"`, added to `SCHWAB_UNSUPPORTED` and `IV_INELIGIBLE`
+### Infra & data-source guardrails
+- **H/L history alignment** — when adding OHLC-based columns, verify `len(history_high_json) == len(history_json)` after the first data run (a legacy bootstrap once left H/L 3 bars short of close, inflating ATR).
+- **Supabase from Docker** — alembic uses `SUPABASE_POOLED_CONNECTION_STRING` (IPv4, port 6543); the direct `:5432` host is IPv6-only and Docker Desktop on Windows can't route it. `alembic/env.py` falls back to pooled automatically — never run alembic via the direct string from Docker.
+- **Supabase runtime = psycopg2 sync** — all routers are synchronous SQLAlchemy; `database.py` `_make_sync_url()` converts the asyncpg URL → psycopg2 and URL-encodes the password (`@ # /`). Do not introduce `create_async_engine`/`AsyncSession` without a planned full-router migration.
+- **Fly secrets** — pre-encode passwords containing `# $ @ , /` (Fly mangles `#`/`$`); `database.py` checks the pre-encoded `DATABASE_URL` secret first, then `SUPABASE_POOLED_CONNECTION_STRING`.
+- **Fly web deploy** — multi-stage build → `nginx:alpine` static (CRA `npm start` dies headless on Firecracker); `.dockerignore` MUST exclude `node_modules` (Windows binaries crash Linux); nginx needs `try_files $uri $uri/ /index.html` for React routes; all web deploys via `./deploy-web.sh` (never bare `fly deploy`). See **ADR-008**.
+- **yfinance asset class** — `ASSET_CLASS_OVERRIDES` (`tickers.py`) is checked first before inference; verify asset class on new ETFs (rule #37 + Task 4.7 § hold the dict).
+- **Futures = 3-file checklist** — new futures (`/XX`) need `YAHOO_SYMBOL_MAP` (`"/XX":"XX=F"`) + `SCHWAB_UNSUPPORTED` + `IV_INELIGIBLE`. Current: /CL, /ZN, /GC. Symbol stored with slash; endpoints use `{symbol:path}`.
+- **Indices / FX / futures permanently route to Yahoo** — Schwab API is equity/ETF-only (batch quotes silently drop indices; no FX endpoint; futures are contract-specific). `SCHWAB_UNSUPPORTED = {USD, JPY, /CL, /ZN, /GC, SPX, NDX, $DJI, VIX, RUT, VVIX}`; run `_yahoo_fetch_subset` even on the fresh-cache early return so these get `updated_at` stamped. See **ADR-009**.
 
 ### Initial Page Load Indicator — `isInitialLoading` (`App.js`)
 - On fresh page load, 4 parallel fetches fire; tickers resolve first, causing `ALL_DATA` to recompute with `generateMockData()` — shows fake sparklines, prices, and signal values
