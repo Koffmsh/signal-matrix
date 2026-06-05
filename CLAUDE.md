@@ -262,43 +262,8 @@ signal-matrix/
 ## Phase 4 — COMPLETE ✅
 ## Phase 5 — COMPLETE ✅
 
-### Phase 3 Build Sequence
-
-| Task | Deliverable | File | Status |
-|---|---|---|---|
-| 3.1 | Hurst + Fractal Dimension (DFA) | `backend/services/signal_engine.py` | ✅ Complete |
-| 3.2 | ABC Pivot Detector | `backend/services/pivot_engine.py` | ✅ Complete |
-| 3.3 | LRR/HRR + Conviction Engine | `backend/services/conviction_engine.py` | ✅ Complete |
-| 3.4 | Wire to Dashboard | `src/App.js` | ✅ Complete |
-
-### Phase 4 Build Sequence
-
-| Task | Deliverable | Status |
-|---|---|---|
-| 4.1 | GitHub private repo + .env history cleanup | ✅ Complete |
-| 4.2 | EOD Scheduler (APScheduler + NYSE calendar) | ✅ Complete |
-| 4.3 | Signal History daily snapshots | ✅ Complete |
-| 4.4 | Fly.io cloud deployment | ⬜ Absorbed into Phase 5 |
-| 4.5 | Auto-load cache on page load | ✅ Complete |
-| 4.6 | Tickers table + dynamic backend | ✅ Complete |
-| 4.7 | yfinance lookup endpoint for new tickers | ✅ Complete |
-| 4.8 | viewpoint_since timestamp | ✅ Complete |
-| 4.9 | FORMING state direction fix | ✅ Complete |
-| 4.10 | Staleness thresholds (pivot engine) | ✅ Complete |
-| 4.11 | Conviction rebalance (65/35, Rel IV removed) | ✅ Complete |
-| 4.12 | OBV pivot engine | ✅ Complete |
-| 4.13 | VIX header indicator | ✅ Complete |
-
-### Phase 5 Build Sequence
-
-| Task | Deliverable | Status |
-|---|---|---|
-| 5.1 | Supabase setup + SQLAlchemy migration (SQLite → Postgres) | ✅ Complete |
-| 5.2 | Fly.io deployment — Docker, secrets, signal.suttonmc.com DNS | ✅ Complete |
-| 5.3 | Schwab OAuth — token exchange, storage, proactive auto-refresh | ✅ Complete |
-| 5.4 | Schwab quote polling — replaces Yahoo Finance EOD fetch | ✅ Complete |
-| 5.5 | IV Percentile — options chain fetch, vol_history table | ✅ Complete |
-| 5.6 | OBV source swap — volume_history_json from Schwab | ✅ Complete |
+### Build sequences — Phases 3–5 (all ✅ Complete)
+Per-task build detail lives in git history. Phase 4.4 (Fly.io deploy) was absorbed into Phase 5. Shipped: signal engine (`signal_engine.py` Hurst/DFA, `pivot_engine.py` ABC, `conviction_engine.py` LRR/HRR+conviction, dashboard wiring); EOD scheduler; signal-history snapshots; tickers table + dynamic backend; yfinance lookup; Supabase migration; Fly.io deploy; Schwab OAuth + quote polling + IV; OBV source swap.
 
 ### New Button — CALCULATE SIGNALS
 - Added to dashboard header alongside REFRESH DATA
@@ -495,167 +460,16 @@ Dropped entirely. OBV direction already computed in EOD signals and displayed in
 
 ---
 
-## Phase 4 — Task 4.3: Signal History Daily Snapshots ✅
+## Phase 4 — Tasks 4.3 / 4.5 / 4.6 / 4.7 (Signal History · Cache Load · Tickers · Lookup) ✅
 
-### Overview
-- Every time `calculate_signals()` runs (manual or scheduled), a snapshot of all `signal_output` rows is written to `signal_history`
-- Idempotent — one snapshot per ticker/timeframe per ET calendar day; re-runs same day are skipped
-- Trigger string (`"manual"`, `"scheduled"`, `"catchup"`) recorded per snapshot
+**Signal History (4.3):** `calculate_signals()` writes a `signal_history` snapshot of all `signal_output` rows on every run — idempotent (one per ticker/timeframe per ET day, checked in Python — no UNIQUE constraint), non-fatal on failure, `trigger` ∈ manual|scheduled|catchup. `GET /api/signals/history` (params ticker/timeframe/start_date/end_date/limit≤500, newest-first) — not yet wired to UI (future backtesting).
+- **CALCULATE SIGNALS:** `GET /api/signals/calculate` runs the full pipeline + snapshot; its response holds only raw `compute_output` — the frontend must re-fetch `GET /api/signals/stored` as the source of truth (`h_trade_delta`, `vix_regime`, etc. are written separately in the signal loop).
 
-### signal_history Table
-```sql
-id, snapshot_date (ET YYYY-MM-DD), trigger, ticker, timeframe,
-lrr, hrr, structural_state, trade_direction, conviction, h_value,
-viewpoint, alert, vol_signal, warning, lrr_warn, hrr_warn,
-pivot_b, pivot_c, calculated_at (copied from signal_output), created_at (UTC)
+**Page-load cache (4.5):** page load reads the warm SQLite cache (instant, no external call). Auto-loading from the local DB is allowed; auto-fetching Yahoo/Schwab on load is prohibited. See rule #17.
 
-INDEX: (snapshot_date, ticker)
-No UNIQUE constraint — idempotency enforced in Python, not DB
-```
+**Tickers table (4.6):** SQLite `tickers` table is the source of truth (replaces `tickers.js`, which is seed-only via `seed_tickers_if_empty`); `get_active_tickers(db)` is the only retrieval path — no hardcoded lists (rules #35–#36). Columns: id, ticker (UNIQUE), description, asset_class, sector, tier, parent_ticker, active, display_order, created_at, updated_at. API: `GET/POST /api/tickers`, `PUT/DELETE /api/tickers/{symbol}` (DELETE = soft-delete, never hard — rule #3), `GET /api/tickers/lookup/{symbol}` (registered before `/{symbol}`). Admin panel adds/edits/soft-deletes; ticker locked after creation; Asset Class is a fixed-vocabulary dropdown.
 
-### Snapshot Logic (`snapshot_signals` in `signals.py`)
-- Called inside `calculate_signals()` after output is written — failure is non-fatal (logged, not raised)
-- Checks for existing row with same `snapshot_date` + `ticker` + `timeframe` before inserting
-- `snapshot_date` uses ET timezone — `datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")`
-
-### History API Endpoint
-`GET /api/signals/history` — query params: `ticker`, `timeframe`, `start_date`, `end_date`, `limit` (default 30, max 500)
-- Returns rows newest-first
-- Not currently wired to dashboard UI — available for future analysis and backtesting
-
-### CALCULATE SIGNALS Button
-- Frontend calls `GET /api/signals/calculate` — runs full pipeline + snapshot in one call
-- After `/calculate` completes, frontend immediately fetches `GET /api/signals/stored` to populate React state
-- **Critical:** `/calculate` response only contains raw `compute_output` data — it does NOT include `h_trade_delta`, `vix_regime`, or other fields written separately during the signal loop. Always use `/stored` as the source of truth for React state after calculation.
-
----
-
-## Phase 4 — Task 4.5: Auto-Load Cache on Page Load ✅
-
-### Overview
-- `App.js` calls `/api/market-data/batch` on mount via `useEffect` — populates close prices, sparklines, rel IV from SQLite cache
-- Cache is always warm from scheduler — page load is instant, no Yahoo Finance call
-- REFRESH DATA button retained as manual override to force a fresh Yahoo fetch
-- Signals also auto-load from `/api/signals/stored` on page load (Task 3.4, unchanged)
-
-### Rule Clarification
-- Auto-loading from **SQLite cache** on page load is allowed — this is a local DB read
-- Auto-fetching from **Yahoo Finance** on page load is still prohibited
-- The distinction: cache read = instant + safe; Yahoo fetch = external call + rate limit risk
-
----
-
-## Phase 4 — Task 4.6: Tickers Table + Dynamic Backend ✅
-
-### Overview
-- SQLite `tickers` table is the source of truth — replaces `tickers.js` + localStorage
-- `tickers.js` retained as seed-only bootstrap file — never modified directly
-- `seed_tickers_if_empty(db)` runs on FastAPI startup — inserts 52 rows if table is empty
-  (AMZN excluded from Tier 2 seed due to UNIQUE constraint — add via admin panel if needed)
-- `market_data.py` and `signals.py` both call `get_active_tickers(db)` — no hardcoded lists
-- `App.js` fetches ticker universe from `GET /api/tickers?active=true` on mount
-
-### Tickers Table Schema
-```sql
-id            INTEGER PRIMARY KEY AUTOINCREMENT
-ticker        TEXT NOT NULL UNIQUE
-description   TEXT
-asset_class   TEXT
-sector        TEXT
-tier          INTEGER DEFAULT 1
-parent_ticker TEXT
-active        BOOLEAN DEFAULT TRUE
-display_order INTEGER
-created_at    TEXT    -- UTC timestamp
-updated_at    TEXT    -- UTC timestamp
-```
-
-### Tickers API Endpoints
-```
-GET    /api/tickers              ← list all (active filter optional; admin fetches all)
-POST   /api/tickers              ← create new ticker (409 if exists)
-PUT    /api/tickers/{symbol}     ← update any field
-DELETE /api/tickers/{symbol}     ← soft-delete (active=false) — never hard-delete
-GET    /api/tickers/lookup/{sym} ← Task 4.7: yfinance suggestions (registered BEFORE /{symbol})
-```
-
-### Field Mapping
-| DB / API | React state | Notes |
-|---|---|---|
-| `ticker` | `ticker` | Locked after creation |
-| `description` | `description` | |
-| `asset_class` | `assetClass` | |
-| `sector` | `sector` | |
-| `tier` | `tier` | 1 or 2 |
-| `parent_ticker` | `parentTicker` | Tier 2 only |
-| `active` | `active` | Soft-delete flag |
-| `display_order` | `displayOrder` | |
-
-### Admin Panel UX (Task 4.6/4.7)
-- Add ticker: click `+ ADD TICKER` → type symbol → optionally click `LOOK UP` → edit cells → click `SAVE` (or Enter)
-- Lookup pre-fills empty fields only — never overwrites existing values
-- `_isNew` local flag: row posts on SAVE; existing rows PUT on any cell commit
-- `newTickerValues` state tracks keystroke input independently to prevent focus loss on re-render
-- Ticker cell locked (disabled) after row is saved — symbol cannot be changed
-- Deactivate: soft-delete via DELETE API; Reactivate: PUT with `active: true`
-- Asset Class field is a dropdown — enforces exact vocabulary, not free text
-
----
-
-## Phase 4 — Task 4.7: yfinance Lookup Endpoint ✅
-
-### Overview
-- `GET /api/tickers/lookup/{symbol}` — on-demand metadata fetch for new tickers
-- Returns suggested description, asset class, sector — never auto-saves
-- User reviews and corrects suggestions before saving via admin panel
-
-### Response Schema
-```json
-{
-  "symbol": "EWG",
-  "found": true,
-  "suggestions": {
-    "description": "iShares MSCI Germany ETF",
-    "asset_class": "International Equities",
-    "sector": "Germany"
-  },
-  "already_exists": false,
-  "notes": null
-}
-```
-
-### Asset Class Override Table (in `backend/routers/tickers.py`)
-Override table is checked FIRST before any yfinance inference. Add new entries here when lookup returns wrong asset class:
-
-```python
-ASSET_CLASS_OVERRIDES = {
-    # Domestic Fixed Income
-    'TLT': 'Domestic Fixed Income', 'LQD': 'Domestic Fixed Income',
-    'HYG': 'Domestic Fixed Income', 'CLOX': 'Domestic Fixed Income',
-    # International Equities
-    'EWG': 'International Equities', 'EWQ': 'International Equities',
-    'EWP': 'International Equities', 'KWT': 'International Equities',
-    'KWEB': 'International Equities', 'EWJ': 'International Equities',
-    'EWW': 'International Equities', 'TUR': 'International Equities',
-    'UAE': 'International Equities',
-    # Foreign Exchange
-    'GLD': 'Foreign Exchange', 'SGOL': 'Foreign Exchange',
-    'FXB': 'Foreign Exchange', 'FXE': 'Foreign Exchange', 'FXY': 'Foreign Exchange',
-    # Commodities
-    'USO': 'Commodities', 'SLV': 'Commodities', 'PALL': 'Commodities',
-    'PPLT': 'Commodities', 'CANE': 'Commodities', 'WOOD': 'Commodities',
-    'CORN': 'Commodities', 'WEAT': 'Commodities',
-    # Digital Assets
-    'IBIT': 'Digital Assets',
-}
-```
-
-### Lookup Rules
-1. Override table wins — always checked first
-2. Only fills empty form fields — never overwrites existing values
-3. Graceful on missing data — `null` fields returned, no error
-4. Never writes to DB — suggestions only
-5. yfinance inference runs as fallback for unknown tickers
+**yfinance lookup (4.7):** `GET /api/tickers/lookup/{symbol}` returns suggested description/asset_class/sector (never auto-saves; fills empty fields only; graceful on missing data). `ASSET_CLASS_OVERRIDES` (`tickers.py`) is checked first before yfinance inference — see rule #37.
 
 ---
 
