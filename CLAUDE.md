@@ -78,64 +78,14 @@ indicators.
 
 Critical issues already resolved — do not reintroduce these bugs:
 
-### yfinance 1.2.0 — Do Not Downgrade
-- v0.2.x had a persistent 429 block that could not be resolved by waiting
-- v1.2.0 resolved it immediately — always use v1.2.0 or higher in `requirements.txt`
-
-### tz-aware Date Comparison (`yahoo_finance.py`)
-- yfinance 1.2.0 returns timezone-aware timestamps
-- Old comparison `closes.index < pd.Timestamp(date.today())` crashes with tz-aware index
-- **Fixed:** `closes.index.date <= date.today()` — use `.date` attribute for comparison; use `<=` (not `<`) to include today's confirmed EOD close (see EOD Bar Inclusion Fix below)
-
-### Stale Cache Fallback on 429 (`market_data.py`)
-- Old behavior: batch endpoint returned empty on 429 — dashboard went blank
-- **Fixed:** On 429, batch endpoint now serves whatever is cached in SQLite
-- All active tickers stay visible even during rate limit windows
-
-### `updated_at` Refreshes on Upsert (`market_data.py`)
-- Old behavior: `updated_at` only stamped original insert date — never updated
-- **Fixed:** Added `existing.updated_at = datetime.utcnow()` to upsert path
-- Stamps actual fetch time on every successful refresh
-
-### `updated_at` Format and Timezone (`market_data.py`)
-- `updated_at` is stored as UTC naive datetime via `datetime.utcnow()`
-- Old display: `row.updated_at.strftime(...)` — formatted UTC directly, showed wrong date after 8 PM ET
-- **Fixed:** `row.updated_at.replace(tzinfo=timezone.utc).astimezone(_ET).strftime("%m/%d/%y %H:%M")` in `serialize_cache_row`
-- Do not use `str(row.updated_at)` — format mismatch breaks timestamp display
-- Do not call `datetime.now(_ET)` at write time — store UTC, convert at display
-
-### EOD Timestamp Dynamic in Header (`App.js`)
-- Old behavior: "EOD · 03/11/26" was hardcoded in JSX
-- **Fixed:** Now reads from first ticker's `updated` field in `realDataMap`
-- Never hardcode dates in JSX
-
-### `updated` Timestamp Uses ET in `yahoo_finance.py`
-- Old behavior: `datetime.now()` in Docker returns UTC — after 8 PM ET the date flips to the next day
-- **Fixed:** `datetime.now(_ET).strftime("%m/%d/%y %H:%M")` — always stamps ET time
-- `_ET = ZoneInfo("America/New_York")` declared at module level in `yahoo_finance.py`
-
-### Cache Date Reset Pattern
-- When `history_json` is NULL on existing rows (schema migration artifact), cache_date guard prevents re-fetch
-- **Fix:** Reset all rows to `cache_date = '1970-01-01'` to force fresh fetch
-- SQL: `UPDATE price_cache SET cache_date = '1970-01-01'`
-
-### UTC vs ET Date in Docker — CRITICAL (Task 4.2)
-- Docker containers run UTC. `date.today()` and `datetime.utcnow().date()` return UTC date.
-- After ~8 PM ET (midnight UTC), UTC date flips to the next day while ET date has not.
-- **Three places this causes bugs:**
-  1. `cache_date` in `price_cache` — stored as UTC, checked as UTC → cache miss after 8 PM ET
-  2. `run_date` in `scheduler_log` — stored as UTC, checked as UTC → `today_complete` returns false
-  3. NYSE trading day check — should always use ET date (NYSE operates on ET)
-- **Fix:** Use ET date everywhere. Pattern:
-  ```python
-  from zoneinfo import ZoneInfo
-  from datetime import datetime
-  _ET = ZoneInfo("America/New_York")
-  today_et = datetime.now(_ET).strftime("%Y-%m-%d")   # for string storage
-  today_et = datetime.now(_ET).date()                  # for date object
-  ```
-- **Files fixed:** `backend/routers/market_data.py`, `backend/services/scheduler.py`, `backend/routers/scheduler.py`
-- **Do not use** `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for any date that represents a trading day or cache key
+### Data, timezone & cache guardrails
+- **yfinance ≥ 1.2.0** — never downgrade; v0.2.x has an unresolvable persistent 429 block.
+- **Date comparison** (`yahoo_finance.py`): `closes.index.date <= date.today()` — `.date` avoids the tz-aware crash; `<=` includes today's confirmed EOD close.
+- **429 fallback** (`market_data.py`): on 429 the batch endpoint serves cached SQLite (never returns empty) so all tickers stay visible.
+- **`updated_at`** (`market_data.py`): stamp `datetime.utcnow()` on every upsert path; store UTC-naive, convert to ET at display (`.replace(tzinfo=timezone.utc).astimezone(_ET)` in `serialize_cache_row`); never `str(row.updated_at)`.
+- **`updated` field** (`yahoo_finance.py`): stamp `datetime.now(_ET)` — Docker is UTC, bare `datetime.now()` flips the date after 8 PM ET. `_ET = ZoneInfo("America/New_York")` at module level.
+- **Never hardcode dates in JSX** (`App.js`) — read from data (e.g. first ticker's `updated`).
+- **All trading-day / cache-key dates use ET, never UTC** — see **ADR-001** and rule #34. Never `date.today()`, `str(date.today())`, or `datetime.utcnow().date()` for a trading day or cache key (Docker UTC date flips after 8 PM ET → cache miss, false `today_complete`, wrong NYSE day).
 
 ### FORMING State Removed — EXTENDED Removed from structural_state (`pivot_engine.py`, `conviction_engine.py`) — v1.7 / post-v1.7
 - **FORMING eliminated:** "Pullback from D, no new C yet" is now simply `UPTREND_VALID` / `DOWNTREND_VALID` — the trend is confirmed, the pullback is normal operation, no special state needed
@@ -1463,7 +1413,8 @@ Structural (0 / 25 / 50):
   Both Neutral OR opposing (Bullish+Bearish) → 0
 
 Quad (−15 / −11 / 0 / +15 / +20):
-  Viewpoint=Neutral → 0 (gate)
+  Gate: structural_score==0 AND Viewpoint=Neutral → 0 (both timeframes Neutral/opposing).
+        structural_score==25 (one timeframe confirmed) → quad CONTRIBUTES (not gated).
   Aligned, prob≥0.45 → +20; Aligned, prob<0.45 → +15
   Neutral alignment → 0
   Misaligned, prob≥0.45 → −15; Misaligned, prob<0.45 → −11
