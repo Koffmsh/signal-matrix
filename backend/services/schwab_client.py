@@ -90,17 +90,22 @@ def exchange_code_for_tokens(auth_code: str, db: Session) -> None:
         response.raise_for_status()
         token_data = response.json()
 
-    _store_tokens(token_data, db)
+    _store_tokens(token_data, db, is_full_oauth=True)
     logger.info("Schwab tokens exchanged and stored")
 
 
 # ── Token storage ─────────────────────────────────────────────────────────────
 
-def _store_tokens(token_data: dict, db: Session) -> None:
+def _store_tokens(token_data: dict, db: Session, is_full_oauth: bool = False) -> None:
     """
     Encrypt and upsert tokens into schwab_tokens table.
     Accepts both direct OAuth responses (expires_in seconds) and schwab-py
     token dicts (expires_at as Unix float timestamp).
+
+    is_full_oauth=True: called after a new authorization_code exchange — resets
+    created_at so the aging clock restarts from now.
+    is_full_oauth=False (default): access-token refresh only — created_at unchanged,
+    preserving the original refresh-token issue time for accurate age tracking.
     """
     # Handle new schwab-py token format: {"creation_timestamp": ..., "token": {...}}
     inner = token_data.get("token", token_data)
@@ -125,6 +130,9 @@ def _store_tokens(token_data: dict, db: Session) -> None:
         row.refresh_token = refresh_token
         row.expires_at    = expires_at_str
         row.updated_at    = now_utc
+        if is_full_oauth:
+            # Reset aging clock — a new refresh token was issued
+            row.created_at = now_utc
     else:
         row = SchwabToken(
             access_token  = access_token,
@@ -189,6 +197,20 @@ def refresh_access_token(db: Session) -> bool:
 
     except Exception as e:
         logger.error(f"Schwab token refresh failed: {e}")
+        # Send immediate email if refresh token is definitively expired
+        if "invalid_grant" in str(e).lower() or "invalid_grant" in str(getattr(e, 'response', '')):
+            try:
+                from services.email_alert import send_email
+                send_email(
+                    "Signal Matrix: Schwab token expired — re-auth required",
+                    "The Schwab refresh token has expired (invalid_grant).\n\n"
+                    "Data will fall back to Yahoo Finance until you re-authenticate.\n\n"
+                    "Re-auth: https://signal.suttonmc.com/api/auth/schwab/login\n"
+                    "(or http://localhost:8000/api/auth/schwab/login locally)"
+                )
+                logger.info("Email sent: Schwab token expired")
+            except Exception as email_err:
+                logger.warning(f"Failed to send Schwab expiry email: {email_err}")
         return False
 
 
@@ -212,11 +234,12 @@ def get_status(db: Session) -> dict:
         if expires_at < now_et:
             return {"connected": False, "state": "expired"}
 
-        # Refresh token aging? (Schwab refresh tokens expire after 7 days)
-        updated_utc = datetime.strptime(row.updated_at, "%Y-%m-%d %H:%M:%S").replace(
+        # Refresh token aging? (Schwab refresh tokens expire after 7 days from OAuth issue)
+        # Use created_at — it resets only on a full OAuth exchange, not on access-token refresh.
+        issued_utc = datetime.strptime(row.created_at, "%Y-%m-%d %H:%M:%S").replace(
             tzinfo=timezone.utc
         )
-        age_days = (datetime.now(timezone.utc) - updated_utc).days
+        age_days = (datetime.now(timezone.utc) - issued_utc).days
 
         if age_days >= 6:
             return {"connected": True, "state": "aging", "age_days": age_days}

@@ -107,21 +107,21 @@ def macro_vol_history(db: Session = Depends(get_db)):
     if not ticker_data:
         return {"dates": [], "series": {}, "stats": {}, "updated": None}
 
-    # Intersect all date arrays so chart aligns perfectly
-    date_sets = [set(d) for d, _ in ticker_data.values()]
-    if len(date_sets) == 1:
-        common_dates = sorted(date_sets[0])
-    else:
-        common_dates = sorted(date_sets[0].intersection(*date_sets[1:]))
+    # Union all date arrays — each ticker fills None for dates it lacks.
+    # Avoids one stale ticker dragging the entire chart back to its last date.
+    common_dates = sorted(set().union(*[set(d) for d, _ in ticker_data.values()]))
 
     if not common_dates:
         return {"dates": [], "series": {}, "stats": {}, "updated": None}
 
-    # Build aligned series
+    # Build aligned series — None where a ticker has no data for that date
     series: dict[str, list] = {}
     for ticker, (dates, closes) in ticker_data.items():
         date_to_close = dict(zip(dates, closes))
-        series[ticker] = [round(date_to_close[d], 2) for d in common_dates]
+        series[ticker] = [
+            round(date_to_close[d], 2) if d in date_to_close else None
+            for d in common_dates
+        ]
 
     # ── Stats table ──────────────────────────────────────────────────────────
     def _find_price_n_days_ago(dates: list, closes: list, n_calendar_days: int) -> float | None:
@@ -134,14 +134,8 @@ def macro_vol_history(db: Session = Depends(get_db)):
 
     stats: dict[str, dict] = {}
     for ticker, (dates, closes) in ticker_data.items():
-        # Anchor last/prev to the common date axis so weekend bars (Schwab artifact)
-        # don't cause spurious 0-delta when a ticker has a Saturday bar past the
-        # last real trading day.
-        date_to_close = dict(zip(dates, closes))
-        last_date     = common_dates[-1] if common_dates else None
-        prev_date     = common_dates[-2] if len(common_dates) >= 2 else None
-        last = round(date_to_close[last_date], 2) if last_date and last_date in date_to_close else None
-        prev = round(date_to_close[prev_date], 2) if prev_date and prev_date in date_to_close else None
+        last = round(closes[-1], 2) if closes else None
+        prev = round(closes[-2], 2) if len(closes) >= 2 else None
         wk1  = _find_price_n_days_ago(dates, closes, 7)
         mo1  = _find_price_n_days_ago(dates, closes, 30)
         mo3  = _find_price_n_days_ago(dates, closes, 91)

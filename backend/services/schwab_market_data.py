@@ -540,14 +540,26 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
             hist_resp.raise_for_status()
             candles = hist_resp.json().get("candles", [])
         except Exception as e:
-            logger.warning(f"Schwab index: history fetch failed for {app_ticker}: {e}")
-            errors += 1
+            logger.warning(f"Schwab index: history fetch failed for {app_ticker}: {e} — trying Yahoo fallback")
+            try:
+                _yahoo_fetch_subset(db, [app_ticker], data_source="yahoo_fallback")
+                logger.info(f"Schwab index: Yahoo fallback succeeded for {app_ticker}")
+                fetched += 1
+            except Exception as ye:
+                logger.warning(f"Schwab index: Yahoo fallback also failed for {app_ticker}: {ye}")
+                errors += 1
             time.sleep(0.5)
             continue
 
         if len(candles) < 2:
-            logger.warning(f"Schwab index: insufficient history ({len(candles)} candles) for {app_ticker}")
-            errors += 1
+            logger.warning(f"Schwab index: insufficient history ({len(candles)} candles) for {app_ticker} — trying Yahoo fallback")
+            try:
+                _yahoo_fetch_subset(db, [app_ticker], data_source="yahoo_fallback")
+                logger.info(f"Schwab index: Yahoo fallback succeeded for {app_ticker}")
+                fetched += 1
+            except Exception as ye:
+                logger.warning(f"Schwab index: Yahoo fallback also failed for {app_ticker}: {ye}")
+                errors += 1
             time.sleep(0.5)
             continue
 
@@ -614,7 +626,8 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
     """Batch quotes + per-ticker history via schwab-py."""
     import pandas as pd
 
-    PH = schwab.client.Client.PriceHistory
+    PH    = schwab.client.Client.PriceHistory
+    today = datetime.now(_ET).strftime("%Y-%m-%d")
 
     schwab_tickers  = [t for t in tickers if t not in SCHWAB_UNSUPPORTED]
     unsupported     = [t for t in tickers if t in SCHWAB_UNSUPPORTED]

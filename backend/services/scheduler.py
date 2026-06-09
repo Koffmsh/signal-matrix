@@ -137,6 +137,48 @@ def _refresh_schwab_tokens_job() -> None:
         db.close()
 
 
+def _schwab_token_age_alert_job() -> None:
+    """
+    Daily 9 AM ET — check Schwab refresh token age and send email if expiry is near.
+    Schwab refresh tokens have a hard 7-day limit from the last full OAuth exchange.
+    Alert at day 5 (warning) and day 6+ (urgent daily reminder).
+    """
+    from services.email_alert import send_email
+    db = SessionLocal()
+    try:
+        status = schwab_client.get_status(db)
+        age    = status.get("age_days", 0)
+        state  = status.get("state", "connected")
+
+        reauth_url = "https://signal.suttonmc.com/api/auth/schwab/login"
+
+        if state in ("expired", "disconnected"):
+            send_email(
+                "Signal Matrix: Schwab token expired — re-auth required",
+                f"The Schwab token has expired and data is falling back to Yahoo Finance.\n\n"
+                f"Re-authenticate now: {reauth_url}"
+            )
+            logger.warning("Token age alert: token expired — email sent")
+        elif age >= 6:
+            send_email(
+                f"Signal Matrix: Schwab token expires tomorrow (day {age})",
+                f"Your Schwab token is {age} days old and expires tomorrow.\n\n"
+                f"Re-authenticate now to avoid a data gap: {reauth_url}"
+            )
+            logger.warning(f"Token age alert: day {age} (urgent) — email sent")
+        elif age >= 5:
+            send_email(
+                f"Signal Matrix: Schwab token aging (day {age}) — re-auth in 2 days",
+                f"Your Schwab token is {age} days old. Schwab tokens expire after 7 days.\n\n"
+                f"Re-authenticate within 2 days: {reauth_url}"
+            )
+            logger.info(f"Token age alert: day {age} (warning) — email sent")
+    except Exception as e:
+        logger.error(f"Token age alert job failed: {e}")
+    finally:
+        db.close()
+
+
 def schwab_data_job() -> None:
     """
     4:00 PM ET — full EOD job: prices → IV → signals in one pass.
@@ -304,11 +346,18 @@ def start() -> None:
         id="spx_impact_1pm",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _schwab_token_age_alert_job,
+        CronTrigger(hour=9, minute=0, timezone="America/New_York"),
+        id="schwab_token_age_alert",
+        replace_existing=True,
+    )
     scheduler.start()
     logger.info(
         "Scheduler: started — EOD job 4:00 PM ET (prices→IV→signals), "
         "Schwab token refresh every 25 min, "
-        "intraday monitor 9:30 AM–3:45 PM ET at :00/:15/:30/:45 (trading days)"
+        "intraday monitor 9:30 AM–3:45 PM ET at :00/:15/:30/:45 (trading days), "
+        "token age alert 9:00 AM daily"
     )
 
 
