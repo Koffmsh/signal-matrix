@@ -1,25 +1,26 @@
 """
 spx_constituents.py — SPX constituent weights + daily impact calculation.
 
-Data source: iShares IVV holdings CSV (public, no auth required).
-IVV tracks the S&P 500 index with constituent weights updated daily.
+Data source: SSGA SPY daily holdings XLSX (public, no auth required).
+SPY tracks the S&P 500 index with constituent weights updated daily.
 
 EOD flow (called from scheduler after calculate_signals):
-  1. Fetch IVV holdings CSV → {ticker: weight_pct}
+  1. Fetch SPY holdings XLSX → {ticker: weight_pct}
   2. Batch quote all ~503 constituents via Schwab
   3. Compute contribution = daily_return_pct × (weight_pct / 100)
   4. Store top 10 contributors + detractors + full weights_json in spx_impact_cache (label='eod')
 
 Intraday flow (11am + 1pm scheduler jobs):
-  1. Load weights from EOD row's weights_json — no IVV fetch needed
+  1. Load weights from EOD row's weights_json — no SPY fetch needed
   2. Batch quote all ~503 constituents via Schwab (lastPrice, no AH strip)
   3. Compute + store top 10 contributors + detractors (label='11am' or '1pm')
 """
 
-import csv
 import io
 import json
 import logging
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -33,70 +34,109 @@ from models.price_cache import PriceCache
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 
-# iShares IVV (Core S&P 500 ETF) holdings — public download, no auth required
-# CSV updated daily by iShares; contains all ~503 SPX constituents with weights
-_IVV_HOLDINGS_URL = (
-    "https://www.ishares.com/us/products/239726/"
-    "ishares-core-sp-500-etf/1467271812596.ajax"
-    "?fileType=csv&fileName=IVV_holdings&dataType=fund"
+# SSGA SPY (S&P 500 ETF) daily holdings XLSX — public download, no auth required
+_SPY_HOLDINGS_URL = (
+    "https://www.ssga.com/library-content/products/fund-data/etfs/us/"
+    "holdings-daily-us-en-spy.xlsx"
 )
 
 _TOP_N = 10
 _CHUNK = 200
+_XLSX_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
 
-def fetch_spx_weights() -> dict:
+def parse_spy_xlsx(content: bytes) -> tuple[dict, str]:
     """
-    Download IVV holdings CSV and return {ticker: weight_pct} for equity constituents.
+    Parse SSGA SPY daily holdings XLSX → ({ticker: weight_pct}, as_of_date).
+    Parses raw XLSX ZIP without requiring openpyxl.
+    Row 5 = header (Name/Ticker/Weight/Sector…); rows 6+ = data.
+    as_of_date is extracted from shared strings ("As of DD-Mon-YYYY") → "YYYY-MM-DD".
+    """
+    zf = zipfile.ZipFile(io.BytesIO(content))
+
+    # Shared string table
+    ss_root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+    strings = []
+    for si in ss_root.findall(f"{{{_XLSX_NS}}}si"):
+        t = si.find(f".//{{{_XLSX_NS}}}t")
+        strings.append(t.text if t is not None else "")
+
+    # Extract "As of DD-Mon-YYYY" → "YYYY-MM-DD"
+    as_of_date = None
+    for s in strings:
+        if s and s.startswith("As of "):
+            try:
+                as_of_date = datetime.strptime(s[6:], "%d-%b-%Y").strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+            break
+
+    sheet_root = ET.fromstring(zf.read("xl/worksheets/sheet1.xml"))
+    ticker_col = weight_col = None
+    weights = {}
+
+    for row_el in sheet_root.iter(f"{{{_XLSX_NS}}}row"):
+        r = int(row_el.get("r", 0))
+        if r < 5:
+            continue
+
+        cells = {}
+        for c in row_el:
+            col_ref = c.get("r", "")
+            col_letter = "".join(ch for ch in col_ref if ch.isalpha())
+            v_el = c.find(f"{{{_XLSX_NS}}}v")
+            if v_el is None:
+                continue
+            if c.get("t") == "s":
+                cells[col_letter] = strings[int(v_el.text)]
+            else:
+                try:
+                    cells[col_letter] = float(v_el.text)
+                except (ValueError, TypeError):
+                    cells[col_letter] = v_el.text
+
+        if r == 5:  # header row — locate Ticker and Weight columns
+            for col, val in cells.items():
+                if val == "Ticker":
+                    ticker_col = col
+                elif val == "Weight":
+                    weight_col = col
+            continue
+
+        if not ticker_col or not weight_col:
+            continue
+
+        ticker = str(cells.get(ticker_col, "")).strip().upper()
+        weight = cells.get(weight_col)
+        if not ticker or ticker == "-" or weight is None:
+            continue
+        if len(ticker) > 6 or " " in ticker:
+            continue
+        try:
+            w = float(weight)
+            if w > 0:
+                weights[ticker] = w
+        except (ValueError, TypeError):
+            continue
+
+    return weights, as_of_date or datetime.now(_ET).strftime("%Y-%m-%d")
+
+
+def fetch_spx_weights() -> tuple[dict, str]:
+    """
+    Download SSGA SPY holdings XLSX and return ({ticker: weight_pct}, as_of_date).
     Raises on network or parse failure.
     """
     resp = httpx.get(
-        _IVV_HOLDINGS_URL,
+        _SPY_HOLDINGS_URL,
         follow_redirects=True,
         timeout=30,
         headers={"User-Agent": "Mozilla/5.0"},
     )
     resp.raise_for_status()
-
-    lines = resp.text.splitlines()
-
-    # iShares CSV has metadata rows before the actual column header.
-    # Find the header row by locating "Ticker" as a field name.
-    data_start = None
-    for i, line in enumerate(lines):
-        first_field = line.split(",")[0].strip().strip('"')
-        if first_field == "Ticker":
-            data_start = i
-            break
-
-    if data_start is None:
-        raise ValueError("Could not locate 'Ticker' header row in IVV holdings CSV")
-
-    weights = {}
-    reader = csv.DictReader(io.StringIO("\n".join(lines[data_start:])))
-    for row in reader:
-        # DictReader fills short rows (e.g. footer text) with None — coerce before strip
-        ticker     = (row.get("Ticker")      or "").strip().strip('"').upper()
-        weight_str = (row.get("Weight (%)")  or "").strip()
-        asset_cls  = (row.get("Asset Class") or "").strip()
-
-        if not ticker or ticker == "-" or not weight_str:
-            continue
-        # Reject footer garbage — valid tickers are ≤ 6 chars with no spaces
-        if len(ticker) > 6 or " " in ticker:
-            continue
-        # Only equity positions — skip cash, futures, fx hedges
-        if asset_cls and "Equity" not in asset_cls:
-            continue
-
-        try:
-            weight = float(weight_str)
-            if weight > 0:
-                weights[ticker] = weight
-        except ValueError:
-            continue
-
-    return weights
+    if resp.content[:2] != b"PK":
+        raise ValueError("SPY holdings response is not a valid XLSX file — URL may have changed")
+    return parse_spy_xlsx(resp.content)
 
 
 def _get_spx_actual_return(db: Session, is_eod: bool) -> float | None:
@@ -196,10 +236,10 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
     weights_date = today_et
     weights_stale = False
     try:
-        weights = fetch_spx_weights()
+        weights, weights_date = fetch_spx_weights()
         if not weights:
-            raise ValueError("Empty weights dict from IVV CSV")
-        logger.info(f"SPX impact EOD: loaded {len(weights)} constituent weights from IVV")
+            raise ValueError("Empty weights dict from SPY XLSX")
+        logger.info(f"SPX impact EOD: loaded {len(weights)} constituent weights from SPY (as of {weights_date})")
     except Exception as e:
         logger.warning(f"SPX impact EOD: IVV fetch failed ({e}) — attempting fallback to last known weights")
         # Fall back to the most recent EOD row that has weights_json

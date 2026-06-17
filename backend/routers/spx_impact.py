@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 from models.spx_impact_cache import SpxImpactCache
 from services.auth_service import require_admin_user
+from services.spx_constituents import parse_spy_xlsx
 
 router = APIRouter()
 _ET = ZoneInfo("America/New_York")
@@ -123,8 +124,14 @@ async def upload_weights(
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
 
+    today_et = datetime.now(_ET).strftime("%Y-%m-%d")
+
     try:
-        weights = _parse_ivv_xls(content)
+        if content[:2] == b"PK":  # XLSX (ZIP magic bytes) — SSGA SPY format
+            weights, weights_date = parse_spy_xlsx(content)
+        else:                      # SpreadsheetML XLS — legacy iShares format
+            weights = _parse_ivv_xls(content)
+            weights_date = today_et
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to parse file: {e}")
 
@@ -134,29 +141,26 @@ async def upload_weights(
             detail=f"Only {len(weights)} equity tickers found — expected ~500. Wrong file?"
         )
 
-    today_et = datetime.now(_ET).strftime("%Y-%m-%d")
-
     eod_row = db.query(SpxImpactCache).filter(
         SpxImpactCache.snapshot_label == "eod"
     ).order_by(SpxImpactCache.computed_date.desc()).first()
 
     if eod_row:
         eod_row.weights_json = json.dumps(weights)
-        eod_row.weights_date = today_et
+        eod_row.weights_date = weights_date
         eod_row.updated_at   = datetime.utcnow()
     else:
-        # No EOD row yet — create a skeleton so weights are available for intraday
         eod_row = SpxImpactCache(
             snapshot_label    = "eod",
             computed_date     = today_et,
             contributors_json = "[]",
             detractors_json   = "[]",
             weights_json      = json.dumps(weights),
-            weights_date      = today_et,
+            weights_date      = weights_date,
             updated_at        = datetime.utcnow(),
         )
         db.add(eod_row)
 
     db.commit()
 
-    return {"status": "ok", "tickers": len(weights), "weights_date": today_et}
+    return {"status": "ok", "tickers": len(weights), "weights_date": weights_date}
