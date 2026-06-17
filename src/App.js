@@ -106,24 +106,37 @@ function seededRand(seed) {
 // ── Sparkline (pure SVG) ─────────────────────────────────────────────────────
 function Sparkline({ prices, color }) {
   const W = 80, H = 28, pad = 2;
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
+  const valid = prices.filter(p => p != null && isFinite(p));
+  if (valid.length < 2) return <svg width={W} height={H} style={{ display: "block" }} />;
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
   const range = max - min || 1;
-  const pts = prices.map((p, i) => {
+  const segments = [];
+  let current = [];
+  prices.forEach((p, i) => {
     const x = pad + (i / (prices.length - 1)) * (W - pad * 2);
-    const y = H - pad - ((p - min) / range) * (H - pad * 2);
-    return `${x},${y}`;
+    if (p == null || !isFinite(p)) {
+      if (current.length > 1) segments.push(current);
+      current = [];
+    } else {
+      const y = H - pad - ((p - min) / range) * (H - pad * 2);
+      current.push(`${x},${y}`);
+    }
   });
+  if (current.length > 1) segments.push(current);
   return (
     <svg width={W} height={H} style={{ display: "block" }}>
-      <polyline
-        points={pts.join(" ")}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+      {segments.map((pts, si) => (
+        <polyline
+          key={si}
+          points={pts.join(" ")}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      ))}
     </svg>
   );
 }
