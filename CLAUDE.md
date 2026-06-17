@@ -239,7 +239,7 @@ signal-matrix/
 │   │   ├── schwab_market_data.py          ← Task 5.4 — EOD quote + history fetch + intraday quotes ✅
 │   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + vol_history write ✅
 │   │   ├── intraday_monitor.py            ← PROXIMITY + RETRACEMENT_50 alert engine ✅
-│   │   ├── spx_constituents.py            ← SPX constituent impact — IVV weights + Schwab batch quotes ✅
+│   │   ├── spx_constituents.py            ← SPX constituent impact — SSGA SPY XLSX weights + Schwab batch quotes ✅
 │   │   └── sms.py                         ← Twilio SMS wrapper ✅
 │   └── routers/
 │       ├── market_data.py
@@ -306,7 +306,7 @@ immediately after data fetch, both buttons go green together by ~4:02 PM.
 ### Intraday SPX Impact Snapshots (11 AM + 1 PM ET, Mon-Fri)
 ```
 APScheduler (spx_impact_11am / spx_impact_1pm)
-    → Read weights_json from most recent EOD row in spx_impact_cache — no IVV fetch
+    → Read weights_json from most recent EOD row in spx_impact_cache — no SPY fetch
     → _batch_schwab_quotes()    3 calls × 200-ticker chunks (~5 seconds total)
     → _compute_impacts()        no AH strip (lastPrice is live intraday)
     → Upsert spx_impact_cache   label='11am' or '1pm', computed_date=today_et
