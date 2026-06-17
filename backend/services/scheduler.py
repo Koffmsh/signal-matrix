@@ -150,7 +150,7 @@ def _schwab_token_age_alert_job() -> None:
         age    = status.get("age_days", 0)
         state  = status.get("state", "connected")
 
-        reauth_url = "https://signal.suttonmc.com/api/auth/schwab/login"
+        reauth_url = "https://api.signal.suttonmc.com/api/auth/schwab/login"
 
         if state in ("expired", "disconnected"):
             send_email(

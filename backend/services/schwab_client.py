@@ -205,8 +205,7 @@ def refresh_access_token(db: Session) -> bool:
                     "Signal Matrix: Schwab token expired — re-auth required",
                     "The Schwab refresh token has expired (invalid_grant).\n\n"
                     "Data will fall back to Yahoo Finance until you re-authenticate.\n\n"
-                    "Re-auth: https://signal.suttonmc.com/api/auth/schwab/login\n"
-                    "(or http://localhost:8000/api/auth/schwab/login locally)"
+                    "Re-auth: https://api.signal.suttonmc.com/api/auth/schwab/login"
                 )
                 logger.info("Email sent: Schwab token expired")
             except Exception as email_err:
