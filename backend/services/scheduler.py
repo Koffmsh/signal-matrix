@@ -128,15 +128,6 @@ async def run_catchup_on_startup() -> None:
     await loop.run_in_executor(None, schwab_data_job)
 
 
-def _refresh_schwab_tokens_job() -> None:
-    """Proactive Schwab token refresh — runs every 25 minutes."""
-    db = SessionLocal()
-    try:
-        schwab_client.refresh_access_token(db)
-    finally:
-        db.close()
-
-
 def _schwab_token_age_alert_job() -> None:
     """
     Daily 9 AM ET — check Schwab refresh token age and send email if expiry is near.
@@ -313,13 +304,6 @@ def start() -> None:
         replace_existing=True,
     )
     scheduler.add_job(
-        _refresh_schwab_tokens_job,
-        "interval",
-        minutes=25,
-        id="schwab_refresh",
-        replace_existing=True,
-    )
-    scheduler.add_job(
         _intraday_monitor_job,
         # Fires at :00/:15/:30/:45 from 9 AM–3 PM, plus 9:30–9:45 via minute=30,45 at hour=9
         # Effective market-hours range: 9:30, 9:45, 10:00 … 15:30, 15:45
@@ -355,7 +339,6 @@ def start() -> None:
     scheduler.start()
     logger.info(
         "Scheduler: started — EOD job 4:00 PM ET (prices→IV→signals), "
-        "Schwab token refresh every 25 min, "
         "intraday monitor 9:30 AM–3:45 PM ET at :00/:15/:30/:45 (trading days), "
         "token age alert 9:00 AM daily"
     )
