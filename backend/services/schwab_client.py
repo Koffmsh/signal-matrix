@@ -133,6 +133,7 @@ def _store_tokens(token_data: dict, db: Session, is_full_oauth: bool = False) ->
         if is_full_oauth:
             # Reset aging clock — a new refresh token was issued
             row.created_at = now_utc
+            logger.info(f"OAuth exchange: created_at reset to {now_utc}")
     else:
         row = SchwabToken(
             access_token  = access_token,
@@ -159,11 +160,42 @@ def refresh_access_token(db: Session) -> bool:
     Proactively refresh the access token using the stored refresh token.
     Called every 25 minutes by APScheduler.
     Returns True on success, False on failure (caller should log/alert).
+
+    Idempotency guard: skips the Schwab call if the token was already refreshed
+    within the last 10 minutes. Prevents the race condition where two concurrent
+    scheduler instances (e.g., during a Fly.io rolling deploy) both use the same
+    refresh token simultaneously — Schwab invalidates it after first use.
     """
     row = db.query(SchwabToken).first()
     if not row:
         logger.debug("Schwab token refresh skipped — no tokens stored")
         return False
+
+    # Idempotency: skip if another instance refreshed recently
+    try:
+        last_refresh = datetime.strptime(row.updated_at, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+        seconds_since_refresh = (datetime.now(timezone.utc) - last_refresh).total_seconds()
+        if seconds_since_refresh < 600:  # refreshed within the last 10 minutes
+            logger.debug(
+                f"Schwab token refresh skipped — refreshed {seconds_since_refresh:.0f}s ago"
+            )
+            return True
+    except Exception:
+        pass  # if updated_at can't be parsed, proceed with refresh attempt
+
+    # Also skip if the access token is still valid with > 6 minutes to spare
+    try:
+        expires_at = datetime.fromisoformat(row.expires_at)
+        time_left_s = (expires_at - datetime.now(_ET)).total_seconds()
+        if time_left_s > 360:
+            logger.debug(
+                f"Schwab token refresh skipped — token valid for {time_left_s:.0f}s more"
+            )
+            return True
+    except Exception:
+        pass  # if expires_at can't be parsed, proceed with refresh attempt
 
     try:
         refresh_token = _decrypt(row.refresh_token)
@@ -202,10 +234,10 @@ def refresh_access_token(db: Session) -> bool:
             try:
                 from services.email_alert import send_email
                 send_email(
-                    "Signal Matrix: Schwab token expired — re-auth required",
-                    "The Schwab refresh token has expired (invalid_grant).\n\n"
-                    "Data will fall back to Yahoo Finance until you re-authenticate.\n\n"
-                    "Re-auth: https://api.signal.suttonmc.com/api/auth/schwab/login"
+                    "Signal Matrix: Schwab data connection lost",
+                    "The Schwab API connection has been interrupted (invalid_grant).\n\n"
+                    "Signal Matrix is falling back to Yahoo Finance until you reconnect.\n\n"
+                    "Reconnect here: https://api.signal.suttonmc.com/api/auth/schwab/login"
                 )
                 logger.info("Email sent: Schwab token expired")
             except Exception as email_err:

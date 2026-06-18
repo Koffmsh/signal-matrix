@@ -154,23 +154,23 @@ def _schwab_token_age_alert_job() -> None:
 
         if state in ("expired", "disconnected"):
             send_email(
-                "Signal Matrix: Schwab token expired — re-auth required",
-                f"The Schwab token has expired and data is falling back to Yahoo Finance.\n\n"
-                f"Re-authenticate now: {reauth_url}"
+                "Signal Matrix: Schwab reconnect needed",
+                f"Signal Matrix has lost its Schwab data connection and is using Yahoo Finance as a fallback.\n\n"
+                f"Reconnect here: {reauth_url}"
             )
             logger.warning("Token age alert: token expired — email sent")
         elif age >= 6:
             send_email(
-                f"Signal Matrix: Schwab token expires tomorrow (day {age})",
-                f"Your Schwab token is {age} days old and expires tomorrow.\n\n"
-                f"Re-authenticate now to avoid a data gap: {reauth_url}"
+                f"Signal Matrix: Schwab API renewal due (day {age}/7)",
+                f"Your Schwab API session is {age} days old and needs renewal by tomorrow.\n\n"
+                f"Renew here to avoid a data gap: {reauth_url}"
             )
             logger.warning(f"Token age alert: day {age} (urgent) — email sent")
         elif age >= 5:
             send_email(
-                f"Signal Matrix: Schwab token aging (day {age}) — re-auth in 2 days",
-                f"Your Schwab token is {age} days old. Schwab tokens expire after 7 days.\n\n"
-                f"Re-authenticate within 2 days: {reauth_url}"
+                f"Signal Matrix: Schwab API renewal reminder (day {age}/7)",
+                f"Your Schwab API session is {age} days old. Sessions expire after 7 days.\n\n"
+                f"Renew within 2 days: {reauth_url}"
             )
             logger.info(f"Token age alert: day {age} (warning) — email sent")
     except Exception as e:
