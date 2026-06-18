@@ -47,6 +47,72 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 ## Decisions
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
+
+## ADR-016 — `get_status()` clock source: `updated_at`, not `expires_at`
+Date: 2026-06-17
+Status: Active
+Component: `backend/services/schwab_client.py` — `get_status()`
+
+Context:
+  The SCHWAB header dot was showing red every morning (and every overnight period
+  with no API calls), even though the system would auto-recover on the next
+  schwab-py API call. Root cause: `get_status()` compared `expires_at` against
+  now. `expires_at` is the 30-min access token lifetime — it always reads as
+  expired after 30 minutes of inactivity.
+
+Decision:
+  Use `updated_at` as the clock for the 7-day expiry check. `updated_at` is
+  stamped by `_store_tokens()` on every successful token write (both OAuth
+  exchange and schwab-py auto-refresh during API calls). If `updated_at` is
+  < 7 days old the refresh token is still valid; ≥ 7 days → the refresh token
+  has likely expired → show red and require re-auth.
+
+Why (regression guard):
+  A 30-min access token expiring overnight is normal and recoverable — schwab-py
+  auto-refreshes it on the next API call (9:30 AM intraday monitor or 4 PM EOD
+  job). Showing red for this causes alarm and unnecessary re-auths. RED must
+  exclusively mean "the refresh token is dead; the system cannot recover without
+  user action." `expires_at` is the wrong signal for that. Do NOT revert to
+  `expires_at` without first verifying that you're checking the refresh token's
+  expiry — Schwab does not return a separate `refresh_token_expires_at` field,
+  so `updated_at` + 7 days is the correct proxy.
+
+Linked rule: CLAUDE.md rule #93 + "Schwab refresh token has a hard 7-day expiry"
+
+
+## ADR-015 — Remove proactive Schwab token refresh scheduler job
+Date: 2026-06-17
+Status: Active
+Component: `backend/services/scheduler.py`, `backend/services/schwab_client.py`
+
+Context:
+  A `schwab_refresh` APScheduler job fired every 25 minutes and called the
+  Schwab token endpoint directly (via `refresh_access_token()` in
+  `schwab_client.py`). This was added before schwab-py's `client_from_access_functions`
+  was in use. Once the IV fetch was activated (commit `111f900` fixed a NameError
+  that had silently suppressed it), the IV fetch ran 65+ option chain requests
+  over several minutes. During that window schwab-py's internal auto-refresh and
+  the 25-min scheduler both read the same refresh token from the DB and called
+  Schwab simultaneously. Schwab rotates the refresh token on first use; the
+  second caller got `invalid_grant`, killing the session.
+
+Decision:
+  Remove `_refresh_schwab_tokens_job` and its scheduler registration entirely.
+  Let schwab-py's `client_from_access_functions` handle all token refreshes
+  internally — it calls `_write()` (which calls `_store_tokens()`) on each
+  successful refresh, keeping `updated_at` current. No separate refresh job.
+
+Why (regression guard):
+  schwab-py serializes token refresh internally — only one refresh happens per
+  client instance per expired access token. A parallel httpx caller has no
+  knowledge of schwab-py's in-flight refresh and will race on the refresh token.
+  Schwab's single-use refresh token rotation means only one winner; the loser
+  gets `invalid_grant`. Do NOT re-add any APScheduler job that calls the Schwab
+  token endpoint directly. The only safe refresh path is through the schwab-py
+  client. If future sessions need a keep-alive mechanism, it must go through
+  schwab-py (e.g., a lightweight API call on a schedule — not a direct token POST).
+
+Linked rule: CLAUDE.md rule #92 + Scheduler Overview section
 <!-- ADR-001..013 seeded 2026-06-04 from the CLAUDE.md "Known Fixes & Learnings" migration (Phase M2). Dates reflect the recording pass, not original decision dates. -->
 
 ## ADR-015 — Restructured precious metals ETFs must use Yahoo history, not Schwab

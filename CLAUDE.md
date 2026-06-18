@@ -144,7 +144,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **No per-ticker query loops in read paths** — always `.filter(PriceCache.ticker.in_(tickers))` with `load_only` (skip the `history_json`/`volume_history_json` blobs).
 - **Gap-detection fetch modes** (`schwab_market_data.py`, both Schwab & Yahoo paths) — per-ticker `skip`/`append`/`short`/`bootstrap`; `append` adds today's bar from the batch quote (no history API call); the 0.5s rate-limit sleep fires only on a real history call. See **ADR-012**.
 - **`_schwab_fetch` requires `today` defined at top** — `today = datetime.now(_ET).strftime("%Y-%m-%d")` must be the first line after `PH = ...` in `_schwab_fetch`. It is used at multiple points in the loop (`_history_fetch_mode`, `_update_quote_only`, `_append_bar`). Missing it raises `NameError: name 'today' is not defined` which silently kills the entire Schwab fetch (caught by the outer try/except → Yahoo fallback) on every run. Do not remove or move this line.
-- **Schwab refresh token has a hard 7-day expiry** — `get_status()` measures token age from `created_at` (set only on full OAuth exchange via `exchange_code_for_tokens`). `updated_at` refreshes every 25 min and must NOT be used for age. `state='aging'` fires at day 6 (amber dot, clickable); `state='expired'` at access-token expiry (red). Daily 9 AM scheduler job (`_schwab_token_age_alert_job`) sends email at day 5 (warning) and day 6+ (urgent). Immediate email sent on `invalid_grant` in `refresh_access_token`. Re-auth URL: `https://signal.suttonmc.com/api/auth/schwab/login`.
+- **Schwab refresh token has a hard 7-day expiry** — `get_status()` measures token age from `updated_at` (stamped on every successful token write by schwab-py or `exchange_code_for_tokens`). `state='aging'` fires at day 6 (amber dot); `state='expired'` at day 7+ (red dot, re-auth required). **Do NOT use `expires_at` for the 7-day clock** — that is the 30-min access token lifetime and would show red overnight whenever no API call kept it warm. An expired access token auto-recovers on the next schwab-py API call; red must only mean "refresh token is dead, re-auth required." See **ADR-016**. Daily 9 AM scheduler job (`_schwab_token_age_alert_job`) sends email at day 5 (warning) and day 6+ (urgent). Immediate email sent on `invalid_grant`. Re-auth URL: `https://signal.suttonmc.com/api/auth/schwab/login`.
 - **CALCULATE SIGNALS skip** — on repeat **manual** runs, Hurst+Pivots skip when `calculated_at` is today (output stage still runs); `trigger="scheduled"` ALWAYS recomputes everything. Never apply the skip to scheduled.
 - **IV idempotent on manual REFRESH** — `market_data.py` calls `schwab_fetch_iv(force=False)` (never `force=True`); the scheduler relies on the same idempotency check (IV unfetched at 4 PM → always fetches).
 - **Button freshness** — REFRESH DATA amber when past 4:15 PM ET weekday AND cache stale; CALCULATE SIGNALS amber when its timestamp is older than the data timestamp. Both admin-only (UI `isAdmin` + backend `require_admin_user`).
@@ -283,13 +283,14 @@ Per-task build detail lives in git history. Phase 4.4 (Fly.io deploy) was absorb
 
 ### Scheduler Overview
 - APScheduler `AsyncIOScheduler` inside FastAPI lifespan
-- **Three registered jobs:**
+- **Four registered jobs:**
   1. `schwab_data_job` — CronTrigger 4:00 PM ET NYSE trading days (prices → IV → signals)
-  2. `schwab_refresh` — interval every 25 min (proactive Schwab token refresh)
-  3. `intraday_monitor` — CronTrigger mon–fri 9:30 AM–3:45 PM ET at :00/:15/:30/:45
+  2. `intraday_monitor` — CronTrigger mon–fri 9:30 AM–3:45 PM ET at :00/:15/:30/:45
+  3. `spx_impact_11am` / `spx_impact_1pm` — CronTrigger 11 AM / 1 PM ET Mon-Fri
+  4. `schwab_token_age_alert` — CronTrigger 9:00 AM ET daily
 - On startup: catch-up check — if past 4:00 PM ET, trading day, and no successful run today → runs immediately
 - All dates use **ET timezone** — never UTC (see UTC vs ET fix above)
-- **Five registered jobs:** `schwab_data_job` (4 PM EOD), `schwab_refresh` (25 min interval), `intraday_monitor` (15 min market hours), `spx_impact_11am` (11 AM ET Mon-Fri), `spx_impact_1pm` (1 PM ET Mon-Fri)
+- **No proactive Schwab token refresh job** — schwab-py `client_from_access_functions` auto-refreshes the access token during API calls. A separate scheduler job causes `invalid_grant` races. See **ADR-015**.
 
 ### EOD Flow (4:00 PM ET, NYSE trading days) — single chained job
 ```
@@ -490,7 +491,7 @@ Dropped entirely. OBV direction already computed in EOD signals and displayed in
 ### Schwab API: schwab-py library
 - `pip install schwab-py` — do not write raw HTTP calls against Schwab API
 - Token storage: Fernet-encrypted in `schwab_tokens` table
-- Token refresh: proactive background task every 25 minutes (APScheduler)
+- Token refresh: handled automatically by schwab-py `client_from_access_functions` during API calls — no separate scheduler job (see **ADR-015**)
 - Fallback: all Schwab calls fall back to Yahoo Finance on token expiry or API error
 - Data source tagged in `price_cache.data_source` — visible in dashboard header
 
@@ -1268,6 +1269,8 @@ git checkout -- .   # roll back if needed
 89. **Local Docker connects to PRODUCTION Supabase** — `SUPABASE_CONNECTION_STRING` in `.env` points at the same DB as production. There is no separate local DB. Therefore: every local backend test/registration writes to production. When iterating on auth or any DB-touching feature, expect test users to appear in production. Clean up test fixtures before and after.
 90. **Idempotent migrations for new tables** — `Base.metadata.create_all()` runs at startup and creates any new tables from SQLAlchemy models, BEFORE alembic gets a chance to run on a fresh deploy. New `op.create_table` migrations must guard with `if "table_name" not in inspector.get_table_names(): ...` (see `add_users_table.py` / `add_password_reset_tokens_table.py` for the pattern). Otherwise `alembic upgrade head` after deploy fails with "table already exists".
 91. **`REFRESH DATA` and `CALCULATE SIGNALS` are admin-only** — both UI buttons (gated by `isAdmin` in App.js) and backend endpoints (`/api/market-data/batch`, `/api/signals/calculate` use `require_admin_user`). Viewers see cached data via `/api/market-data/cached` and `/api/signals/stored`; they cannot trigger expensive recalcs.
+92. **Never add a proactive Schwab token refresh scheduler job** — schwab-py `client_from_access_functions` handles all access-token refreshes internally during API calls. A separate APScheduler job that calls the Schwab token endpoint concurrently races with schwab-py's internal refresh: both use the same refresh token; Schwab rotates it on first use, so the second caller gets `invalid_grant` and kills the session. See **ADR-015**.
+93. **`get_status()` clock source is `updated_at`, not `expires_at`** — `updated_at` is stamped by `_store_tokens` on every successful schwab-py token write. If `updated_at` is < 7 days old the refresh token is still valid; ≥ 7 days → broken (red). Never use `expires_at` (30-min access token lifetime) as the 7-day expiry clock — access tokens expire overnight and auto-recover; using `expires_at` causes false-red SCHWAB dots every morning. See **ADR-016**.
 
 ---
 
