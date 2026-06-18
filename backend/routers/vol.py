@@ -100,7 +100,7 @@ def macro_vol_history(db: Session = Depends(get_db)):
         dates  = json.loads(row.history_dates_json)
         if len(closes) != len(dates) or len(closes) < 2:
             continue
-        ticker_data[row.ticker] = (dates, closes)
+        ticker_data[row.ticker] = (dates, closes, row.close)
         if row.updated_at and (updated_at is None or row.updated_at > updated_at):
             updated_at = row.updated_at
 
@@ -109,14 +109,14 @@ def macro_vol_history(db: Session = Depends(get_db)):
 
     # Union all date arrays — each ticker fills None for dates it lacks.
     # Avoids one stale ticker dragging the entire chart back to its last date.
-    common_dates = sorted(set().union(*[set(d) for d, _ in ticker_data.values()]))
+    common_dates = sorted(set().union(*[set(d) for d, _, _c in ticker_data.values()]))
 
     if not common_dates:
         return {"dates": [], "series": {}, "stats": {}, "updated": None}
 
     # Build aligned series — None where a ticker has no data for that date
     series: dict[str, list] = {}
-    for ticker, (dates, closes) in ticker_data.items():
+    for ticker, (dates, closes, _cur) in ticker_data.items():
         date_to_close = dict(zip(dates, closes))
         series[ticker] = [
             round(date_to_close[d], 2) if d in date_to_close else None
@@ -132,10 +132,17 @@ def macro_vol_history(db: Session = Depends(get_db)):
         idx = bisect.bisect_right(dates, target) - 1
         return round(closes[idx], 2) if idx >= 0 else None
 
+    today_et = datetime.now(_ET).date().isoformat()
+
     stats: dict[str, dict] = {}
-    for ticker, (dates, closes) in ticker_data.items():
-        last = round(closes[-1], 2) if closes else None
-        prev = round(closes[-2], 2) if len(closes) >= 2 else None
+    for ticker, (dates, closes, cur_close) in ticker_data.items():
+        # Use price_cache.close as the canonical "last" — same source as the dashboard gauge.
+        last = round(cur_close, 2) if cur_close is not None else (round(closes[-1], 2) if closes else None)
+        # prev = second-to-last bar when history already includes today; last bar otherwise
+        if dates and dates[-1] >= today_et:
+            prev = round(closes[-2], 2) if len(closes) >= 2 else None
+        else:
+            prev = round(closes[-1], 2) if closes else None
         wk1  = _find_price_n_days_ago(dates, closes, 7)
         mo1  = _find_price_n_days_ago(dates, closes, 30)
         mo3  = _find_price_n_days_ago(dates, closes, 91)
