@@ -48,6 +48,41 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-017 — OBV direction: rolling z-score oscillator → 40-bar regression (replaces slope÷std)
+Date: 2026-06-18
+Status: Active
+Component: `conviction_engine.py` (`_obv_direction`, `_rolling_zscore`)
+
+Context:
+  Prior method (ADR-005) regressed raw OBV over 40 bars and divided the slope by
+  std(OBV[-40:]). That is algebraically identical to a SINGLE-window z-score regression
+  (subtracting the mean doesn't change a slope; dividing by positive std can't flip sign),
+  so it never inverted — verified empirically: a 25× volume gap moved the normalized value
+  only ~0.4% and never crossed the band. But it is a single static-window transform.
+
+Decision:
+  Build a ROLLING 20-bar z-score of OBV (each bar normalized by its OWN trailing 20-bar
+  mean/std), then take the 40-bar linear-regression slope of that stationary oscillator.
+  Sign-only classification (neutral band = 0, maximally responsive): slope > 0 → Bullish,
+  < 0 → Bearish, == 0 → Neutral. Requires ≥ 59 OBV bars (zn + rn − 1 = 20 + 40 − 1).
+  `obv_confirming` unchanged: z-score regression direction AND raw-OBV 20-SMA 3-bar slope
+  must both confirm Trade Dir (+10 volume_score), plus acceleration (+5).
+
+Why (regression guard):
+  Adopted for RESPONSIVENESS, not to fix an inversion — the rolling z-score registered a
+  post-gap trend turn ~3 trading days earlier than the single-window method, because recent
+  bars are normalized by their own local (pre-shock) environment. Do NOT "simplify" back to
+  slope÷std: that collapses the rolling per-bar σ_t into one scalar and loses the early turn.
+  Do NOT confuse this with the broken ThinkScript `OBV/StDev` (level÷dispersion) study, which
+  DOES invert — dividing the huge near-constant OBV level by a co-moving σ yields a 1/σ signal
+  that sinks as the trend strengthens; the mean-subtraction in the z-score is what cures that.
+  Band = 0 means `_obv_direction` almost never returns Neutral (only volumeless indices such
+  as VIX, whose flat OBV gives an exact-zero slope) — accepted tradeoff for max responsiveness;
+  expect more frequent Confirming/Diverging vol_signals. The raw-OBV 20-SMA slope/acceleration
+  signals deliberately stay on raw OBV (sign-only, so scale is irrelevant).
+
+Linked rule: CLAUDE.md rule #41
+
 ## ADR-016 — `get_status()` clock source: `updated_at`, not `expires_at`
 Date: 2026-06-17
 Status: Active
@@ -349,7 +384,7 @@ Linked rule: CLAUDE.md Schwab IV / vol-metrics rules
 
 ## ADR-005 — OBV direction method evolution (why 40-bar regression won)
 Date: 2026-06-04
-Status: Active
+Status: Superseded by ADR-017 (regression now runs on a rolling z-score oscillator, band 0)
 Component: `conviction_engine.py` (`_obv_direction`)
 
 Context:

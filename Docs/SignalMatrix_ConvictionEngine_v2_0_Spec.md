@@ -167,17 +167,23 @@ else:                                      # Misaligned
 
 Measures OBV trend direction, momentum, and acceleration.
 
-### obv_direction — 40-bar Linear Regression ✅ Already implemented
+### obv_direction — Rolling Z-Score Oscillator → 40-bar Regression ✅ Implemented (ADR-017)
 
 ```python
-# 40-bar linear regression slope on OBV series.
-# Slope normalized by std(OBV[-40:]) to be scale-invariant across tickers.
-# |normalized slope| <= _OBV_NEUTRAL_BAND (0.02) → 'Neutral'
-# normalized slope > 0.02 → 'Bullish'
-# normalized slope < -0.02 → 'Bearish'
+# 1. Build OBV from closes/volumes.
+# 2. Rolling 20-bar z-score (_OBV_ZSCORE_WINDOW): each bar normalized by its OWN
+#    trailing 20-bar mean/std → stationary oscillator (no inversion on vol shocks).
+# 3. 40-bar linear-regression slope (_OBV_REGRESSION_WINDOW) on the z-score series.
+# Sign-only (_OBV_NEUTRAL_BAND = 0.0):
+#   slope > 0 → 'Bullish'   slope < 0 → 'Bearish'   slope == 0 → 'Neutral'
+# Requires >= 59 OBV bars (20 + 40 - 1) else 'Neutral'.
 ```
 
-Threshold `_OBV_NEUTRAL_BAND = 0.02` — calibrated against IWM, SPY, GLD. Adjust if needed; flag as `# TODO_CALIBRATE` until confirmed stable.
+Band `_OBV_NEUTRAL_BAND = 0.0` — sign-only, maximally responsive (no dead zone). Replaced
+the single-window slope÷std (ADR-005, band 0.02) for responsiveness — the rolling z-score
+turns ~3 trading days earlier on a volume shock. Tradeoff: `obv_direction` almost never reads
+'Neutral' (only volumeless indices like VIX), so Confirming/Diverging vol_signals are more
+frequent. See **ADR-017**.
 
 ### Downstream — Unchanged
 

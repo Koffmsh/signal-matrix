@@ -49,35 +49,58 @@ def _build_obv(closes: list, volumes: list) -> list:
     return obv
 
 
-_OBV_REGRESSION_WINDOW = 40
-_OBV_NEUTRAL_BAND      = 0.02   # |normalized slope| below this → Neutral
+_OBV_ZSCORE_WINDOW     = 20    # rolling z-score normalization window
+_OBV_REGRESSION_WINDOW = 40    # regression window applied to the z-score series
+_OBV_NEUTRAL_BAND      = 0.0   # sign-only — maximally responsive (no dead band)
+
+
+def _rolling_zscore(series: list, window: int) -> list:
+    """
+    Rolling z-score: each point is normalized by its OWN trailing-`window` mean and std.
+
+    This is the stationary-oscillator transform — distinct from a single-window
+    (OBV - mean)/std. Because OBV is a large, slowly-moving cumulative level,
+    dividing the raw level by σ produces a 1/σ signal that moves INVERSELY to trend
+    strength. Subtracting each point's rolling mean removes the giant constant level
+    and leaves the deviation-from-recent-average, which rises correctly during
+    accumulation. Returns one z-value per bar from index `window-1` onward.
+    """
+    out = []
+    for t in range(window - 1, len(series)):
+        w  = series[t - window + 1 : t + 1]
+        mu = sum(w) / window
+        sd = float(np.std(w))
+        out.append((series[t] - mu) / sd if sd else 0.0)
+    return out
 
 
 def _obv_direction(closes: list, volumes: list) -> str:
     """
-    Determine OBV trend direction using 40-bar linear regression slope on the OBV series.
-    Slope is normalized by std(OBV) over the window to be scale-invariant across tickers.
-    A small neutral band around zero prevents noise from registering as direction.
+    Determine OBV trend direction via the slope of a stationary OBV oscillator:
+      1. Build OBV from closes/volumes.
+      2. Rolling z-score (20-bar) → stationary oscillator (no inversion on vol shocks).
+      3. Linear regression slope (40-bar) on the z-score series → momentum of accumulation.
+    Sign-only classification (band 0): slope > 0 → Bullish, < 0 → Bearish, == 0 → Neutral.
+    Requires (zscore_window + regression_window - 1) OBV bars; else Neutral.
     Returns: 'Bullish' | 'Bearish' | 'Neutral'
     """
     obv = _build_obv(closes, volumes)
-    n   = _OBV_REGRESSION_WINDOW
-    if len(obv) < n:
+    zn  = _OBV_ZSCORE_WINDOW
+    rn  = _OBV_REGRESSION_WINDOW
+    if len(obv) < zn + rn - 1:
         return "Neutral"
 
-    y     = obv[-n:]
-    x     = np.arange(n, dtype=float)
-    slope = float(np.polyfit(x, y, 1)[0])   # units: OBV per bar
-
-    # Normalize by std so the neutral band threshold is ticker-agnostic
-    std = float(np.std(y))
-    if std == 0:
+    z = _rolling_zscore(obv, zn)
+    if len(z) < rn:
         return "Neutral"
 
-    normalized = slope / std
-    if normalized >  _OBV_NEUTRAL_BAND:
+    y     = np.asarray(z[-rn:], dtype=float)
+    x     = np.arange(rn, dtype=float)
+    slope = float(np.polyfit(x, y, 1)[0])   # slope of the stationary z-score oscillator
+
+    if slope >  _OBV_NEUTRAL_BAND:
         return "Bullish"
-    if normalized < -_OBV_NEUTRAL_BAND:
+    if slope < -_OBV_NEUTRAL_BAND:
         return "Bearish"
     return "Neutral"
 
@@ -89,74 +112,6 @@ def _build_obv_ma20(closes: list, volumes: list) -> list:
         return []
     return [sum(obv[i - 19 : i + 1]) / 20.0 for i in range(19, len(obv))]
 
-
-def _obv_slope_signals(obv_ma20: list, viewpoint: str,
-                       obv_dir: str) -> tuple:
-    """
-    Compute 3-bar OBV MA20 slope signals and derived multipliers.
-
-    obv_slope:       'rising' | 'falling' | 'flat'
-        Sign of the 3-bar rate of change on the OBV MA20.
-        slope_now = obv_ma20[-1] - obv_ma20[-4]  (current vs 3 bars ago)
-
-    obv_slope_trend: 'increasing' | 'decreasing' | 'flat'
-        Acceleration — whether the 3-bar slope itself is growing or shrinking.
-        slope_prev = obv_ma20[-2] - obv_ma20[-5]  (prior 3-bar window)
-
-    Alignment (Layer 1):
-        Aligned   — OBV pivot direction AND OBV MA20 slope both confirm viewpoint
-                    Bullish: obv_dir=Bullish AND obv_slope=rising
-                    Bearish: obv_dir=Bearish AND obv_slope=falling
-        Misaligned — both oppose viewpoint
-        Neutral   — everything else
-
-    alignment_mult: 1.20 (aligned) | 0.85 (misaligned) | 1.00 (neutral)
-
-    Slope boost (Layer 2 — only when aligned):
-        Bullish + slope_trend=increasing → 1.17   (acceleration — early in the move)
-        Bearish + slope_trend=decreasing → 1.17
-        Otherwise                        → 1.00
-
-    Returns (obv_slope, obv_slope_trend, alignment_mult, slope_boost).
-    Requires len(obv_ma20) >= 6.
-    """
-    if len(obv_ma20) < 6:
-        return "flat", "flat", 1.00, 1.00
-
-    slope_now  = obv_ma20[-1] - obv_ma20[-4]   # 3-bar rate of change
-    slope_prev = obv_ma20[-2] - obv_ma20[-5]   # prior 3-bar window
-
-    obv_slope = ("rising"  if slope_now > 0 else
-                 "falling" if slope_now < 0 else "flat")
-
-    obv_slope_trend = ("increasing" if slope_now > slope_prev else
-                       "decreasing" if slope_now < slope_prev else "flat")
-
-    # Layer 1 — OBV pivot + MA20 slope both confirm viewpoint direction
-    aligned = (
-        (viewpoint == "Bullish" and obv_dir == "Bullish"
-         and obv_slope == "rising") or
-        (viewpoint == "Bearish" and obv_dir == "Bearish"
-         and obv_slope == "falling")
-    )
-    misaligned = (
-        (viewpoint == "Bullish" and obv_dir == "Bearish"
-         and obv_slope == "falling") or
-        (viewpoint == "Bearish" and obv_dir == "Bullish"
-         and obv_slope == "rising")
-    )
-
-    alignment_mult = 1.20 if aligned else 0.85 if misaligned else 1.00
-
-    # Layer 2 — slope acceleration boost (only fires when Layer 1 aligned)
-    slope_boost = 1.00
-    if aligned:
-        if viewpoint == "Bullish" and obv_slope_trend == "increasing":
-            slope_boost = 1.20
-        elif viewpoint == "Bearish" and obv_slope_trend == "decreasing":
-            slope_boost = 1.20
-
-    return obv_slope, obv_slope_trend, alignment_mult, slope_boost
 
 
 ASYMMETRIC_H_ASSET_CLASSES = {"Commodities", "Foreign Exchange"}
@@ -1134,7 +1089,6 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         viewpoint = "Neutral"
 
     # ── OBV vol_signal — strict: regression direction AND MA20 slope both confirm Trade Dir
-    # This matches the alignment_mult condition used in the conviction formula exactly.
     _obv_slope_confirms = (
         (trade_dir == "Bullish" and obv_slope_early == "rising") or
         (trade_dir == "Bearish" and obv_slope_early == "falling")
