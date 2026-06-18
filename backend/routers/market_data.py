@@ -67,7 +67,7 @@ def serialize_cache_row(row: PriceCache) -> dict:
         "ma50":            row.ma50,
         "ma100":           row.ma100,
         "rel_iv":          row.rel_iv,
-        "spark_prices":    json.loads(row.spark_json),
+        "spark_prices":    json.loads(row.spark_json) if row.spark_json else [],
         "data_source":     row.data_source or "yahoo",
         "iv_source":       row.iv_source,
         "vov_30d":         row.vov_30d,
