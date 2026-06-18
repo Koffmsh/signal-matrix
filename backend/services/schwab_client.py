@@ -318,7 +318,10 @@ def get_schwab_client(db: Session) -> schwab.client.Client:
             },
         }
 
-    def _write(token_dict: dict):
+    def _write(token_dict: dict, *args, **kwargs):
+        # schwab-py/authlib forward extra args on refresh (e.g. refresh_token=...);
+        # accept and ignore them. token_dict is the full new token (incl. rotated
+        # refresh token); _store_tokens unwraps the {creation_timestamp, token} shape.
         _store_tokens(token_dict, db)
 
     return schwab.auth.client_from_access_functions(
