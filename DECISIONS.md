@@ -49,6 +49,35 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 <!-- ADR-001..013 seeded 2026-06-04 from the CLAUDE.md "Known Fixes & Learnings" migration (Phase M2). Dates reflect the recording pass, not original decision dates. -->
 
+## ADR-015 — Restructured precious metals ETFs must use Yahoo history, not Schwab
+Date: 2026-06-17
+Status: Active
+Component: schwab_market_data.py — SCHWAB_UNSUPPORTED set
+
+Context:
+  PALL (Aberdeen Physical Palladium) and PPLT (abrdn Physical Platinum Shares)
+  underwent fund restructurings that changed the per-share commodity holding. After
+  the restructuring, each share represents a smaller fraction of the underlying metal,
+  so the post-restructuring price is ~5–10× lower than the pre-restructuring price.
+  Schwab's get_price_history() returns unadjusted historical prices spanning both
+  eras, creating a staircase discontinuity within the 60-bar sparkline window. Yahoo
+  Finance returns only post-restructuring prices (consistent with current quotes).
+
+Decision:
+  Add PALL and PPLT to SCHWAB_UNSUPPORTED. Yahoo supplies their full price history;
+  Schwab is not used for these tickers. The sparkline, pivot levels, and LRR/HRR all
+  derive from Yahoo history and are internally consistent.
+
+Why (regression guard):
+  Schwab serves PALL and PPLT without error (they are valid US-listed ETFs), so the
+  incompatibility is not obvious from a code-level audit. The symptom is a visual
+  staircase in the spark chart and an anomalously large Trend Level (e.g. Bearish
+  Trend Level $165 when current price is $15). Do not remove these from
+  SCHWAB_UNSUPPORTED without first verifying Schwab's history matches current price
+  scale for both tickers.
+
+Linked rule: CLAUDE.md "Restructured ETF history check"
+
 ## ADR-014 — CLAUDE.md migration stops at ~1,510 lines; current ops content stays
 Date: 2026-06-04
 Status: Active
