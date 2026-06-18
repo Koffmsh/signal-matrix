@@ -53,6 +53,9 @@ SCHWAB_UNSUPPORTED = {
     "USD", "JPY", "/CL", "/ZN", "/GC", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX",
     # Macro vol indices — batch quotes don't work; history API with $ prefix does
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    # Precious metals ETFs — Schwab history returns pre-restructuring prices creating
+    # a discontinuity vs current post-restructuring quotes; Yahoo history is correct.
+    "PALL", "PPLT",
 }
 
 # Macro vol index tickers fetchable via Schwab get_price_history() using $ prefix.
