@@ -181,7 +181,8 @@ signal-matrix/
 │   │   │   └── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
 │   │   └── shared/
 │   │       ├── Header.js                  ← global top bar (48px fixed); brand left, user profile right
-│   │       └── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px
+│   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px
+│   │       └── SystemStatus.js            ← ADR-020 — header CONNECTION/DATA (admin) + STATUS (user) dots; reads /api/system/status
 │   ├── data/
 │   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is SQLite tickers table
 │   ├── hooks/                             ← placeholder
@@ -241,7 +242,8 @@ signal-matrix/
 │   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + vol_history write ✅
 │   │   ├── intraday_monitor.py            ← PROXIMITY + RETRACEMENT_50 alert engine ✅
 │   │   ├── spx_constituents.py            ← SPX constituent impact — SSGA SPY XLSX weights + Schwab batch quotes ✅
-│   │   └── sms.py                         ← Twilio SMS wrapper ✅
+│   │   ├── sms.py                         ← Twilio SMS wrapper ✅
+│   │   └── system_status.py               ← ADR-020 — computes connection/data/status axes + standing integrity scan ✅
 │   └── routers/
 │       ├── market_data.py
 │       ├── signals.py                     ← Task 3.3/3.4/4.3 — Signal endpoints + history ✅
@@ -249,7 +251,8 @@ signal-matrix/
 │       ├── auth.py                        ← Task 5.3 — Schwab OAuth endpoints ✅
 │       ├── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
 │       ├── spx_impact.py                  ← GET /api/spx-impact — returns eod + intraday snapshots ✅
-│       └── sector_performance.py          ← GET /api/sector-performance — 1D/MTD/QTD/YTD absolute + relative sector tables
+│       ├── sector_performance.py          ← GET /api/sector-performance — 1D/MTD/QTD/YTD absolute + relative sector tables
+│       └── system.py                       ← ADR-020 — GET /api/system/status (admin: connection+data+status; user: status only)
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -322,7 +325,7 @@ APScheduler (spx_impact_11am / spx_impact_1pm)
 App.js useEffect (Task 4.5)
     → /api/market-data/batch    reads price_cache   → close, sparklines, rel IV
     → /api/signals/stored       reads signal_output → viewpoint, conviction, LRR/HRR
-    → /api/scheduler/status     reads scheduler_log → ● SCHED indicator
+    → /api/system/status        connection·data·integrity → header dots (ADR-020)
 ```
 
 ### Manual Override Buttons
@@ -356,12 +359,14 @@ status ('success'|'failure'), refresh_ok, signals_ok,
 error_msg, duration_s, created_at (UTC string)
 ```
 
-### Dashboard Header — Scheduler Indicator
-`● SCHED` dot next to data timestamp:
-- **Green** — today's EOD run complete (`today_complete = true`)
-- **Amber** — scheduled, not yet run today
-- **Red** — last run failed
-- Hover tooltip shows run time or next scheduled time. Fetched once on page load, no polling.
+### Dashboard Header — System Status Indicators (ADR-020)
+Dots next to the data timestamp, fed by `GET /api/system/status` (fetched once on load, no polling).
+Logic in `services/system_status.py`; `components/shared/SystemStatus.js` only renders. Supersedes
+the old single `● SCHED` + `● SCHWAB` dots.
+- **CONNECTION** (admin only) — Schwab auth: green `fresh` / amber `aging` / red `expired`|`disconnected`. Click (amber/red) → re-auth.
+- **DATA** (admin only) — source · freshness · EOD-run · integrity. Precedence: `integrity > run_failed > run_incomplete > run_missed > stale > yahoo`(amber)` > good`(green). Green is the all-day normal state with an adaptive tooltip (live prices → EOD complete → markets closed); there is **no "pending" amber**. Click (red) → REFRESH DATA.
+- **STATUS** (users only) — plain-language roll-up of DATA: green `normal` / amber `degraded` / red `issue`.
+- `scan_integrity` is a **standing** NaN/Inf check — green means *verified good*, not "didn't throw."
 
 ### Refactors Made for Scheduler
 - `refresh_data(db)` extracted from `get_batch` endpoint in `market_data.py` — callable directly
@@ -937,6 +942,7 @@ GET /api/signals/stored   ← Task 3.4 ✅  (read-only, grouped by ticker, used 
 ### FastAPI Endpoints (Phase 4)
 ```
 GET /api/scheduler/status         ← Task 4.2 ✅  (read-only status)
+GET /api/system/status            ← ADR-020 ✅  (connection+data for admin, status-only for users)
 GET /api/signals/calculate        ← Task 4.3 ✅  (full pipeline + snapshot, replaces /output for button)
 GET /api/signals/history          ← Task 4.3 ✅  (query snapshots, not wired to UI yet)
 GET /api/tickers                  ← Task 4.6 ✅  (list all, optional ?active filter)
@@ -1273,6 +1279,7 @@ git checkout -- .   # roll back if needed
 93. **`get_status()` clock source is `updated_at`, not `expires_at`** — `updated_at` is stamped by `_store_tokens` on every successful schwab-py token write. If `updated_at` is < 7 days old the refresh token is still valid; ≥ 7 days → broken (red). Never use `expires_at` (30-min access token lifetime) as the 7-day expiry clock — access tokens expire overnight and auto-recover; using `expires_at` causes false-red SCHWAB dots every morning. See **ADR-016**.
 94. **schwab-py/authlib callbacks must accept `*args, **kwargs`; keep `authlib` pinned** — `get_schwab_client._write(token_dict, *args, **kwargs)` (and `_read`) must accept forwarded args. authlib (transitive dep of schwab-py) passes `refresh_token=` to the token-write callback on every access-token refresh; a fixed `_write(token_dict)` signature raises TypeError on each refresh → the token never persists → `updated_at` freezes → total Schwab outage (EOD + 15-min intraday) → silent Yahoo fallback. `authlib` is **pinned** in `requirements.txt` (`==1.6.12`) — an unpinned bump caused the 2026-06-18 outage; never unpin it or any schwab-py transitive without re-testing a token refresh. **The green SCHWAB dot only proves the refresh token is < 7 days old (rule #93), NOT that refresh works** — verify Schwab health via `price_cache.data_source` counts or a live quote, never the dot alone. See **ADR-018**.
 95. **Lightweight Yahoo fetches must drop NaN closes** — `fetch_ticker_close` (and any "last bar" Yahoo fetch) must `hist = hist[hist["Close"].notna()]` before `.iloc[-1]`, mirroring `fetch_ticker_data`'s `dropna()`; return None if no valid close remains. Yahoo serves a NaN close for the current day on **weekday holidays / data glitches** (e.g. ^GSPC on Juneteenth); unguarded, that NaN lands in `price_cache.close/ma200/std20`, serializes as an invalid JSON token, and breaks the dashboard read → "LIVE DATA UNAVAILABLE / DISPLAYING MOCK DATA". Normal weekends don't expose it (no Yahoo weekend row). Note: pandas `.mean()` skips NaN (ma20/50/100 survive) but `np.mean` does not (ma200/std20 go NaN) — that asymmetry is the diagnostic tell. See **ADR-019**.
+96. **Header status = three axes via `/api/system/status` (`services/system_status.py`)** — **CONNECTION** (Schwab auth) + **DATA** (source·freshness·EOD-run·integrity) are **admin-only**; **STATUS** (plain roll-up) is **users-only**. `compute_data` precedence: `integrity > run_failed > run_incomplete > run_missed > stale > yahoo > good`; green is the all-day normal with an adaptive tooltip — never add a "pending" amber. `scan_integrity` is a **standing** NaN/Inf check on serialized fields — green means *verified-good*, never "didn't throw" (the 6/18 blind spot). CONNECTION and DATA are **independent** — a dead token still yields good Yahoo data (amber, not red); never re-merge them or let token AGE imply data health. CONNECTION reuses `get_status()` (rule #93). `scheduler.py` writes a `'started'` scheduler_log row (status is TEXT — no migration) flipped to success/failure at the end → a stuck `'started'` = DATA `run_incomplete`. Frontend `SystemStatus.js` is dumb (backend computes color/tooltip/clickable). See **ADR-020**.
 
 ---
 

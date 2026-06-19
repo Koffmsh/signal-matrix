@@ -48,6 +48,46 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-020 — Header status split: CONNECTION + DATA + STATUS (own module)
+Date: 2026-06-19
+Status: Active
+Component: `services/system_status.py`, `routers/system.py`,
+           `components/shared/SystemStatus.js`, `services/scheduler.py`
+
+Context:
+  A single SCHWAB dot conflated two independent things — Schwab auth health and
+  data health — and keyed off token AGE only. During the 2026-06-18 authlib
+  outage (ADR-018) it stayed green while every fetch failed, data went stale, and
+  NaN corrupted the cache (ADR-019). No indicator reflected actual fetch success
+  or data integrity. The old ● SCHED dot also showed green because Yahoo fallback
+  made the run "succeed."
+
+Decision:
+  Three indicators, two admin-only, computed in services/system_status.py:
+    • CONNECTION (admin) — Schwab auth only: fresh / aging / expired / disconnected.
+      expired (≥7d) and disconnected (missing/undecryptable, ANY age) are distinct.
+    • DATA (admin) — source · freshness · EOD-run · integrity, by precedence:
+      integrity > run_failed > run_incomplete > run_missed > stale > yahoo > good.
+      Green stays green all day with an adaptive tooltip — NO "pending" amber.
+    • STATUS (users) — plain roll-up of DATA: normal / degraded / issue.
+  A STANDING integrity scan (scan_integrity) checks NaN/Inf over the fields the
+  page-load endpoints serialize — the check that would have caught 6/19.
+  GET /api/system/status → {connection, data, status} for admins, {status} only
+  for everyone else. scheduler.py writes a 'started' scheduler_log marker (flipped
+  to success/failure at end) so a mid-run crash = DATA run_incomplete (status is
+  TEXT — no migration).
+
+Why (regression guard):
+  "Green" must mean VERIFIED-good, never "didn't throw" — keep the integrity scan
+  in the green path. CONNECTION and DATA are INDEPENDENT axes (a dead token still
+  yields good Yahoo data = amber, not red); do not re-merge them. Token AGE is a
+  CONNECTION signal only — never let it imply data health (the 6/18 blind spot).
+  The frontend is dumb: backend computes every color/tooltip/clickable. The old
+  /schwab/status + /scheduler/status endpoints remain but the header now reads
+  /api/system/status.
+
+Linked rule: CLAUDE.md rule #96
+
 ## ADR-019 — fetch_ticker_close must drop NaN closes (Yahoo weekday-holiday NaN)
 Date: 2026-06-19
 Status: Active
