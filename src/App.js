@@ -1,6 +1,7 @@
 ﻿import { useState, useMemo, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { fetchCachedMarketData, fetchBatchMarketData, apiFetch } from "./services/api";
+import SystemStatus from "./components/shared/SystemStatus";
 import AdminPanel from "./components/Admin/AdminPanel";
 import Sidebar from "./components/shared/Sidebar";
 import Header from "./components/shared/Header";
@@ -16,8 +17,6 @@ import RegisterPage from "./pages/RegisterPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 
-// Used only for top-level browser navigation (Schwab OAuth redirect — not a fetch).
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 // ── API field mapping: snake_case → camelCase ─────────────────────────────────
 function tickerFromApi(r) {
@@ -448,7 +447,7 @@ function Dashboard() {
 
   const [tickerUniverse,  setTickerUniverse]  = useState([]);
   const [realDataMap,     setRealDataMap]     = useState(new Map());
-  const [batchDataSource, setBatchDataSource] = useState(null);
+  const [, setBatchDataSource] = useState(null);
   const [signalMap,       setSignalMap]       = useState(new Map());
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isRefreshing,    setIsRefreshing]    = useState(false);
@@ -456,8 +455,6 @@ function Dashboard() {
   const [isCalculating,      setIsCalculating]      = useState(false);
   const [calcStatus,         setCalcStatus]         = useState(null);
   const [signalsCalculatedAt, setSignalsCalculatedAt] = useState(null);
-  const [schedulerStatus, setSchedulerStatus] = useState(null);
-  const [schwabStatus,    setSchwabStatus]    = useState(null);
   const [quadSettings,    setQuadSettings]    = useState(null);
   const [countryQuads,    setCountryQuads]    = useState({});   // sector → {cur: quad, next: quad}
   const [quadMapOpen,     setQuadMapOpen]     = useState(false);
@@ -496,21 +493,6 @@ function Dashboard() {
       .catch(() => {});
   }, []);
 
-  // Load scheduler status on page load (no polling)
-  useEffect(() => {
-    apiFetch(`/api/scheduler/status`)
-      .then(r => r ? r.json() : null)
-      .then(data => { if (data) setSchedulerStatus(data); })
-      .catch(() => {});
-  }, []);
-
-  // Load Schwab auth status on page load
-  useEffect(() => {
-    apiFetch(`/api/auth/schwab/status`)
-      .then(r => r ? r.json() : null)
-      .then(data => { if (data) setSchwabStatus(data); })
-      .catch(() => {});
-  }, []);
 
   // Load quad settings on page load
   useEffect(() => {
@@ -984,45 +966,7 @@ function Dashboard() {
               return ts ? <div style={{ color: "#8899aa" }}>EOD · {ts}</div> : null;
             })()}
             <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end", marginTop: "2px" }}>
-              {schedulerStatus && (() => {
-                const done  = schedulerStatus.today_complete;
-                const fail  = schedulerStatus.last_run_status === "failure";
-                const color = done ? "#00e5a0" : fail ? "#ff4d6d" : "#f0b429";
-                const label = done ? "● SCHED" : fail ? "● SCHED" : "● SCHED";
-                const tip   = done
-                  ? `EOD run complete · ${schedulerStatus.last_run_time || ""}`
-                  : fail
-                  ? `Last run failed — check scheduler_log`
-                  : `Scheduled · next run ${schedulerStatus.next_run_time || "4:15 PM ET"}`;
-                return <div title={tip} style={{ color, cursor: "default" }}>{label}</div>;
-              })()}
-              {schwabStatus && (() => {
-                const state      = schwabStatus.state;
-                const isYahooFallback = schwabStatus.connected && batchDataSource === "yahoo_fallback";
-
-                const color = state === "connected" ? "#00e5a0"
-                            : state === "aging"     ? "#f0b429"
-                            : "#ff4d6d";
-                // ◐ when connected but data came from Yahoo fallback
-                const icon  = isYahooFallback ? "◐" : "●";
-
-                const tip   = isYahooFallback
-                            ? "Schwab token stale — click to re-authenticate"
-                            : state === "connected" ? `Schwab connected · token age ${schwabStatus.age_days ?? 0}d`
-                            : state === "aging"     ? `Schwab token ${schwabStatus.age_days}d old — expires soon. Click to re-authenticate`
-                            : state === "expired"   ? "Schwab token expired — click to re-authenticate"
-                            : "Schwab not connected — click to authenticate";
-                const clickable = !schwabStatus.connected || isYahooFallback || state === "aging";
-                return (
-                  <div
-                    title={tip}
-                    style={{ color, cursor: clickable ? "pointer" : "default" }}
-                    onClick={clickable ? () => { window.location.href = `${API_BASE}/api/auth/schwab/login`; } : undefined}
-                  >
-                    {icon} SCHWAB
-                  </div>
-                );
-              })()}
+              <SystemStatus onRefresh={handleRefresh} />
             </div>
           </div>
         </div>

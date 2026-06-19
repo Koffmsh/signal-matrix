@@ -191,6 +191,23 @@ def schwab_data_job() -> None:
     status     = "failure"
     t0         = time.monotonic()
 
+    # Write a 'started' marker up front so a crash mid-run is detectable
+    # (DATA "run incomplete"). Updated to success/failure in the finally below.
+    log_id = None
+    try:
+        started_row = SchedulerLog(
+            run_date   = et_date.strftime("%Y-%m-%d"),
+            trigger    = "scheduled",
+            status     = "started",
+            created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        db.add(started_row)
+        db.commit()
+        log_id = started_row.id
+    except Exception as _e:
+        db.rollback()
+        logger.warning(f"Schwab data job: could not write 'started' marker — {_e}")
+
     try:
         # 1. Prices
         result     = schwab_fetch_all(db)
@@ -235,16 +252,26 @@ def schwab_data_job() -> None:
 
     finally:
         duration = round(time.monotonic() - t0, 2)
-        db.add(SchedulerLog(
-            run_date   = et_date.strftime("%Y-%m-%d"),
-            trigger    = "scheduled",
-            status     = status,
-            refresh_ok = refresh_ok,
-            signals_ok = signals_ok,
-            error_msg  = error_msg,
-            duration_s = duration,
-            created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        ))
+        # Flip the 'started' marker to its terminal status (or add a fresh row if
+        # the marker write failed) so there is exactly one row per run.
+        row = db.get(SchedulerLog, log_id) if log_id else None
+        if row is not None:
+            row.status     = status
+            row.refresh_ok = refresh_ok
+            row.signals_ok = signals_ok
+            row.error_msg  = error_msg
+            row.duration_s = duration
+        else:
+            db.add(SchedulerLog(
+                run_date   = et_date.strftime("%Y-%m-%d"),
+                trigger    = "scheduled",
+                status     = status,
+                refresh_ok = refresh_ok,
+                signals_ok = signals_ok,
+                error_msg  = error_msg,
+                duration_s = duration,
+                created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            ))
         db.commit()
         db.close()
         logger.info(f"Schwab data job: complete — status={status}, duration={duration}s")
