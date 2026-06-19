@@ -12,6 +12,8 @@ asyncpg==0.29.0
 alembic==1.13.1
 psycopg2-binary==2.9.9
 schwab-py==1.4.0
+authlib==1.6.12          # PIN: transitive dep of schwab-py. 1.6.x passes refresh_token= kwarg to the
+                         # token-write callback; an unpinned bump silently broke token refresh (see ADR).
 cryptography==42.0.5
 scipy==1.12.0
 twilio>=8.0.0
