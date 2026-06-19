@@ -49,8 +49,13 @@ def fetch_ticker_close(ticker: str) -> tuple | None:
     yahoo_symbol = get_yahoo_symbol(ticker)
     try:
         hist = yf.Ticker(yahoo_symbol).history(period="5d", auto_adjust=False)
+        # Drop NaN-close rows before taking the last bar. Yahoo serves a NaN close
+        # for the current day on weekday holidays / data glitches (e.g. ^GSPC on
+        # Juneteenth); without this guard that NaN propagates into close/ma200/std20
+        # and breaks JSON serialization. Mirrors fetch_ticker_data's dropna().
+        hist = hist[hist["Close"].notna()]
         if hist.empty:
-            logger.warning(f"fetch_ticker_close: no data for {ticker} ({yahoo_symbol})")
+            logger.warning(f"fetch_ticker_close: no valid close for {ticker} ({yahoo_symbol})")
             return None
         close  = round(float(hist["Close"].iloc[-1]), 2)
         volume = int(hist["Volume"].iloc[-1]) if not hist["Volume"].empty else 0
