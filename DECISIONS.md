@@ -48,6 +48,69 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-019 — fetch_ticker_close must drop NaN closes (Yahoo weekday-holiday NaN)
+Date: 2026-06-19
+Status: Active
+Component: `yahoo_finance.py` (`fetch_ticker_close`)
+
+Context:
+  Yahoo returns a NaN close for the current day on weekday holidays / data
+  glitches — reproduced: ^GSPC / ^NDX / ^RUT all returned NaN for the session on
+  Juneteenth (2026-06-19). The lightweight append-path fetch took
+  hist["Close"].iloc[-1] with no guard, writing NaN into
+  price_cache.close / ma200 / std20 for Yahoo-only tickers (SPX, NDX, RUT, $DJI,
+  PPLT, PALL). FastAPI serialized NaN as an invalid JSON token → the browser's
+  JSON.parse threw → the frontend fell back to mock ("LIVE DATA UNAVAILABLE /
+  DISPLAYING MOCK DATA"). ma20/50/100 survived (pandas .mean() skips NaN) but
+  ma200 (np.mean) and std20 did not — that asymmetry was the tell.
+
+Decision:
+  Filter `hist = hist[hist["Close"].notna()]` before taking the last bar,
+  mirroring the dropna() that fetch_ticker_data already uses. Return None
+  (treated as a failed fetch, no write) if no valid close remains.
+
+Why (regression guard):
+  Any lightweight "last bar" Yahoo fetch MUST drop NaN — Yahoo is not a clean
+  source on non-session days. Dormant for a month because normal weekends
+  produce NO Yahoo weekend row (iloc[-1] is Friday's real close); only weekday
+  holidays / Yahoo glitches expose it. The full path (fetch_ticker_data) was
+  always guarded; the lightweight append path was not. Keep BOTH guarded.
+
+Linked rule: CLAUDE.md rule #95
+
+## ADR-018 — Schwab token-write callback must accept **kwargs; pin authlib
+Date: 2026-06-18
+Status: Active
+Component: `schwab_client.py` (`get_schwab_client._write`); `backend/requirements.txt`
+
+Context:
+  authlib is an UNPINNED transitive dependency of schwab-py. A Docker rebuild
+  pulled authlib 1.6.12, which began forwarding `refresh_token=` as a kwarg to
+  the token_write_func on every access-token refresh. Our `_write(token_dict)`
+  accepted one positional arg only → TypeError inside authlib's
+  ensure_active_token on every refresh → the refreshed token was never persisted
+  → `updated_at` froze → 100% Schwab failure (EOD job AND the 15-min intraday
+  monitor) → silent Yahoo fallback for ~24h. It "worked for over a month"
+  because the code never changed — the transitive dep silently upgraded on a
+  rebuild. get_status() showed green throughout (per ADR-016 it measures
+  refresh-token AGE, not whether refresh succeeds — a recent-but-broken token
+  reads connected).
+
+Decision:
+  `_write(token_dict, *args, **kwargs)` — accept and ignore forwarded args;
+  token_dict is the full new token and _store_tokens unwraps the
+  {creation_timestamp, token} shape. PIN `authlib==1.6.12` in requirements.txt
+  so a future rebuild cannot reintroduce a signature mismatch.
+
+Why (regression guard):
+  Never give a schwab-py / authlib callback (token_read_func / token_write_func)
+  a fixed positional signature — always accept `*args, **kwargs`; the library
+  adds kwargs across versions. Keep authlib pinned. Do NOT trust the green
+  SCHWAB dot as proof Schwab works (it only proves the refresh token is < 7 days
+  old) — confirm via price_cache.data_source counts or a live quote.
+
+Linked rule: CLAUDE.md rule #94
+
 ## ADR-017 — OBV direction: rolling z-score oscillator → 40-bar regression (replaces slope÷std)
 Date: 2026-06-18
 Status: Active
