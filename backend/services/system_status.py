@@ -19,7 +19,7 @@ import math
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from models.price_cache import PriceCache
 from models.signal_output import SignalOutput
@@ -45,6 +45,15 @@ def _bad(v) -> bool:
     return isinstance(v, float) and (math.isnan(v) or math.isinf(v))
 
 
+# Large JSON blobs on price_cache — NOT serialized by the page-load endpoints, so
+# they can't break JSON.parse and don't need scanning. Deferred from the query so
+# we don't pull ~10 MB per call (load_only convention; runs on every page load).
+_PC_BLOB_COLS = (
+    "history_json", "volume_history_json", "history_dates_json",
+    "history_high_json", "history_low_json",
+)
+
+
 # ── Integrity (standing scan) ─────────────────────────────────────────────────
 
 def scan_integrity(db: Session) -> tuple[bool, str]:
@@ -52,11 +61,19 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
     Scan the fields the page-load endpoints actually serialize for NaN/Inf —
     price_cache scalar floats + spark_json, and signal_output scalar floats.
     These are what break JSON.parse on the client (the 2026-06-19 failure mode).
-    Returns (ok, detail). Fast: scalar columns + one small JSON array per row.
+    Returns (ok, detail). Fast: blob columns are deferred (not loaded); only the
+    scalar columns + one small JSON array per row are scanned.
     """
     hits = []
-    for r in db.query(PriceCache).all():
+    pc_rows = (
+        db.query(PriceCache)
+          .options(*[defer(getattr(PriceCache, c)) for c in _PC_BLOB_COLS])
+          .all()
+    )
+    for r in pc_rows:
         for col in r.__table__.columns.keys():
+            if col in _PC_BLOB_COLS:
+                continue  # deferred — never a float, and touching it would lazy-load
             if _bad(getattr(r, col)):
                 hits.append(f"{r.ticker}.{col}")
         if r.spark_json:
@@ -65,7 +82,7 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
                     hits.append(f"{r.ticker}.spark_json")
             except Exception:
                 hits.append(f"{r.ticker}.spark_json:PARSE")
-    for r in db.query(SignalOutput).all():
+    for r in db.query(SignalOutput).all():  # no large blobs — full load is cheap
         for col in r.__table__.columns.keys():
             if _bad(getattr(r, col)):
                 hits.append(f"{r.ticker}/{r.timeframe}.{col}")
