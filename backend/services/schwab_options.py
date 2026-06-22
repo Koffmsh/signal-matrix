@@ -19,6 +19,7 @@ Called by:
   - scheduler.py schwab_data_job() at 4:00 PM ET, after schwab_fetch_all()
 """
 
+import math
 import time
 import logging
 from datetime import datetime
@@ -382,7 +383,10 @@ def _compute_vrp_changes(db: Session, ticker: str) -> tuple:
     today_vrp = rows[0].vrp
 
     def _chg(idx: int):
-        return round(today_vrp - rows[idx].vrp, 6) if len(rows) > idx else None
+        if len(rows) <= idx:
+            return None
+        v = round(today_vrp - rows[idx].vrp, 6)
+        return None if (math.isnan(v) or math.isinf(v)) else v
 
     return _chg(1), _chg(5), _chg(21)
 
