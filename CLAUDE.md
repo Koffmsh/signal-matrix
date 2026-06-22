@@ -499,8 +499,21 @@ manages their own alerts. Generalizes to a user-facing settings page later with 
 **Layout (ThinkorSwim-style):**
 - **DELIVERY** — account email (read-only) + "Send email" checkbox; single phone field + "Send SMS"
   checkbox (disabled with "SMS pending carrier registration" note while `SMS_DISABLED`).
-- **ALERTS** — per-alert checkbox + tooltip (Proximity to Entry, 50% Retracement) from the
+- **ALERTS** — per-alert checkbox + description (Proximity to Entry, 50% Retracement) from the
   `alert_catalog`. One **Apply Settings** button.
+
+**Description detail level (convention, not the exact strings):** each alert's `description` states
+its firing **criteria** as `field operator threshold` conditions joined by boolean operators, plus
+the dedup window — e.g. `viewpoint ∈ {Bullish, Bearish} AND prox ≥ 0.85. Once per day.` Thresholds
+only, no formula expansions. Rationale: the criteria must be self-documenting so a user never has to
+ask "what makes this fire?". Keep this granularity when adding alerts; the wording itself is owned by
+`alert_catalog.py`, not CLAUDE.md.
+
+**Phase 2 trajectory (not built):** the two catalog entries are hardcoded *composite* alerts. The real
+Alert Creator is a user-facing builder where each condition (field · boolean operator · value
+threshold) is selectable and AND/OR-composed against platform metrics (viewpoint, prox, conviction,
+vol-diff, etc.). At that point composites split — e.g. "Proximity to Entry" becomes two single-clause
+alerts (`viewpoint = Bullish` vs `Bearish`), since a builder expresses one condition set per alert.
 
 **Data model:**
 - `users` += `phone`, `alert_email_enabled`, `alert_sms_enabled` (the shared delivery destinations —
