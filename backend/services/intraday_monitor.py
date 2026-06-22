@@ -44,6 +44,11 @@ _ET = ZoneInfo("America/New_York")
 _PROX_THRESHOLD      = 0.85
 _VALID_STATES        = {"UPTREND_VALID", "DOWNTREND_VALID"}
 
+# Delivery toggle — RETRACEMENT_50 alerts are still evaluated but NOT sent.
+# Flip back to True to resume SMS/email delivery (per-alert opt-in is the
+# future Alert Creator admin panel; this is the interim kill switch).
+_RETRACEMENT_50_SEND = False
+
 
 # ── Proximity ─────────────────────────────────────────────────────────────────
 
@@ -293,14 +298,15 @@ def run_intraday_check(db: Session) -> dict:
                         piv.pivot_c, piv.pivot_d, level_50, retrace_pct or 0.0,
                         sig.conviction,
                     )
-                    send_sms(msg)
-                    send_email(f"📐 {ticker} — 50% RETRACE ({viewpoint})", msg)
+                    if _RETRACEMENT_50_SEND:
+                        send_sms(msg)
+                        send_email(f"📐 {ticker} — 50% RETRACE ({viewpoint})", msg)
+                        alerts_sent += 1
                     _log_alert(db, today, now_str, ticker, "RETRACEMENT_50",
                                close, retrace_pct, sig.conviction, piv.pivot_c)
-                    alerts_sent += 1
                     logger.info(
-                        f"Intraday alert RETRACEMENT_50: {ticker} "
-                        f"close={close} level_50={level_50:.2f}"
+                        f"Intraday alert RETRACEMENT_50{' (suppressed)' if not _RETRACEMENT_50_SEND else ''}: "
+                        f"{ticker} close={close} level_50={level_50:.2f}"
                     )
 
     db.commit()
