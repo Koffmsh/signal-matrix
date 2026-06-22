@@ -14,17 +14,17 @@ ALERT_CATALOG = [
         "key": "PROXIMITY",
         "label": "Proximity to Entry",
         "description": (
-            "Viewpoint Bullish or Bearish AND proximity ≥ 85% to the entry edge "
-            "(LRR if Bullish, HRR if Bearish). Once per ticker per day."
+            "viewpoint ∈ {Bullish, Bearish} AND prox ≥ 0.85. "
+            "Dedup: 1×/ticker/day."
         ),
     },
     {
         "key": "RETRACEMENT_50",
         "label": "50% Retracement",
         "description": (
-            "State UPTREND_VALID/DOWNTREND_VALID AND viewpoint aligned AND "
-            "conviction ≥ 85 AND price retraced ≥ 50% from the swing extreme (D) "
-            "toward pivot C. Once per setup per day (resets on a new C)."
+            "structural_state ∈ {UPTREND_VALID, DOWNTREND_VALID} AND viewpoint aligned AND "
+            "conviction ≥ 85 AND retracement ≥ 50% from D toward C. "
+            "Dedup: 1×/pivot_c/day."
         ),
     },
 ]
