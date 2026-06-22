@@ -34,9 +34,11 @@ from models.price_cache import PriceCache
 from models.signal_output import SignalOutput
 from models.signal_pivots import SignalPivots
 from models.intraday_alert_log import IntradayAlertLog
+from models.user import User
+from models.user_alert_subscription import UserAlertSubscription
 from services.schwab_market_data import schwab_fetch_intraday_quotes, yahoo_fetch_intraday_quotes
-from services.sms import send_sms
-from services.email_alert import send_email
+from services.sms import send_sms_to
+from services.email_alert import send_email_to
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
@@ -44,10 +46,49 @@ _ET = ZoneInfo("America/New_York")
 _PROX_THRESHOLD      = 0.85
 _VALID_STATES        = {"UPTREND_VALID", "DOWNTREND_VALID"}
 
-# Delivery toggle — RETRACEMENT_50 alerts are still evaluated but NOT sent.
-# Flip back to True to resume SMS/email delivery (per-alert opt-in is the
-# future Alert Creator admin panel; this is the interim kill switch).
-_RETRACEMENT_50_SEND = False
+
+def _load_alert_recipients(db: Session) -> dict:
+    """Build per-alert-type delivery lists from user subscriptions + channel prefs.
+
+    Returns { alert_type: {"emails": [...], "phones": [...]} }. An alert with no
+    subscribers (or with subscribers who have no channel enabled) simply won't
+    appear / will have empty lists — nothing sends. This is the per-user
+    replacement for the old hardcoded delivery flags: opt-in via the Alert
+    Settings page, default off.
+    """
+    recipients: dict = {}
+    rows = (
+        db.query(UserAlertSubscription, User)
+        .join(User, User.id == UserAlertSubscription.user_id)
+        .filter(
+            UserAlertSubscription.enabled.is_(True),
+            User.status == "active",
+        )
+        .all()
+    )
+    for sub, user in rows:
+        bucket = recipients.setdefault(sub.alert_type, {"emails": [], "phones": []})
+        if user.alert_email_enabled and user.email:
+            bucket["emails"].append(user.email)
+        if user.alert_sms_enabled and user.phone:
+            bucket["phones"].append(user.phone)
+    return recipients
+
+
+def _dispatch(bucket: dict, subject: str, message: str) -> bool:
+    """Send a fired alert to all resolved recipients. Returns True if any channel
+    had recipients (SMS may still no-op while globally disabled)."""
+    if not bucket:
+        return False
+    sent = False
+    for email in bucket.get("emails", []):
+        send_email_to(email, subject, message)
+        sent = True
+    phones = bucket.get("phones", [])
+    if phones:
+        send_sms_to(phones, message)
+        sent = True
+    return sent
 
 
 # ── Proximity ─────────────────────────────────────────────────────────────────
@@ -236,6 +277,12 @@ def run_intraday_check(db: Session) -> dict:
         logger.info("Intraday monitor: no non-Neutral tickers — skipping")
         return {"alerts_sent": 0}
 
+    # ── Delivery recipients (per-user subscriptions) ─────────────────────────
+    alert_recipients = _load_alert_recipients(db)
+    if not alert_recipients:
+        logger.info("Intraday monitor: no alert subscribers — evaluating skipped")
+        return {"alerts_sent": 0}
+
     # ── Step 3: Load signal_pivots (trade tf) ────────────────────────────────
     pivots = {
         r.ticker: r
@@ -265,22 +312,24 @@ def run_intraday_check(db: Session) -> dict:
         tickers_checked += 1
 
         # ── PROXIMITY ────────────────────────────────────────────────────────
-        prox = _compute_prox(close, sig.lrr, sig.hrr, viewpoint)
-        if prox is not None and prox >= _PROX_THRESHOLD:
-            if not _already_fired(db, today, ticker, "PROXIMITY", None):
-                msg = _proximity_message(
-                    ticker, viewpoint, close,
-                    sig.lrr, sig.hrr, prox, sig.conviction,
-                )
-                send_sms(msg)
-                send_email(f"⚡ {ticker} — ENTRY ZONE ({viewpoint})", msg)
-                _log_alert(db, today, now_str, ticker, "PROXIMITY",
-                           close, prox, sig.conviction, None)
-                alerts_sent += 1
-                logger.info(f"Intraday alert PROXIMITY: {ticker} prox={prox:.2f}")
+        prox_bucket = alert_recipients.get("PROXIMITY")
+        if prox_bucket:
+            prox = _compute_prox(close, sig.lrr, sig.hrr, viewpoint)
+            if prox is not None and prox >= _PROX_THRESHOLD:
+                if not _already_fired(db, today, ticker, "PROXIMITY", None):
+                    msg = _proximity_message(
+                        ticker, viewpoint, close,
+                        sig.lrr, sig.hrr, prox, sig.conviction,
+                    )
+                    _dispatch(prox_bucket, f"⚡ {ticker} — ENTRY ZONE ({viewpoint})", msg)
+                    _log_alert(db, today, now_str, ticker, "PROXIMITY",
+                               close, prox, sig.conviction, None)
+                    alerts_sent += 1
+                    logger.info(f"Intraday alert PROXIMITY: {ticker} prox={prox:.2f}")
 
         # ── RETRACEMENT_50 ───────────────────────────────────────────────────
-        if piv and piv.pivot_c is not None and piv.pivot_d is not None:
+        retrace_bucket = alert_recipients.get("RETRACEMENT_50")
+        if retrace_bucket and piv and piv.pivot_c is not None and piv.pivot_d is not None:
             level_50, retrace_pct = _compute_retrace(
                 close, piv.pivot_c, piv.pivot_d, piv.structural_state or "",
             )
@@ -298,14 +347,12 @@ def run_intraday_check(db: Session) -> dict:
                         piv.pivot_c, piv.pivot_d, level_50, retrace_pct or 0.0,
                         sig.conviction,
                     )
-                    if _RETRACEMENT_50_SEND:
-                        send_sms(msg)
-                        send_email(f"📐 {ticker} — 50% RETRACE ({viewpoint})", msg)
-                        alerts_sent += 1
+                    _dispatch(retrace_bucket, f"📐 {ticker} — 50% RETRACE ({viewpoint})", msg)
                     _log_alert(db, today, now_str, ticker, "RETRACEMENT_50",
                                close, retrace_pct, sig.conviction, piv.pivot_c)
+                    alerts_sent += 1
                     logger.info(
-                        f"Intraday alert RETRACEMENT_50{' (suppressed)' if not _RETRACEMENT_50_SEND else ''}: "
+                        f"Intraday alert RETRACEMENT_50: "
                         f"{ticker} close={close} level_50={level_50:.2f}"
                     )
 

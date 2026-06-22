@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router-
 import TickerList from "./TickerList";
 import QuadSetup from "./QuadSetup";
 import UserList from "./UserList";
+import AlertSettings from "./AlertSettings";
 import { useAuth } from "../../context/AuthContext";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -18,6 +19,7 @@ const S = {
 const TABS = [
   { label: "TICKERS",    path: "tickers" },
   { label: "QUAD SETUP", path: "quad"    },
+  { label: "ALERTS",     path: "alerts"  },
   { label: "USERS",      path: "users"   },
 ];
 
@@ -94,6 +96,7 @@ export default function AdminPanel() {
       <Routes>
         <Route path="tickers" element={<TickerList />} />
         <Route path="quad"    element={<QuadSetup />} />
+        <Route path="alerts"  element={<AlertSettings />} />
         <Route path="users"   element={<UserList />} />
         <Route path="*"       element={<Navigate to="tickers" replace />} />
       </Routes>

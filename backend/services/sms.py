@@ -18,12 +18,31 @@ import json
 
 logger = logging.getLogger(__name__)
 
-_SMS_DISABLED = True  # disabled until 10DLC registration is complete
+SMS_DISABLED = True   # disabled globally until 10DLC registration is complete
+_SMS_DISABLED = SMS_DISABLED  # backwards-compat alias
 
 _API_KEY = os.getenv("TELNYX_API_KEY")
 _FROM    = os.getenv("TELNYX_FROM")
 _TO_RAW  = os.getenv("TELNYX_TO", "")
 _TO_LIST = [n.strip() for n in _TO_RAW.split(",") if n.strip()]
+
+
+def send_sms_to(numbers: list[str], message: str) -> bool:
+    """Send an SMS to an explicit recipient list (per-user delivery).
+    No-ops while SMS is globally disabled or credentials are missing."""
+    if SMS_DISABLED:
+        logger.info(f"SMS disabled — suppressed to {len(numbers)} recipient(s): {message[:60]}")
+        return False
+    if not _API_KEY or not _FROM:
+        logger.warning("SMS: Telnyx credentials not configured — skipping send")
+        return False
+    recipients = [n.strip() for n in numbers if n and n.strip()]
+    if not recipients:
+        return False
+    success = True
+    for to_number in recipients:
+        success = _post_message(to_number, message) and success
+    return success
 
 
 def send_sms(message: str) -> bool:
@@ -41,35 +60,38 @@ def send_sms(message: str) -> bool:
 
     success = True
     for to_number in _TO_LIST:
-        try:
-            payload = json.dumps({
-                "from": _FROM,
-                "to":   to_number,
-                "text": message,
-            }).encode("utf-8")
-
-            req = urllib.request.Request(
-                "https://api.telnyx.com/v2/messages",
-                data    = payload,
-                headers = {
-                    "Authorization": f"Bearer {_API_KEY}",
-                    "Content-Type":  "application/json",
-                },
-                method  = "POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status in (200, 201):
-                    logger.info(f"SMS sent to {to_number}: {message[:60]}...")
-                else:
-                    logger.error(f"SMS to {to_number} returned status {resp.status}")
-                    success = False
-
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            logger.error(f"SMS to {to_number} failed ({e.code}): {body}")
-            success = False
-        except Exception as e:
-            logger.error(f"SMS to {to_number} failed: {e}")
-            success = False
-
+        success = _post_message(to_number, message) and success
     return success
+
+
+def _post_message(to_number: str, message: str) -> bool:
+    """POST a single SMS to Telnyx. Returns True on 200/201."""
+    try:
+        payload = json.dumps({
+            "from": _FROM,
+            "to":   to_number,
+            "text": message,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.telnyx.com/v2/messages",
+            data    = payload,
+            headers = {
+                "Authorization": f"Bearer {_API_KEY}",
+                "Content-Type":  "application/json",
+            },
+            method  = "POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status in (200, 201):
+                logger.info(f"SMS sent to {to_number}: {message[:60]}...")
+                return True
+            logger.error(f"SMS to {to_number} returned status {resp.status}")
+            return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        logger.error(f"SMS to {to_number} failed ({e.code}): {body}")
+        return False
+    except Exception as e:
+        logger.error(f"SMS to {to_number} failed: {e}")
+        return False
