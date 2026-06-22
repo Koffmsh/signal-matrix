@@ -512,9 +512,10 @@ ask "what makes this fire?". Keep this granularity when adding alerts; the wordi
 **Phase 2 trajectory (not built):** the two catalog entries are hardcoded alerts. The real Alert
 Creator is a user-facing builder where each alert holds **multiple criteria** (field · boolean
 operator · value threshold) AND/OR-composed against platform metrics (viewpoint, prox, conviction,
-vol-diff, etc.). An alert is one expression tree, not one clause — e.g. "Proximity to Entry" stays a
-single alert written as `(viewpoint = Bullish OR viewpoint = Bearish) AND prox ≥ 0.85`. Implies a
-conditions schema (per-alert rows of field/operator/value + a group/connector) replacing the flat
+vol-diff, etc.). The point is **flexibility**, not a fixed shape — the user decides the granularity:
+"Proximity to Entry" could be one alert `(viewpoint = Bullish OR viewpoint = Bearish) AND prox ≥ 0.85`,
+or split into separate per-viewpoint alerts; the builder supports either. Implies a conditions schema
+(per-alert rows of field/operator/value + a group/connector for AND/OR) replacing the flat
 `alert_catalog.py` keys.
 
 **Data model:**
