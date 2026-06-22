@@ -42,7 +42,8 @@ indicators.
 - **Backend:** Python FastAPI running at localhost:8000 (local) / api.signal.suttonmc.com (production)
 - **Database:** Supabase (managed Postgres) in production — SQLite (`backend/signal_matrix.db`) for local dev only
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
-- **Twilio:** SMS alerts via `twilio>=8.0.0`; credentials in `.env` (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, TWILIO_TO)
+- **SMS:** Telnyx (v2 REST, `services/sms.py`); credentials in `.env` (TELNYX_API_KEY, TELNYX_FROM, TELNYX_TO). **Globally disabled** via `sms.SMS_DISABLED = True` pending 10DLC carrier registration — `send_sms`/`send_sms_to` no-op until lifted. (Superseded Twilio.)
+- **Email:** Gmail SMTP (`services/email_alert.py`); env `EMAIL_FROM` / `EMAIL_TO` / `EMAIL_APP_PASSWORD`. `send_email_to(recipient, …)` for per-recipient sends. No kill switch — email is live.
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
 - **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
@@ -171,7 +172,9 @@ signal-matrix/
 │   │   ├── Admin/
 │   │   │   ├── AdminPanel.js              ← admin shell: password gate + header + tab nav + nested Routes
 │   │   │   ├── TickerList.js              ← ticker CRUD tab (/admin/tickers) — extracted from AdminPanel
-│   │   │   └── QuadSetup.js              ← quad config tab (/admin/quad) — US monthly NTM grid (12 rows, auto-save) + country quarterly table (16 countries × 4 quarters)
+│   │   │   ├── QuadSetup.js              ← quad config tab (/admin/quad) — US monthly NTM grid (12 rows, auto-save) + country quarterly table (16 countries × 4 quarters)
+│   │   │   ├── UserList.js               ← user management tab (/admin/users) — role/status/reset-pw
+│   │   │   └── AlertSettings.js          ← alert delivery tab (/admin/alerts) — per-user email/phone channels + per-alert on/off (Phase 1 Alert Creator)
 │   │   ├── Analysis/
 │   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
@@ -206,7 +209,9 @@ signal-matrix/
 │   │   ├── ticker.py                      ← Task 4.6 — Tickers DB model
 │   │   ├── schwab_tokens.py               ← Task 5.3 — Schwab OAuth tokens DB model ✅
 │   │   ├── vol_history.py                  ← Task 5.5 — IV history DB model ✅
-│   │   └── intraday_alert_log.py          ← Intraday monitor alert dedup log
+│   │   ├── intraday_alert_log.py          ← Intraday monitor alert dedup log
+│   │   ├── user.py                        ← Auth — users (+ phone/alert_email_enabled/alert_sms_enabled for Alert Creator)
+│   │   └── user_alert_subscription.py     ← Per-user, per-alert on/off (Phase 1 Alert Creator)
 │   ├── alembic/                           ← Task 5.1 — DB migration tooling ✅
 │   │   ├── env.py
 │   │   └── versions/
@@ -230,7 +235,8 @@ signal-matrix/
 │   │       ├── p1q2r3s4t5u6_price_cache_add_hv_rank.py                          ← added price_cache.hv_rank (Integer 0–100)
 │   │       ├── q2r3s4t5u6v7_add_snap_state_columns.py                           ← v1.9.1 hrr_snapped / lrr_snapped on signal_output + signal_history
 │   │       ├── t5u6v7w8x9y0_add_spx_impact_cache.py                              ← spx_impact_cache table (EOD constituent impact)
-│   │       └── u6v7w8x9y0z1_spx_impact_add_label_weights.py                      ← added snapshot_label + weights_json (intraday snapshot support)
+│   │       ├── u6v7w8x9y0z1_spx_impact_add_label_weights.py                      ← added snapshot_label + weights_json (intraday snapshot support)
+│   │       └── y0z1a2b3c4d5_add_alert_delivery_settings.py                       ← users.phone/alert_email_enabled/alert_sms_enabled + user_alert_subscriptions table (Phase 1 Alert Creator)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -242,7 +248,9 @@ signal-matrix/
 │   │   ├── schwab_options.py              ← Task 5.5 — IV fetch + vol_history write ✅
 │   │   ├── intraday_monitor.py            ← PROXIMITY + RETRACEMENT_50 alert engine ✅
 │   │   ├── spx_constituents.py            ← SPX constituent impact — SSGA SPY XLSX weights + Schwab batch quotes ✅
-│   │   ├── sms.py                         ← Twilio SMS wrapper ✅
+│   │   ├── sms.py                         ← Telnyx SMS wrapper (globally disabled — SMS_DISABLED, pending 10DLC) ✅
+│   │   ├── email_alert.py                 ← Gmail SMTP email wrapper (send_email / send_email_to) ✅
+│   │   ├── alert_catalog.py               ← canonical alert list (keys/labels/tooltips) — Alert Creator ✅
 │   │   └── system_status.py               ← ADR-020 — computes connection/data/status axes + standing integrity scan ✅
 │   └── routers/
 │       ├── market_data.py
@@ -252,7 +260,8 @@ signal-matrix/
 │       ├── tickers.py                     ← Task 4.6/4.7 — Ticker CRUD + yfinance lookup ✅
 │       ├── spx_impact.py                  ← GET /api/spx-impact — returns eod + intraday snapshots ✅
 │       ├── sector_performance.py          ← GET /api/sector-performance — 1D/MTD/QTD/YTD absolute + relative sector tables
-│       └── system.py                       ← ADR-020 — GET /api/system/status (admin: connection+data+status; user: status only)
+│       ├── system.py                       ← ADR-020 — GET /api/system/status (admin: connection+data+status; user: status only)
+│       └── alerts.py                       ← GET/PUT /api/alerts/my-settings — per-user alert delivery settings (Phase 1 Alert Creator)
 ├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -381,7 +390,15 @@ the old single `● SCHED` + `● SCHWAB` dots.
 ### Overview
 Lightweight price monitor running every 15 minutes during NYSE trading hours (9:30 AM–3:45 PM ET).
 Does NOT recalculate pivots, Hurst, or conviction. Reads EOD-calculated signal state and watches
-live price against it. Fires SMS alerts via Twilio when triggers are met.
+live price against it. Fires email/SMS alerts when triggers are met.
+
+**Delivery is per-user (Alert Creator Phase 1).** Recipients are resolved each run from
+`user_alert_subscriptions` joined to `users` channel prefs via `_load_alert_recipients(db)` →
+`{alert_type: {emails, phones}}` (active users only). An alert fires only if it has subscribers
+with an enabled channel — delivery is **opt-in, default off** (this replaced the hardcoded
+`_RETRACEMENT_50_SEND` kill switch). `_dispatch()` fans out: email via `send_email_to` per
+recipient; SMS via `send_sms_to` (still globally gated by `SMS_DISABLED`). The old single
+env-recipient `send_email`/`send_sms` path is gone from the monitor.
 
 **Critical design constraint:** Never call `calculate_signals()` intraday — pivot states require
 confirmed EOD closes. Running signals intraday would produce false BREAK_OF_TRADE states.
@@ -430,12 +447,13 @@ CronTrigger(
 ```
 1. schwab_fetch_intraday_quotes(db)      — fast batch quotes, lastPrice only, no cache_date update
 2. Load signal_output                    — trade tf, non-Neutral viewpoints only (read-only)
-3. Load signal_pivots                    — trade tf, matching tickers (read-only)
-4. Load price_cache                      — current close after step 1
-5. For each ticker:
-   a. PROXIMITY check → send SMS + log if prox >= 0.85 and not already fired today
-   b. RETRACEMENT_50 check → send SMS + log if at/past 50% level and not already fired today
-6. db.commit()
+3. _load_alert_recipients(db)            — per-user subscriptions → {alert_type: {emails, phones}}; early-return if none
+4. Load signal_pivots                    — trade tf, matching tickers (read-only)
+5. Load price_cache                      — current close after step 1
+6. For each ticker (only for alert types that have recipients):
+   a. PROXIMITY check → _dispatch(email/SMS) + log if prox >= 0.85 and not already fired today
+   b. RETRACEMENT_50 check → _dispatch + log if at/past 50% level and not already fired today
+7. db.commit()
 ```
 
 ### intraday_alert_log Table
@@ -458,16 +476,54 @@ Postgres (NULL != NULL). For PROXIMITY alerts (`pivot_c = NULL`) the Python `_al
 check is the primary dedup guard. The constraint only guarantees uniqueness for RETRACEMENT_50
 rows (where `pivot_c` is set).
 
-### SMS Service (`sms.py`)
-- `send_sms(message)` → True/False
-- Reads from env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `TWILIO_TO`
-- No-ops silently (with warning log) if any credential is missing — safe in dev without Twilio configured
-- Lazy import of `twilio.rest.Client` — won't crash on import if twilio package issue
+### SMS Service (`sms.py`) — Telnyx
+- `send_sms(message)` → env `TELNYX_TO` recipients · `send_sms_to(numbers, message)` → explicit list (per-user delivery). Both → True/False, share `_post_message()` (Telnyx v2 REST POST).
+- Reads from env: `TELNYX_API_KEY`, `TELNYX_FROM`, `TELNYX_TO`
+- **`SMS_DISABLED = True`** (module-level, public) — both functions no-op + log "SMS disabled" until 10DLC clears. The Alert Settings UI reads this (`sms_globally_disabled`) to show the "pending carrier registration" note and disable the SMS checkbox.
+- No-ops silently (warning log) if credentials missing — safe in dev.
 
 ### Why Volume Surge Was Excluded
 The first 15-minute bar always has elevated volume relative to the daily average (opening spike) —
 any volume pace comparison in the first 1–2 bars would fire false positives on nearly every ticker.
 Dropped entirely. OBV direction already computed in EOD signals and displayed in the popup.
+
+---
+
+## Alert Settings — Per-User Alert Delivery (Phase 1 Alert Creator) ✅
+
+Admin → **ALERTS** tab (`/admin/alerts`, `components/Admin/AlertSettings.js`). Lets a user choose
+which intraday alerts they receive and on which channels. Operates on the **logged-in user's own
+row** (`request.state.user`, set by the session middleware) — not admin-gated; any active user
+manages their own alerts. Generalizes to a user-facing settings page later with no schema change.
+
+**Layout (ThinkorSwim-style):**
+- **DELIVERY** — account email (read-only) + "Send email" checkbox; single phone field + "Send SMS"
+  checkbox (disabled with "SMS pending carrier registration" note while `SMS_DISABLED`).
+- **ALERTS** — per-alert checkbox + tooltip (Proximity to Entry, 50% Retracement) from the
+  `alert_catalog`. One **Apply Settings** button.
+
+**Data model:**
+- `users` += `phone`, `alert_email_enabled`, `alert_sms_enabled` (the shared delivery destinations —
+  one email + one phone apply to ALL of that user's alerts).
+- `user_alert_subscriptions` (id, user_id FK, alert_type, enabled, updated_at; `UNIQUE(user_id, alert_type)`)
+  — the per-alert on/off toggles.
+- `services/alert_catalog.py` — `ALERT_CATALOG` (key/label/description) is the single source of truth
+  for alert keys; keys MUST match what the intraday monitor fires (`PROXIMITY`, `RETRACEMENT_50`).
+
+**Endpoints (`routers/alerts.py`):**
+- `GET /api/alerts/my-settings` — user's channels + per-alert state + catalog + `sms_globally_disabled`.
+- `PUT /api/alerts/my-settings` — Apply button; validates phone (E.164-ish) and rejects "SMS on without
+  phone" and unknown alert keys; upserts subscriptions.
+
+**Guardrails:**
+- Migration `y0z1a2b3c4d5` is idempotent (guarded `add_column` + `create_table`) — required because
+  `Base.metadata.create_all()` at startup pre-creates the **table** but never the **users columns**.
+  ⚠ The local container auto-reloads against **production** Supabase (rule #89): saving the new model
+  triggered `create_all` to create `user_alert_subscriptions` in prod while the `users` columns were
+  still missing — a half-migrated state that crashed local startup. Completing the additive migration
+  (safe for the live Fly app) is the recovery. Lesson: when adding a model + columns, expect the
+  reload to force the migration immediately.
+- Deliver opt-in/default-off — a fresh user has no subscriptions, so nothing sends until they opt in.
 
 ---
 
