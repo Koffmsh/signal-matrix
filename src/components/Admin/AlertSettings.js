@@ -16,7 +16,7 @@ const S = {
   readonly:    { color: "#e8f4ff", fontSize: "12px" },
   alertRow:    { display: "flex", alignItems: "flex-start", gap: "12px", padding: "12px 0", borderBottom: "1px solid #0d1a2a" },
   alertLabel:  { color: "#c8d8e8", fontSize: "12px", fontWeight: 600 },
-  alertDesc:   { color: "#8899aa", fontSize: "10px", marginTop: "3px", lineHeight: 1.5 },
+  alertDesc:   { color: "#c8d8e8", fontSize: "12px", marginTop: "4px", lineHeight: 1.55 },
   applyBtn:    { background: "#001a0e", border: "1px solid #00e5a0", borderRadius: "2px", color: "#00e5a0", padding: "9px 22px", fontSize: "11px", cursor: "pointer", fontFamily: mono, letterSpacing: "0.1em" },
   note:        { color: "#f0b429", fontSize: "9px", letterSpacing: "0.06em" },
 };
