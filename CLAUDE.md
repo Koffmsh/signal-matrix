@@ -509,11 +509,13 @@ only, no formula expansions. Rationale: the criteria must be self-documenting so
 ask "what makes this fire?". Keep this granularity when adding alerts; the wording itself is owned by
 `alert_catalog.py`, not CLAUDE.md.
 
-**Phase 2 trajectory (not built):** the two catalog entries are hardcoded *composite* alerts. The real
-Alert Creator is a user-facing builder where each condition (field · boolean operator · value
-threshold) is selectable and AND/OR-composed against platform metrics (viewpoint, prox, conviction,
-vol-diff, etc.). At that point composites split — e.g. "Proximity to Entry" becomes two single-clause
-alerts (`viewpoint = Bullish` vs `Bearish`), since a builder expresses one condition set per alert.
+**Phase 2 trajectory (not built):** the two catalog entries are hardcoded alerts. The real Alert
+Creator is a user-facing builder where each alert holds **multiple criteria** (field · boolean
+operator · value threshold) AND/OR-composed against platform metrics (viewpoint, prox, conviction,
+vol-diff, etc.). An alert is one expression tree, not one clause — e.g. "Proximity to Entry" stays a
+single alert written as `(viewpoint = Bullish OR viewpoint = Bearish) AND prox ≥ 0.85`. Implies a
+conditions schema (per-alert rows of field/operator/value + a group/connector) replacing the flat
+`alert_catalog.py` keys.
 
 **Data model:**
 - `users` += `phone`, `alert_email_enabled`, `alert_sms_enabled` (the shared delivery destinations —
