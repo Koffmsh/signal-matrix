@@ -14,16 +14,17 @@ ALERT_CATALOG = [
         "key": "PROXIMITY",
         "label": "Proximity to Entry",
         "description": (
-            "Fires when price reaches within 85% of the entry zone "
-            "(between the LRR and HRR risk-range levels)."
+            "Viewpoint Bullish or Bearish AND proximity ≥ 85% to the entry edge "
+            "(LRR if Bullish, HRR if Bearish). Once per ticker per day."
         ),
     },
     {
         "key": "RETRACEMENT_50",
         "label": "50% Retracement",
         "description": (
-            "Fires when price pulls back 50% from the recent swing extreme (D) "
-            "back toward the invalidation pivot (C) — a pullback entry."
+            "State UPTREND_VALID/DOWNTREND_VALID AND viewpoint aligned AND "
+            "conviction ≥ 85 AND price retraced ≥ 50% from the swing extreme (D) "
+            "toward pivot C. Once per setup per day (resets on a new C)."
         ),
     },
 ]
