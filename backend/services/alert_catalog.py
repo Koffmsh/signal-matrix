@@ -15,7 +15,7 @@ ALERT_CATALOG = [
         "label": "Proximity to Entry",
         "description": (
             "viewpoint ∈ {Bullish, Bearish} AND prox ≥ 0.85. "
-            "Dedup: 1×/ticker/day."
+            "Once per day."
         ),
     },
     {
@@ -24,7 +24,7 @@ ALERT_CATALOG = [
         "description": (
             "structural_state ∈ {UPTREND_VALID, DOWNTREND_VALID} AND viewpoint aligned AND "
             "conviction ≥ 85 AND retracement ≥ 50% from D toward C. "
-            "Dedup: 1×/pivot_c/day."
+            "Once per day."
         ),
     },
 ]
