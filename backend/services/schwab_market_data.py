@@ -32,6 +32,22 @@ from services.yahoo_finance import (
     RateLimitError,
     compute_realized_vol_percentile,
 )
+import pandas_market_calendars as mcal
+
+# NYSE calendar — module-level (never reinstantiate per call). Used to refuse
+# appending a `today`-stamped history bar on a non-trading day (holiday/weekend).
+# The scheduler already skips holidays; this closes the manual-REFRESH hole that
+# stamped a phantom 2026-06-19 (Juneteenth) bar across ~97 tickers. See ADR-023.
+_NYSE_CAL = mcal.get_calendar("NYSE")
+# Tickers on non-NYSE calendars (FX trades 24/5; futures use the CME calendar) —
+# exclude from the NYSE trading-day guard so legitimate bars aren't suppressed.
+_NON_NYSE_CALENDAR = {"USD", "JPY", "/CL", "/ZN", "/GC"}
+
+
+def _is_nyse_trading_day(d: date_cls) -> bool:
+    """True if `d` (a date) is an NYSE session day."""
+    sched = _NYSE_CAL.schedule(start_date=d.isoformat(), end_date=d.isoformat())
+    return not sched.empty
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
@@ -120,6 +136,14 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
     if calendar_gap == 0:
         return "skip"
     elif calendar_gap <= 5:
+        # Never append a `today`-dated bar on a non-trading day. On a manual REFRESH
+        # during a holiday the quote APIs return the prior close, which the append path
+        # would otherwise stamp as a phantom `today` bar (the 2026-06-19 Juneteenth
+        # phantom across ~97 tickers). FX/futures run non-NYSE calendars → exempt.
+        # short/bootstrap (gap > 5) are unaffected: they merge real source-dated bars.
+        ticker = getattr(existing_row, "ticker", None)
+        if ticker not in _NON_NYSE_CALENDAR and not _is_nyse_trading_day(today):
+            return "skip"
         return "append"
     elif calendar_gap <= 45:
         return "short"
