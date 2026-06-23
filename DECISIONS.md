@@ -48,6 +48,44 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-021 — Fly custom-hostname cert renewal behind the Cloudflare proxy
+Date: 2026-06-22
+Status: Active
+Component: Cloudflare DNS (suttonmc.com zone), Fly certs (signal-matrix-web / -api)
+
+Context:
+  signal.suttonmc.com is Proxied (orange cloud) in Cloudflare. Fly issues its
+  Let's Encrypt cert via HTTP-01, which CANNOT complete behind the CDN — Fly
+  detects the proxy and requires DNS-based ownership proof. The original cert
+  issued ~3 months earlier but never renewed; it expired and the site threw
+  Cloudflare Error 525 (CF reached the origin but Fly had no valid cert for the
+  custom hostname — signal-matrix-web.fly.dev itself was HTTP 200 the whole time).
+  api.signal.suttonmc.com was unaffected because it is grey-cloud (DNS only), so
+  Fly validates HTTP-01 against the origin IP directly.
+
+Decision:
+  Keep signal proxied, but add two DNS-only records to the suttonmc.com zone so
+  Fly renews via DNS-01 automatically (values from
+  `fly certs setup signal.suttonmc.com --app signal-matrix-web`):
+    • CNAME _acme-challenge.signal → signal.suttonmc.com.13y0odn.flydns.net
+    • TXT   _fly-ownership.signal  → app-13y0odn
+  Keep api.signal grey-cloud (DNS only) — do NOT proxy it.
+
+Why (regression guard):
+  The _acme-challenge CNAME makes all future renewals automatic; do not delete it.
+  Do NOT proxy api.signal to "fix" the Unproxied-AAAA security finding: (1) it would
+  hit the same renewal trap (needs its own _acme-challenge/_fly-ownership records),
+  and (2) Cloudflare's free-plan 100s origin timeout would 524 the long REFRESH
+  DATA / CALCULATE SIGNALS bulk Schwab fetches. CAA is fine — the zone already
+  permits Let's Encrypt (0 issue "letsencrypt.org" alongside pki.goog). The
+  "Exposed RDP" Critical insights on api.signal are FALSE POSITIVES: the Fly anycast
+  edge completes TCP handshakes on arbitrary ports (3389 "open" on both the shared
+  IPv4 and dedicated IPv6), but fly.api.toml exposes only [http_service] 8000→443 —
+  no RDP. No Cloudflare API token on the dev machine; DNS edits are dashboard-only
+  (account id 1cc54ccce957ce25a79ac27cbdf1e760).
+
+Linked rule: CLAUDE.md rule #97
+
 ## ADR-020 — Header status split: CONNECTION + DATA + STATUS (own module)
 Date: 2026-06-19
 Status: Active
