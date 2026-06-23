@@ -48,6 +48,48 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-022 — Macro-vol index history: append fetch uses MONTH/daily, not DAY/daily
+Date: 2026-06-23
+Status: Active
+Component: `schwab_market_data.py` (`_schwab_fetch_index_histories`)
+
+Context:
+  The macro-vol index append path (gap 1–5 days) fetched `periodType=day` +
+  `frequencyType=daily`. Schwab REJECTS that combination with HTTP 400:
+  *"When periodType=day valid values for frequencyType are: minute."* So the
+  append fetch 400'd on every normal trading day and fell through to Yahoo —
+  silently, since the broad except caught it. This defeated ADR-010 (VXN/RVX/
+  GVZ/OVX/MOVE are meant to live on Schwab) and FROZE RVX: its Yahoo fallback
+  `^RVX` is delisted ("no price data found"), so when Schwab append 400'd there
+  was nothing to recover from. The other four were masked because their `^`
+  Yahoo symbols still resolve. The DAY choice was originally made in ADR-010 to
+  dodge a "1-month endpoint mis-scales MOVE" bug that no longer reproduces.
+
+Decision:
+  `append` fetches `periodType=month` + `period=ONE_MONTH` + `frequencyType=daily`
+  (the valid combo) and routes through the merge `_upsert` — not the single-bar
+  `_append_bar` — so a multi-day gap (holiday + stale ticker) fills every missing
+  bar, not just the latest. MAs are computed from the MERGED series so ma50/ma100
+  don't null out on the ~20-candle fetch.
+
+Why (regression guard):
+  Schwab's `periodType=day` ONLY allows `frequencyType=minute` — never pair
+  `day`+`daily` (it always 400s). Do not revert the append fetch to `DAY`/`TEN_DAYS`.
+  The MONTH/ONE_MONTH endpoint is NOT mis-scaled — verified 2026-06-23 against
+  stored history for all five incl. MOVE (overlap matched exactly; the only diffs
+  were the newest two MOVE bars, Schwab-vs-Yahoo source disagreement at correct
+  scale). RVX has no Yahoo fallback (`^RVX` delisted), so Schwab is its sole
+  source: a >7-day refresh-token outage will freeze RVX — accepted per ADR-010's
+  stale-but-correct stance. If Schwab ever changes the price-history contract,
+  re-verify MONTH scaling against stored history before trusting it.
+
+Supersedes: the fetch-mode detail of ADR-010 only (the "use 10-day DAY fetch for
+  append … the 1-month endpoint mis-scales MOVE" rationale). ADR-010's core
+  decision — `_yahoo_fallback` EXCLUDES these tickers so token expiry keeps
+  stale-but-correct Schwab data instead of Yahoo garbage — remains Active.
+
+Linked rule: CLAUDE.md "Macro Vol data source" + rule #98
+
 ## ADR-021 — Fly custom-hostname cert renewal behind the Cloudflare proxy
 Date: 2026-06-22
 Status: Active
@@ -416,7 +458,7 @@ Linked rule: CLAUDE.md "Sidebar must remain position: fixed"
 
 ## ADR-010 — Macro-vol index history sourcing (Schwab $-symbols; Yahoo-fallback excluded)
 Date: 2026-06-04
-Status: Active
+Status: Active — fetch-mode detail superseded by ADR-022 (Yahoo-exclusion core decision still Active)
 Component: `schwab_market_data.py` (`SCHWAB_INDEX_HISTORY_MAP`, `_yahoo_fallback`)
 
 Context:
@@ -430,11 +472,14 @@ Decision:
   Schwab data rather than being overwritten by Yahoo.
 
 Why (regression guard):
-  Letting Yahoo fall back for these corrupts the macro-vol series. Use the 10-day DAY
-  fetch for `append`, 5-year YEAR fetch for `short`/`bootstrap` (the 1-month endpoint
-  mis-scales MOVE).
+  Letting Yahoo fall back for these corrupts the macro-vol series — keep
+  `_yahoo_fallback` excluding all `SCHWAB_INDEX_HISTORY_MAP` tickers.
+  NOTE (superseded by ADR-022): the original "use 10-day DAY fetch for `append`
+  because the 1-month endpoint mis-scales MOVE" rationale is wrong — `periodType=day`
+  + `frequencyType=daily` always 400s, and MONTH/ONE_MONTH is not mis-scaled. The
+  append path now uses MONTH/daily; `short`/`bootstrap` still use the 5-year YEAR fetch.
 
-Linked rule: CLAUDE.md "Macro Vol — Data Source Architecture"
+Linked rule: CLAUDE.md "Macro Vol data source"
 
 ## ADR-009 — Indices, FX, and futures permanently route to Yahoo
 Date: 2026-06-04
