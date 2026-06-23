@@ -132,17 +132,22 @@ def macro_vol_history(db: Session = Depends(get_db)):
         idx = bisect.bisect_right(dates, target) - 1
         return round(closes[idx], 2) if idx >= 0 else None
 
-    today_et = datetime.now(_ET).date().isoformat()
-
     stats: dict[str, dict] = {}
     for ticker, (dates, closes, cur_close) in ticker_data.items():
         # Use price_cache.close as the canonical "last" — same source as the dashboard gauge.
         last = round(cur_close, 2) if cur_close is not None else (round(closes[-1], 2) if closes else None)
-        # prev = second-to-last bar when history already includes today; last bar otherwise
-        if dates and dates[-1] >= today_et:
+        # Prior Day = the bar before "last" in the series the user sees.
+        # Discriminate by VALUE, not wall-clock date: when history already contains the
+        # "last" bar (EOD — cur_close == closes[-1]), prior day is closes[-2]; when cur_close
+        # is a newer intraday bar not yet appended to history, prior day is closes[-1].
+        # The old `dates[-1] >= today_et` check collapsed prev→last whenever the page was
+        # viewed on any calendar day after the last bar (weekend/holiday/next morning),
+        # zeroing out every ticker's DoD.
+        last_hist = round(closes[-1], 2) if closes else None
+        if last is not None and last_hist is not None and last == last_hist:
             prev = round(closes[-2], 2) if len(closes) >= 2 else None
         else:
-            prev = round(closes[-1], 2) if closes else None
+            prev = last_hist
         wk1  = _find_price_n_days_ago(dates, closes, 7)
         mo1  = _find_price_n_days_ago(dates, closes, 30)
         mo3  = _find_price_n_days_ago(dates, closes, 91)

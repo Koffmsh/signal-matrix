@@ -520,12 +520,17 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
             continue
 
         # Period selection:
-        #   append  → 10-day DAY fetch (just enough to pick up 1 new bar; avoids the
-        #             buggy 1-month endpoint that mis-scales MOVE values)
+        #   append  → 1-month DAILY fetch. Schwab REJECTS periodType=day + frequencyType=daily
+        #             with HTTP 400 ("valid values for frequencyType are: minute"), so the old
+        #             10-day DAY fetch always 400'd → silent Yahoo fallback (defeating ADR-010,
+        #             and freezing RVX whose ^RVX Yahoo symbol is delisted). MONTH/ONE_MONTH with
+        #             daily frequency is the valid combo and is NOT mis-scaled (verified incl. MOVE
+        #             against stored history, 2026-06-22). ~20 candles → merge upsert fills any
+        #             multi-day gap (e.g. holiday + stale), not just the latest bar.
         #   short / bootstrap → 5-year fetch (reliable; upsert merge is efficient)
         if mode == "append":
-            period_type, period = PH.PeriodType.DAY, PH.Period.TEN_DAYS
-            logger.info(f"Schwab index: append (10d) for {app_ticker}")
+            period_type, period = PH.PeriodType.MONTH, PH.Period.ONE_MONTH
+            logger.info(f"Schwab index: append (1mo daily) for {app_ticker}")
         else:
             period_type, period = PH.PeriodType.YEAR, PH.Period.FIVE_YEARS
             cached_len = len(json.loads(existing_row.history_dates_json)) if existing_row and existing_row.history_dates_json else 0
@@ -581,22 +586,32 @@ def _schwab_fetch_index_histories(db: Session, tickers: list, client) -> dict:
         low   = history_lows[-1]
         vol   = volume_history[-1]
 
-        if mode == "append" and existing_row:
-            # Append path: just tack on the last candle — no full recompute needed
-            _append_bar(existing_row, close, vol, today, "schwab",
-                        high=high, low=low)
+        # All modes route through the merge upsert. _upsert preserves existing history
+        # before the fetched window's first date and merges the recent bars, so a
+        # multi-day gap (holiday + stale ticker) fills correctly — not just the latest
+        # candle (the old append-bar path only tacked on history_prices[-1], leaving
+        # interior holes when >1 trading day was missing).
+        #
+        # MAs are computed from the MERGED series (old + new window), not the ~20-candle
+        # fetch alone, so ma50/ma100 don't null out on the short append fetch.
+        old_dates  = json.loads(existing_row.history_dates_json) if existing_row and existing_row.history_dates_json else []
+        old_prices = json.loads(existing_row.history_json)       if existing_row and existing_row.history_json       else []
+        if old_prices and history_dates and len(history_prices) < len(old_prices):
+            cut          = sum(1 for d in old_dates if d < history_dates[0])
+            merged_close = old_prices[:cut] + history_prices
         else:
-            # Short gap or bootstrap — full upsert with merge logic
-            closes_s     = pd.Series(history_prices)
-            spark_raw    = history_prices[-60:] if len(history_prices) >= 60 else history_prices
-            spark_prices = [round(p, 2) for p in spark_raw]
+            merged_close = history_prices
 
-            ma20   = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
-            ma50   = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
-            ma100  = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
-            rel_iv = compute_realized_vol_percentile(closes_s)
+        closes_s     = pd.Series(merged_close)
+        spark_raw    = merged_close[-60:] if len(merged_close) >= 60 else merged_close
+        spark_prices = [round(p, 2) for p in spark_raw]
 
-            _upsert(db, {
+        ma20   = round(float(closes_s.tail(20).mean()),  2) if len(closes_s) >= 20  else None
+        ma50   = round(float(closes_s.tail(50).mean()),  2) if len(closes_s) >= 50  else None
+        ma100  = round(float(closes_s.tail(100).mean()), 2) if len(closes_s) >= 100 else None
+        rel_iv = compute_realized_vol_percentile(closes_s)
+
+        _upsert(db, {
                 "ticker":         app_ticker,
                 "schwab_symbol":  schwab_sym,
                 "close":          close,
