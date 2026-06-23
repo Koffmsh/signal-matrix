@@ -48,6 +48,39 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-023 — Never append a today-stamped history bar on a non-trading day
+Date: 2026-06-23
+Status: Active
+Component: `schwab_market_data.py` (`_history_fetch_mode`)
+
+Context:
+  The append path dates each new bar with wall-clock `today` (`datetime.now(_ET)`),
+  with no trading-day check. The EOD scheduler guards holidays via the NYSE calendar,
+  but REFRESH DATA is a manual override with no such guard. A manual refresh on a
+  market holiday/weekend → the quote APIs return the prior close → the append path
+  stamps it as a phantom `today` bar. This put a phantom 2026-06-19 (Juneteenth) AND
+  2026-05-23 (Saturday) bar into 93 tickers' stored history. The union-date macro-vol
+  chart then rendered them as 1-day notches (`connectNulls={false}`), and the phantoms
+  corrupt pivots/Hurst/HV slightly. They PERSIST because append/skip modes never remove
+  a stored date — only a `short`/`bootstrap` merge fetch does.
+
+Decision:
+  `_history_fetch_mode` downgrades `append` → `skip` when `today` is not an NYSE
+  session (both the Schwab and Yahoo fetch paths route through it, so one guard covers
+  all). FX (USD/JPY) and futures (/CL,/ZN,/GC) run non-NYSE calendars → exempt
+  (`_NON_NYSE_CALENDAR`). A one-time cleanup removed 180 phantom bars across 93 tickers
+  and recomputed ma20/50/100/200, std20, ATH, spark from the cleaned series.
+
+Why (regression guard):
+  Do NOT rely on the scheduler's holiday guard alone — manual REFRESH bypasses it.
+  Never stamp a history bar with wall-clock `today` without a trading-day check. The
+  cleanup is idempotent (re-running finds nothing). Do NOT extend the NYSE filter to
+  FX/futures — they legitimately trade on some NYSE-closed days. `short`/`bootstrap`
+  merges are intentionally NOT guarded: they carry real source-dated bars and will
+  self-heal any stored phantom.
+
+Linked rule: CLAUDE.md rule #99
+
 ## ADR-022 — Macro-vol index history: append fetch uses MONTH/daily, not DAY/daily
 Date: 2026-06-23
 Status: Active
