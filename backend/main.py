@@ -41,6 +41,16 @@ logging.basicConfig(level=logging.INFO)
 
 IS_PRODUCTION = os.getenv("ENVIRONMENT", "development") == "production"
 
+# Guardrail — surface which DB the backend is connected to (catches accidental prod use)
+try:
+    _u = engine.url
+    _db_env = "PROD-SUPABASE" if (_u.host and "supabase" in _u.host) else "DEV"
+    logging.getLogger(__name__).warning(
+        "DB CONNECTION → host=%s db=%s [%s]", _u.host or "sqlite-local", _u.database, _db_env
+    )
+except Exception:
+    pass
+
 # Create all database tables on startup
 Base.metadata.create_all(bind=engine)
 

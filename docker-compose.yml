@@ -25,9 +25,31 @@ services:
       - "8000:8000"
     env_file:
       - .env
+      - path: .env.dev    # DEV overrides (gitignored) — repoints DB to the local container
+        required: false   # tolerate absence (fresh clone / new machine) → falls back to prod via .env
     environment:
       - PYTHONPATH=/app
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+
+  db:
+    image: postgres:17          # matches prod Supabase (17.6)
+    environment:
+      POSTGRES_USER: signal
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: signal_matrix
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"             # host:container — GUI access without clashing
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signal -d signal_matrix"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   node_modules:
+  pgdata:

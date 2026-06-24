@@ -47,6 +47,23 @@ export default function SystemStatus({ onRefresh }) {
   if (sys.connection && sys.data) {
     return (
       <>
+        {sys.db_env && (
+          <div
+            title={sys.db_env.tooltip}
+            style={{
+              color: sys.db_env.color,
+              border: `1px solid ${sys.db_env.color}`,
+              background: sys.db_env.color + "22",
+              borderRadius: 4,
+              padding: "1px 7px",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 0.5,
+            }}
+          >
+            DB: {sys.db_env.label}
+          </div>
+        )}
         <Dot
           label="CONNECTION"
           axis={sys.connection}

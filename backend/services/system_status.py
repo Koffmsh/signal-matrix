@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, defer
 
+from database import engine
 from models.price_cache import PriceCache
 from models.signal_output import SignalOutput
 from models.scheduler_log import SchedulerLog
@@ -231,8 +232,29 @@ def compute_status(data: dict) -> dict:
     return {"state": "issue", "color": RED, "tooltip": "Data issue — being addressed"}
 
 
+def compute_db_env() -> dict:
+    """
+    Which database the backend is actually connected to — derived from the live
+    engine host, not an env flag, so it honestly reflects misconfiguration.
+    Admin-only (returned in the full payload). PROD = loud amber, DEV = calm grey.
+    """
+    try:
+        host = engine.url.host or "sqlite-local"
+    except Exception:
+        host = "unknown"
+    is_prod = bool(host and "supabase" in host)
+    return {
+        "label":   "PROD" if is_prod else "DEV",
+        "host":    host,
+        "color":   "#f0b429" if is_prod else "#8899aa",   # amber (loud) vs grey (calm)
+        "tooltip": (f"Backend connected to PRODUCTION Supabase ({host}) — changes affect live data"
+                    if is_prod else
+                    f"Backend connected to local DEV database ({host})"),
+    }
+
+
 def get_system_status(db: Session) -> dict:
     connection = compute_connection(db)
     data       = compute_data(db)
     status     = compute_status(data)
-    return {"connection": connection, "data": data, "status": status}
+    return {"connection": connection, "data": data, "status": status, "db_env": compute_db_env()}
