@@ -48,6 +48,47 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-024 — Trade-RR HV-from-closes fallback for newly-activated tickers
+Date: 2026-06-24
+Status: Active
+Component: `conviction_engine.py` (`get_trade_rr_vol_series`, `_hv30_series_from_closes`)
+
+Context:
+  The v1.9.2 trade band picks dynamic-N from a 252-day IV30/HV30 percentile rank,
+  so `get_trade_rr_vol_series` needs ≥256 stored `vol_history` rows. Those rows are
+  forward-accumulated only (IV via `schwab_fetch_iv`, HV via `accumulate_hv_only` —
+  one row/day; neither backfills). The fetch `bootstrap` mode pulls a full 5y PRICE
+  history on a ticker's first run, but there is NO equivalent vol bootstrap. So a
+  newly-activated ticker has 1000+ closes yet only a handful of vol rows → vol_series
+  returns None → trade LRR/HRR blank for ~1 year. Hit UUP (USD→UUP swap: USD was
+  deactivated, UUP is the tradeable ETF and pulls from Schwab fine — the gap was vol
+  history, not price data) and the macro-vol indices VXN/RVX/GVZ/OVX/MOVE. VIX/VVIX
+  were unaffected only because they have years of accumulated HV — "not traded" was
+  never the cause.
+
+Decision:
+  Add Fallback 2 to `get_trade_rr_vol_series`: when stored IV and HV are both < 256
+  rows, reconstruct the HV30 series on the fly from `price_cache.history_json`
+  (`_hv30_series_from_closes`, identical formula to `accumulate_hv_only`:
+  `std(log-rets[-21:], ddof=0)·√252`). Reads the same closes `compute_output` passes
+  → date-aligned. Source tag `hv_computed`. Self-heals to stored `iv`/`hv` once ~1y
+  accumulates; long-history tickers (VIX `hv`, GLD `iv`) unchanged.
+
+Why (regression guard):
+  IV30 is NOT reconstructable — Schwab serves no historical option chains — so IV
+  stays forward-only; only HV is derivable from price history. Do NOT "fix" this by
+  writing 1000+ backfilled HV rows into `vol_history` per new ticker (more surface
+  area, still can't backfill IV, needs idempotency care) — the on-the-fly read-path
+  fallback covers backfill AND every future ticker in one place. Do NOT raise the
+  ≥256 gate or remove the fallback: that re-blanks new tickers' bands for a year.
+  Deploy note: a DB-only recompute is futile until the code ships — the live deployed
+  code overwrites `signal_output` on the next REFRESH/CALCULATE/EOD run (observed
+  2026-06-24: a manual prod recompute on the OLD code re-nulled the ranges ~5 min
+  after a local DB write). Reminder: local Docker writes to PRODUCTION Supabase
+  (rule #89), so verifying a fix in the DB ≠ shipping it.
+
+Linked rule: CLAUDE.md rule #100
+
 ## ADR-023 — Never append a today-stamped history bar on a non-trading day
 Date: 2026-06-23
 Status: Active
