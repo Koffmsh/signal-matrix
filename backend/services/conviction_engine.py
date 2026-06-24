@@ -484,14 +484,43 @@ def _rr_rank_in_window(value: float, window: list[float]) -> float:
     return ((value - w_min) / (w_max - w_min)) * 100.0
 
 
+def _hv30_series_from_closes(closes: list[float], period: int = 21) -> list[float] | None:
+    """
+    Reconstruct a full HV30 series (annualized 21-return realized vol) from a
+    close-price history, end-aligned to `closes` (out[-1] corresponds to
+    closes[-1]). Mirrors accumulate_hv_only's per-bar formula exactly:
+    std(log-returns[-21:], ddof=0) * sqrt(252).
+
+    Returns a list of length len(closes) - period, or None if there are too
+    few/invalid closes.
+    """
+    if not closes or len(closes) < period + 2:
+        return None
+    arr = np.asarray(closes, dtype=float)
+    if not np.all(np.isfinite(arr)) or np.any(arr <= 0):
+        return None
+    rets = np.log(arr[1:] / arr[:-1])          # length n-1
+    n = len(arr)
+    sqrt252 = 252 ** 0.5
+    # close index j → the 21 returns ending into bar j are rets[j-period:j]
+    return [float(np.std(rets[j - period:j], ddof=0) * sqrt252) for j in range(period, n)]
+
+
 def get_trade_rr_vol_series(ticker: str, db) -> tuple[list[float] | None, str | None]:
     """
     Returns (vol_series, source) where:
       vol_series = list of vol values (ascending date), at least RR_RANK_LOOKBACK + 3 long
-      source     = 'iv' | 'hv' | None (insufficient history)
+      source     = 'iv' | 'hv' | 'hv_computed' | None (insufficient history)
 
-    Primary: IV30 from vol_history.implied_vol if >= RR_RANK_LOOKBACK + 3 obs
-    Fallback: HV30 from vol_history.hv30
+    Primary:    IV30 from vol_history.implied_vol if >= RR_RANK_LOOKBACK + 4 obs
+    Fallback 1: HV30 from vol_history.hv30 (forward-accumulated rows)
+    Fallback 2: HV30 reconstructed on the fly from price_cache.history_json.
+                A newly-activated ticker has a full bootstrapped 5y price
+                history on day one but only a few accumulated vol_history rows,
+                so its 252-day rank window can't be built from stored vol.
+                HV is fully reconstructable from price history; IV30 is NOT (no
+                historical option chains), so IV stays forward-only. Self-heals
+                to stored IV/HV (Primary/Fallback 1) once ~1y of rows accumulate.
     """
     from models.vol_history import VolHistory
 
@@ -518,6 +547,19 @@ def get_trade_rr_vol_series(ticker: str, db) -> tuple[list[float] | None, str | 
     if len(hv_rows) >= needed:
         values = [r.hv30 for r in reversed(hv_rows)]
         return values, "hv"
+
+    # Fallback 2 — reconstruct HV30 from the bootstrapped close history. Reads the
+    # same price_cache.history_json that compute_output passes as `closes`, so the
+    # two series stay date-aligned.
+    pc = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+    if pc and pc.history_json:
+        try:
+            closes = json.loads(pc.history_json)
+        except (ValueError, TypeError):
+            closes = None
+        hv_series = _hv30_series_from_closes(closes) if closes else None
+        if hv_series is not None and len(hv_series) >= needed:
+            return hv_series, "hv_computed"
 
     return None, None
 
