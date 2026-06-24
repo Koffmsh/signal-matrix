@@ -48,6 +48,41 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-025 — Isolated local Postgres dev DB (not prod Supabase, not SQLite)
+Date: 2026-06-24
+Status: Active
+Component: docker-compose.yml (`db` service), `.env.dev`, main.py, services/system_status.py, SystemStatus.js
+
+Context:
+  Local Docker had been reading/writing PRODUCTION Supabase since the 2026-04-25 `env_file: .env`
+  commit silently loaded the prod connection strings into the container (the original SQLite-for-dev
+  design was never deliberately replaced — it was an accident). Risks: schema migrations had no real
+  dry-run (the "test on local SQLite" step actually errored against prod over IPv6); local Schwab
+  calls shared the prod refresh token and could rotate it → prod outage (ADR-015/018); local
+  auth/registration wrote real users/PII to prod; local recomputes raced and overwrote prod signal
+  state. Two finalist fixes: revert local to SQLite, or stand up an isolated dev DB.
+
+Decision:
+  Add an isolated **Postgres 17 container** (`db` service) as the local dev DB — chosen over SQLite
+  and over a 2nd hosted Supabase project. `.env.dev` (gitignored) repoints the local backend via
+  `DATABASE_URL` and blanks the prod `SUPABASE_*` strings; layered after `.env` with
+  `required:false` so a missing file falls back to prod. A DB-environment badge (admin header,
+  amber=PROD/grey=DEV, derived from the live engine host) + a startup log line make the connected DB
+  visible. Dev runs Schwab on Yahoo fallback (empty token table).
+
+Why (regression guard):
+  Postgres-container chosen because the app uses Supabase only as plain managed Postgres (own JWT
+  auth, no PostgREST/storage/Supabase-Auth), so a `postgres:17` container is engine-identical to prod
+  17.6 — it eliminates the entire SQLite-dialect bug class (NULL-in-UNIQUE, json/jsonb, type
+  strictness, ON CONFLICT) that SQLite would keep leaking to prod. Rejected SQLite: low fidelity.
+  Rejected 2nd Supabase project: $0 but adds a 7-day-pause keepalive + a cloud project to maintain,
+  and the only parity it adds (pgbouncer transaction-pooler quirks) isn't worth that overhead for a
+  solo dev. The container does NOT replicate the pooler — so the prod migration still runs against
+  Supabase (after a `pg_dump`, since free tier has no PITR); the dev run is the engine-level rehearsal.
+  Do NOT re-point local at prod, and do NOT copy the prod Schwab token into dev (rotation race).
+
+Linked rule: CLAUDE.md rule #89 + "Local Dev Environment" section
+
 ## ADR-024 — Trade-RR HV-from-closes fallback for newly-activated tickers
 Date: 2026-06-24
 Status: Active

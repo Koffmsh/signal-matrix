@@ -40,7 +40,7 @@ indicators.
 - **Container:** Docker + docker-compose
 - **Data:** EOD prices via Schwab Trader API (primary) / Yahoo Finance (fallback) — FastAPI backend
 - **Backend:** Python FastAPI running at localhost:8000 (local) / api.signal.suttonmc.com (production)
-- **Database:** Supabase (managed Postgres) in production — SQLite (`backend/signal_matrix.db`) for local dev only
+- **Database:** Supabase (managed Postgres) in production — isolated local **Postgres 17 container** (`db` service in docker-compose, matches prod Supabase 17.6) for local dev. SQLite is no longer used for dev. See "Local Dev Environment" + **ADR-025**.
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
 - **SMS:** Telnyx (v2 REST, `services/sms.py`); credentials in `.env` (TELNYX_API_KEY, TELNYX_FROM, TELNYX_TO). **Globally disabled** via `sms.SMS_DISABLED = True` pending 10DLC carrier registration — `send_sms`/`send_sms_to` no-op until lifted. (Superseded Twilio.)
 - **Email:** Gmail SMTP (`services/email_alert.py`); env `EMAIL_FROM` / `EMAIL_TO` / `EMAIL_APP_PASSWORD`. `send_email_to(recipient, …)` for per-recipient sends. No kill switch — email is live.
@@ -124,7 +124,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 
 ### Infra & data-source guardrails
 - **H/L history alignment** — when adding OHLC-based columns, verify `len(history_high_json) == len(history_json)` after the first data run (a legacy bootstrap once left H/L 3 bars short of close, inflating ATR).
-- **Supabase from Docker** — alembic uses `SUPABASE_POOLED_CONNECTION_STRING` (IPv4, port 6543); the direct `:5432` host is IPv6-only and Docker Desktop on Windows can't route it. `alembic/env.py` falls back to pooled automatically — never run alembic via the direct string from Docker.
+- **Supabase from Docker (PROD migrations only)** — when migrating **production**, alembic must use `SUPABASE_POOLED_CONNECTION_STRING` (IPv4, port 6543) or the pre-encoded `DATABASE_URL`; the direct `:5432` host is IPv6-only and Docker Desktop on Windows can't route it (`alembic current` against it fails `Network is unreachable`). `alembic/env.py` does **NOT** auto-fall-back to pooled — it picks the first of `DATABASE_URL` → `SUPABASE_CONNECTION_STRING` → `SUPABASE_POOLED_CONNECTION_STRING` that is set, so never leave the IPv6 direct string as the only one set. Local dev no longer touches prod at all — it uses the `db` container via `.env.dev` (see "Local Dev Environment" + rule #89).
 - **Supabase runtime = psycopg2 sync** — all routers are synchronous SQLAlchemy; `database.py` `_make_sync_url()` converts the asyncpg URL → psycopg2 and URL-encodes the password (`@ # /`). Do not introduce `create_async_engine`/`AsyncSession` without a planned full-router migration.
 - **Fly secrets** — pre-encode passwords containing `# $ @ , /` (Fly mangles `#`/`$`); `database.py` checks the pre-encoded `DATABASE_URL` secret first, then `SUPABASE_POOLED_CONNECTION_STRING`.
 - **Fly web deploy** — multi-stage build → `nginx:alpine` static (CRA `npm start` dies headless on Firecracker); `.dockerignore` MUST exclude `node_modules` (Windows binaries crash Linux); nginx needs `try_files $uri $uri/ /index.html` for React routes; all web deploys via `./deploy-web.sh` (never bare `fly deploy`). See **ADR-008**.
@@ -1344,7 +1344,7 @@ git checkout -- .   # roll back if needed
 86. **`apiFetch` is a static function, not a hook** — hard navigation on 401 (`window.location.href = "/login"`) is intentional. Do not refactor to a `useApiFetch` hook. See "Deferred decisions" in `Docs/Auth_User_Management_Spec_v1.0.md`.
 87. **Email links in `email_alert.py` use `APP_BASE_URL` env var** — defaults to `https://signal.suttonmc.com` if unset. Local `.env` overrides to `http://localhost:3000` so reset/registration emails clickthrough to local during dev. Never hardcode the production URL.
 88. **JWT_SECRET MUST differ between local dev and production** — local in `.env`, production in Fly.io secrets. Never reuse. Rotating JWT_SECRET invalidates every existing session cookie (forces re-login) but does not affect user accounts.
-89. **Local Docker connects to PRODUCTION Supabase** — `SUPABASE_CONNECTION_STRING` in `.env` points at the same DB as production. There is no separate local DB. Therefore: every local backend test/registration writes to production. When iterating on auth or any DB-touching feature, expect test users to appear in production. Clean up test fixtures before and after.
+89. **Local Docker uses an isolated DEV Postgres container — NOT prod (ADR-025)** — `.env.dev` (gitignored) sets `DATABASE_URL` to the `db` service (postgres:17) and blanks the prod `SUPABASE_*` strings, so the local backend reads/writes the dev DB only and cannot reach prod even if `DATABASE_URL` is dropped. Confirm via the admin header **DB badge** (DEV grey / PROD amber) and the startup log line (`DB CONNECTION → host=… [DEV|PROD-SUPABASE]`). Prod Supabase is reached only by Fly — or locally if `.env.dev` is absent (env_file `required:false` fallback to `.env`); if the badge ever reads PROD locally, `.env.dev` is missing. **History:** before ADR-025 local hit prod directly (the 2026-04-25 `env_file` accident) — that is what this fixes. Schwab in dev runs on Yahoo fallback (empty `schwab_tokens`); never copy the prod token into dev (refresh-token rotation race, ADR-015/018).
 90. **Idempotent migrations for new tables** — `Base.metadata.create_all()` runs at startup and creates any new tables from SQLAlchemy models, BEFORE alembic gets a chance to run on a fresh deploy. New `op.create_table` migrations must guard with `if "table_name" not in inspector.get_table_names(): ...` (see `add_users_table.py` / `add_password_reset_tokens_table.py` for the pattern). Otherwise `alembic upgrade head` after deploy fails with "table already exists".
 91. **`REFRESH DATA` and `CALCULATE SIGNALS` are admin-only** — both UI buttons (gated by `isAdmin` in App.js) and backend endpoints (`/api/market-data/batch`, `/api/signals/calculate` use `require_admin_user`). Viewers see cached data via `/api/market-data/cached` and `/api/signals/stored`; they cannot trigger expensive recalcs.
 92. **Never add a proactive Schwab token refresh scheduler job** — schwab-py `client_from_access_functions` handles all access-token refreshes internally during API calls. A separate APScheduler job that calls the Schwab token endpoint concurrently races with schwab-py's internal refresh: both use the same refresh token; Schwab rotates it on first use, so the second caller gets `invalid_grant` and kills the session. See **ADR-015**.
@@ -1359,6 +1359,30 @@ git checkout -- .   # roll back if needed
 
 ---
 
+## Local Dev Environment (ADR-025)
+
+Local dev runs against an **isolated Postgres 17 container** (`db` service in docker-compose) — not
+production Supabase, and not SQLite. It mirrors prod's engine (Supabase = managed PG 17.6) so
+migrations rehearse faithfully, while keeping every local write (registrations, CALCULATE SIGNALS,
+test fixtures) out of production.
+
+- **Wiring:** `.env.dev` (gitignored) sets `DATABASE_URL` → the `db` container and blanks the prod
+  `SUPABASE_*` strings (so local can't reach prod even if `DATABASE_URL` is dropped). Layered after
+  `.env` in compose with `required:false` — a missing `.env.dev` boots against prod via `.env`.
+- **Which DB am I on?** Admin header **DB badge** (DEV grey / PROD loud amber — `compute_db_env()` in
+  `system_status.py`, derived from the live engine host, not an env flag) + startup log line
+  `DB CONNECTION → host=… [DEV|PROD-SUPABASE]`.
+- **Schwab in dev:** empty `schwab_tokens` → all Schwab calls fall back to Yahoo (intentional — kills
+  the shared refresh-token rotation race). The 5 Schwab-only macro-vol `$`-indices
+  (MOVE/VXN/RVX/GVZ/OVX) have no Yahoo source → blank in dev (expected). Never copy the prod token in.
+- **Bootstrap a fresh dev DB:** `docker compose up -d db` → `docker compose run --rm backend alembic
+  upgrade head` → `docker compose up -d` (seeds tickers + admin from `.env`). Optionally mirror the
+  live universe by copying the prod `tickers` table (safe — no PII; never copy `users`).
+- **Rollback:** remove `.env.dev` → back to prod; `docker compose down -v` → wipe dev data. Prod is
+  never in the blast radius.
+
+---
+
 ## Session-Start Checklist — Run at the Start of Every Backend Session
 
 Neo must run these steps at the start of any session that touches backend code, signals, or schema.
@@ -1368,9 +1392,9 @@ Do not skip. Do not assume the environment is already in sync.
 1. Confirm Docker is running
    docker ps | grep signal-matrix
 
-2. Sync local SQLite schema with production
-   docker exec signal-matrix-backend-1 alembic upgrade head
-   (uses local SQLite — keeps dev schema in sync with Alembic migrations)
+2. Sync the local DEV Postgres schema (isolated container — NOT prod; see "Local Dev Environment")
+   docker compose up -d db                                  # postgres:17 dev container
+   docker compose run --rm backend alembic upgrade head     # builds/updates dev schema on PG17
 
 3. Confirm Fly.io auth is valid (only needed before deploys)
    fly auth whoami
@@ -1380,7 +1404,7 @@ Do not skip. Do not assume the environment is already in sync.
 ```
 
 If step 2 fails, stop and diagnose before making any code changes. A schema mismatch between
-local SQLite and the Alembic migration history means local test results are unreliable.
+the local DEV Postgres and the Alembic migration history means local test results are unreliable.
 
 ---
 
@@ -1394,12 +1418,16 @@ Every schema change must follow this sequence exactly. Do not skip steps, do not
 - Confirm upgrade() and downgrade() are correct
 - Confirm no unexpected table drops or column renames
 
-### Step 2 — Test migration against local SQLite first
+### Step 2 — Dry-run the migration against the local DEV Postgres first
 ```bash
-docker exec signal-matrix-backend-1 alembic upgrade head
+docker compose run --rm backend alembic upgrade head
 ```
-- If this fails, fix the migration file before touching production
-- Local SQLite: `alembic/env.py` falls back to `sqlite:////app/signal_matrix.db` when no DB env vars are set
+- Targets the isolated `db` container (postgres:17, **same engine as prod Supabase 17.6**) via the
+  `DATABASE_URL` in `.env.dev` — a faithful Postgres rehearsal, not a SQLite approximation. This is
+  the dry-run that catches engine-level migration issues before they reach prod.
+- If this fails, fix the migration file before touching production.
+- (The `sqlite:////app/signal_matrix.db` fallback in `alembic/env.py` still exists for the
+  no-env-vars case, but local dev now uses the Postgres container — see "Local Dev Environment".)
 
 ### Step 3 — Encode the Supabase password before production migration
 The Supabase password contains `#`, `$`, `/`, and `@` — these are silently mangled by Fly.io
