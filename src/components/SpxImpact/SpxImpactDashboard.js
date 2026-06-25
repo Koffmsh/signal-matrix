@@ -223,10 +223,8 @@ export default function SpxImpactDashboard() {
               padding: "10px 12px",
               borderBottom: `1px solid ${BORDER}`,
               fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: GREEN,
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
             }}>
-              <span>TOP CONTRIBUTORS</span>
-              <span style={{ fontWeight: 600 }}>▲ LARGEST POSITIVE IMPACT</span>
+              ▲ LARGEST POSITIVE IMPACT
             </div>
             <ImpactTable rows={data.contributors} side="contributors" />
           </div>
@@ -237,10 +235,8 @@ export default function SpxImpactDashboard() {
               padding: "10px 12px",
               borderBottom: `1px solid ${BORDER}`,
               fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: ORANGE,
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
             }}>
-              <span>TOP DETRACTORS</span>
-              <span style={{ fontWeight: 600 }}>▼ LARGEST NEGATIVE IMPACT</span>
+              ▼ LARGEST NEGATIVE IMPACT
             </div>
             <ImpactTable rows={data.detractors} side="detractors" />
           </div>
