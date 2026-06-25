@@ -219,7 +219,7 @@ def _compute_impacts(weights: dict, quotes: dict, strip_ah: bool = False) -> tup
 
 def compute_and_cache_spx_impact(db: Session) -> dict:
     """
-    EOD run: fetch IVV weights + Schwab quotes, compute impact, persist as label='eod'.
+    EOD run: fetch SPY weights + Schwab quotes, compute impact, persist as label='eod'.
     Also stores full weights_json for intraday runs to reuse.
     Idempotent per ET calendar day.
     """
@@ -241,7 +241,7 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
             raise ValueError("Empty weights dict from SPY XLSX")
         logger.info(f"SPX impact EOD: loaded {len(weights)} constituent weights from SPY (as of {weights_date})")
     except Exception as e:
-        logger.warning(f"SPX impact EOD: IVV fetch failed ({e}) — attempting fallback to last known weights")
+        logger.warning(f"SPX impact EOD: SPY fetch failed ({e}) — attempting fallback to last known weights")
         # Fall back to the most recent EOD row that has weights_json
         fallback = db.query(SpxImpactCache).filter(
             SpxImpactCache.snapshot_label == "eod",
@@ -317,7 +317,7 @@ def compute_and_cache_spx_impact(db: Session) -> dict:
 def compute_and_cache_spx_impact_intraday(db: Session, label: str) -> dict:
     """
     Intraday run (label='11am' or '1pm'): reuse weights from EOD row, fetch live
-    Schwab quotes, compute impact. No IVV fetch. No AH stripping (lastPrice is live).
+    Schwab quotes, compute impact. No SPY fetch. No AH stripping (lastPrice is live).
     """
     today_et = datetime.now(_ET).strftime("%Y-%m-%d")
 

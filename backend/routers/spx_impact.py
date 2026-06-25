@@ -117,7 +117,7 @@ async def upload_weights(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """Admin-only: upload iShares IVV .xls holdings file to refresh constituent weights."""
+    """Admin-only: upload SSGA SPY .xls holdings file to refresh constituent weights."""
     require_admin_user(request, db)
 
     content = await file.read()

@@ -245,7 +245,7 @@ export default function SpxImpactDashboard() {
 
       {/* ── Footer note ─────────────────────────────────────────────────── */}
       <div style={{ marginTop: 20, fontSize: 10, color: GREY, letterSpacing: "0.06em", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <span>% of Move = |Contribution| ÷ Σ|All Contributions|. Contribution = Daily Return × Weight. Source: iShares IVV holdings (EOD).</span>
+        <span>% of Move = |Contribution| ÷ Σ|All Contributions|. Contribution = Daily Return × Weight. Source: SSGA SPY holdings (EOD).</span>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {snapshots.eod?.weights_date && (
             <span style={{ color: isWeightsStale(snapshots.eod.weights_date) ? "#f0b429" : GREY }}>
