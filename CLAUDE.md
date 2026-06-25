@@ -170,7 +170,7 @@ signal-matrix/
 ├── src/
 │   ├── components/
 │   │   ├── Admin/
-│   │   │   ├── AdminPanel.js              ← admin shell: password gate + header + tab nav + nested Routes
+│   │   │   ├── AdminPanel.js              ← admin shell: JWT auth (login redirect) + header + tab nav + nested Routes
 │   │   │   ├── TickerList.js              ← ticker CRUD tab (/admin/tickers) — extracted from AdminPanel
 │   │   │   ├── QuadSetup.js              ← quad config tab (/admin/quad) — US monthly NTM grid (12 rows, auto-save) + country quarterly table (16 countries × 4 quarters)
 │   │   │   ├── UserList.js               ← user management tab (/admin/users) — role/status/reset-pw
@@ -262,7 +262,7 @@ signal-matrix/
 │       ├── sector_performance.py          ← GET /api/sector-performance — 1D/MTD/QTD/YTD absolute + relative sector tables
 │       ├── system.py                       ← ADR-020 — GET /api/system/status (admin: connection+data+status; user: status only)
 │       └── alerts.py                       ← GET/PUT /api/alerts/my-settings — per-user alert delivery settings (Phase 1 Alert Creator)
-├── .env                                   ← NOT in Git — contains REACT_APP_ADMIN_PASSWORD
+├── .env                                   ← NOT in Git — backend secrets (Supabase, Schwab, JWT_SECRET, admin seed creds, email)
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
 ├── docker-compose.yml
@@ -1097,7 +1097,7 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 - Signal columns: **live** — populated from `/api/signals/stored` on page load; recalculated on CALCULATE SIGNALS
 - REFRESH DATA: manual fetch only — forces fresh Yahoo Finance fetch outside scheduler window
 - CALCULATE SIGNALS: manual trigger only, reads from price_cache
-- Admin panel at localhost:3000/admin — password protected
+- Admin panel at localhost:3000/admin — JWT cookie auth + live DB admin-role check (rule #81)
 - Ticker universe: loaded from `/api/tickers?active=true` on page load
 
 ### VIX Regime Indicator — Dashboard Header
@@ -1236,13 +1236,13 @@ git checkout -- .   # roll back if needed
 
 ## Admin Panel
 - **Route:** `localhost:3000/admin` (redirects to `/admin/tickers`) — hidden, not in main nav or sidebar
-- **Access:** Password from `.env` → `REACT_APP_ADMIN_PASSWORD` — gate is in `AdminPanel.js` shell
+- **Access:** JWT httpOnly cookie + live DB role check (`require_admin_user`, rule #81); login at `/login`. The old `REACT_APP_ADMIN_PASSWORD` build-arg gate was **removed** (replaced by JWT cookie auth) — never re-add it; a `REACT_APP_*` value bakes into the public JS bundle.
 - **Tab nav:** Horizontal tabs below the header — [TICKERS] [QUAD SETUP] — add new tabs by extending `TABS` array in `AdminPanel.js`
 - **Sub-routes:** `/admin/tickers` → `TickerList.js` · `/admin/quad` → `QuadSetup.js` · unknown paths redirect to tickers
 - **App.js route:** `/admin/*` (wildcard required for nested routing)
 - **Sidebar:** Hidden on all `/admin/*` paths via `showSidebar` check in `AppLayout`
-- **After changing `.env`:** Must restart Docker container
-- **Never hardcode the password in source code**
+- **After changing `.env`/`.env.dev`:** Must restart the backend container
+- **Never hardcode secrets in source code** — use `.env` (local) / Fly secrets (prod); never a `REACT_APP_*` secret (client-bundle exposure)
 - **Never hard delete tickers** — use `active: false` via DELETE endpoint
 - **Adding a new admin tab:** (1) create the component, (2) add `{ label, path }` to `TABS` in `AdminPanel.js`, (3) add `<Route path="x" element={<X />} />` inside `AdminPanel`'s `<Routes>`
 
@@ -1469,7 +1469,7 @@ Check the Supabase dashboard to confirm new columns/tables are present.
 ### Step 6 — Redeploy both apps
 ```bash
 fly deploy --app signal-matrix-api
-./deploy-web.sh                    # sources .env, passes REACT_APP_ADMIN_PASSWORD as build arg
+./deploy-web.sh                    # builds web; REACT_APP_API_URL baked via fly.web.toml [build.args]
 ```
 
 Deploy API first, web second. Confirm both are healthy after deploy:
