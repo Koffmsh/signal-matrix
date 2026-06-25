@@ -159,8 +159,6 @@ export default function SpxImpactDashboard() {
         {/* Subtitle + snapshot toggle */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", gap: 24, fontSize: 11, flexWrap: "wrap" }}>
-            <span style={{ color: GREEN, fontWeight: 600, letterSpacing: "0.08em" }}>▲ LARGEST POSITIVE IMPACT</span>
-            <span style={{ color: ORANGE, fontWeight: 600, letterSpacing: "0.08em" }}>▼ LARGEST NEGATIVE IMPACT</span>
             {data?.computed_date && (
               <span style={{ color: GREY }}>
                 {active === "eod" ? "EOD" : active.toUpperCase()} {data.computed_date}
@@ -225,8 +223,10 @@ export default function SpxImpactDashboard() {
               padding: "10px 12px",
               borderBottom: `1px solid ${BORDER}`,
               fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: GREEN,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
             }}>
-              TOP CONTRIBUTORS
+              <span>TOP CONTRIBUTORS</span>
+              <span style={{ fontWeight: 600 }}>▲ LARGEST POSITIVE IMPACT</span>
             </div>
             <ImpactTable rows={data.contributors} side="contributors" />
           </div>
@@ -237,8 +237,10 @@ export default function SpxImpactDashboard() {
               padding: "10px 12px",
               borderBottom: `1px solid ${BORDER}`,
               fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: ORANGE,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
             }}>
-              TOP DETRACTORS
+              <span>TOP DETRACTORS</span>
+              <span style={{ fontWeight: 600 }}>▼ LARGEST NEGATIVE IMPACT</span>
             </div>
             <ImpactTable rows={data.detractors} side="detractors" />
           </div>
