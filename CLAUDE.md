@@ -82,7 +82,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 ### Data, timezone & cache guardrails
 - **yfinance ≥ 1.2.0** — never downgrade; v0.2.x has an unresolvable persistent 429 block.
 - **Date comparison** (`yahoo_finance.py`): `closes.index.date <= date.today()` — `.date` avoids the tz-aware crash; `<=` includes today's confirmed EOD close.
-- **429 fallback** (`market_data.py`): on 429 the batch endpoint serves cached SQLite (never returns empty) so all tickers stay visible.
+- **429 fallback** (`market_data.py`): on 429 the batch endpoint serves the cached DB rows (never returns empty) so all tickers stay visible.
 - **`updated_at`** (`market_data.py`): stamp `datetime.utcnow()` on every upsert path; store UTC-naive, convert to ET at display (`.replace(tzinfo=timezone.utc).astimezone(_ET)` in `serialize_cache_row`); never `str(row.updated_at)`.
 - **`updated` field** (`yahoo_finance.py`): stamp `datetime.now(_ET)` — Docker is UTC, bare `datetime.now()` flips the date after 8 PM ET. `_ET = ZoneInfo("America/New_York")` at module level.
 - **Never hardcode dates in JSX** (`App.js`) — read from data (e.g. first ticker's `updated`).
@@ -187,7 +187,7 @@ signal-matrix/
 │   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px
 │   │       └── SystemStatus.js            ← ADR-020 — header CONNECTION/DATA (admin) + STATUS (user) dots; reads /api/system/status
 │   ├── data/
-│   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is SQLite tickers table
+│   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is the Postgres tickers table
 │   ├── hooks/                             ← placeholder
 │   ├── utils/                             ← placeholder
 │   ├── App.css
@@ -288,7 +288,7 @@ Per-task build detail lives in git history. Phase 4.4 (Fly.io deploy) was absorb
 - Manual trigger only — never auto-calculates on page load
 - Must be run AFTER REFRESH DATA (price history must be current)
 - Calls: `GET /api/signals/calculate` — runs full pipeline (hurst → pivots → output → snapshot) in one call
-- Signal engine reads from `price_cache` SQLite table — NEVER calls yfinance directly
+- Signal engine reads from the `price_cache` DB table (Postgres) — NEVER calls yfinance directly
 
 ---
 
@@ -549,9 +549,9 @@ or split into separate per-viewpoint alerts; the builder supports either. Implie
 **Signal History (4.3):** `calculate_signals()` writes a `signal_history` snapshot of all `signal_output` rows on every run — idempotent (one per ticker/timeframe per ET day, checked in Python — no UNIQUE constraint), non-fatal on failure, `trigger` ∈ manual|scheduled|catchup. `GET /api/signals/history` (params ticker/timeframe/start_date/end_date/limit≤500, newest-first) — not yet wired to UI (future backtesting).
 - **CALCULATE SIGNALS:** `GET /api/signals/calculate` runs the full pipeline + snapshot; its response holds only raw `compute_output` — the frontend must re-fetch `GET /api/signals/stored` as the source of truth (`h_trade_delta`, `vix_regime`, etc. are written separately in the signal loop).
 
-**Page-load cache (4.5):** page load reads the warm SQLite cache (instant, no external call). Auto-loading from the local DB is allowed; auto-fetching Yahoo/Schwab on load is prohibited. See rule #17.
+**Page-load cache (4.5):** page load reads the warm DB cache (local Postgres / prod Supabase; instant, no external call). Auto-loading from the local DB is allowed; auto-fetching Yahoo/Schwab on load is prohibited. See rule #17.
 
-**Tickers table (4.6):** SQLite `tickers` table is the source of truth (replaces `tickers.js`, which is seed-only via `seed_tickers_if_empty`); `get_active_tickers(db)` is the only retrieval path — no hardcoded lists (rules #35–#36). Columns: id, ticker (UNIQUE), description, asset_class, sector, tier, parent_ticker, active, display_order, created_at, updated_at. API: `GET/POST /api/tickers`, `PUT/DELETE /api/tickers/{symbol}` (DELETE = soft-delete, never hard — rule #3), `GET /api/tickers/lookup/{symbol}` (registered before `/{symbol}`). Admin panel adds/edits/soft-deletes; ticker locked after creation; Asset Class is a fixed-vocabulary dropdown.
+**Tickers table (4.6):** the Postgres `tickers` table is the source of truth (replaces `tickers.js`, which is seed-only via `seed_tickers_if_empty`); `get_active_tickers(db)` is the only retrieval path — no hardcoded lists (rules #35–#36). Columns: id, ticker (UNIQUE), description, asset_class, sector, tier, parent_ticker, active, display_order, created_at, updated_at. API: `GET/POST /api/tickers`, `PUT/DELETE /api/tickers/{symbol}` (DELETE = soft-delete, never hard — rule #3), `GET /api/tickers/lookup/{symbol}` (registered before `/{symbol}`). Admin panel adds/edits/soft-deletes; ticker locked after creation; Asset Class is a fixed-vocabulary dropdown.
 
 **yfinance lookup (4.7):** `GET /api/tickers/lookup/{symbol}` returns suggested description/asset_class/sector (never auto-saves; fills empty fields only; graceful on missing data). `ASSET_CLASS_OVERRIDES` (`tickers.py`) is checked first before yfinance inference — see rule #37.
 
@@ -1042,10 +1042,10 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 - REFRESH DATA populates the cache — CALCULATE SIGNALS reads from it
 - Same-day cache invalidation — stale rows reset before re-fetch
 - Price history excludes today's incomplete bar before pivot detection
-- Auto-loading from SQLite cache on page load is allowed — it is a local DB read, not a Yahoo call
+- Auto-loading from the DB cache (Postgres) on page load is allowed — it is a local DB read, not a Yahoo call
 
 ### Ticker Universe — Source of Truth
-- **SQLite `tickers` table** is the source of truth as of Task 4.6
+- **Postgres `tickers` table** is the source of truth as of Task 4.6
 - `tickers.js` is seed data only — runs once on first FastAPI startup if table is empty
 - Do not modify `tickers.js` — use the admin panel to add/edit/deactivate tickers
 - `get_active_tickers(db)` is the only way backend should retrieve the ticker list — no hardcoded arrays
@@ -1091,7 +1091,7 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 
 ## Dashboard — Current State
 - React app running at localhost:3000 via Docker
-- Close prices: real — auto-loaded from SQLite cache on page load
+- Close prices: real — auto-loaded from the DB cache on page load
 - Sparklines: real — 60-day price history
 - Rel IV: real — Schwab IV Percentile from options chain (`iv_source = 'schwab'`); falls back to Yahoo proxy (`iv_source = 'proxy'`) on token expiry or per-ticker error
 - Volume: real — daily volume from Yahoo Finance
@@ -1570,7 +1570,7 @@ Only commit after production is confirmed healthy.
 
 ## Ticker Universe — Seed Data (tickers.js — DO NOT USE AS LIVE SOURCE)
 
-The live ticker universe is managed via the SQLite `tickers` table and admin panel.
+The live ticker universe is managed via the Postgres `tickers` table and admin panel.
 The list below is the original seed data only — reference for recovery purposes.
 
 ```javascript
