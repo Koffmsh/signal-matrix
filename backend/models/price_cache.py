@@ -6,7 +6,7 @@ class PriceCache(Base):
     __tablename__ = "price_cache"
 
     id           = Column(Integer, primary_key=True, index=True)
-    ticker       = Column(String, index=True)
+    ticker       = Column(String, index=True, unique=True)
     yahoo_symbol = Column(String)
     close        = Column(Float)
     volume       = Column(Float)

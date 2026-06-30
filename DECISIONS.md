@@ -48,6 +48,50 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-027 — Enforce UNIQUE(ticker) on price_cache (the ROBO duplicate-row bug)
+Date: 2026-06-30
+Status: Active
+Component: `backend/models/price_cache.py`; `backend/alembic/versions/z1a2b3c4d5e6_price_cache_unique_ticker.py`
+
+Context:
+  ROBO showed a frozen close (90.24, cache_date 1970-01-01, empty history,
+  updated 6/2) on the dashboard even though both Schwab and Yahoo returned valid
+  live data for it. Root cause: `price_cache` had TWO rows for ROBO — the real
+  one (id=32, fetched fresh daily) and a stale `yahoo_fallback` orphan (id=33).
+  `_upsert` matches with `.filter(ticker==…).first()` (updates one row), while the
+  page-load read path pulls `.filter(ticker.in_(…))` (returns both), so the
+  frontend ticker map non-deterministically served the stale orphan.
+  The enabler: production's `price_cache` had NO unique constraint on `ticker`
+  (`inspect(engine).get_unique_constraints('price_cache')` → []), despite CLAUDE.md
+  documenting `UNIQUE(ticker)`. The model only had `index=True`, and
+  `Base.metadata.create_all()` never ALTERs an existing table to add a constraint —
+  so the documented uniqueness was never actually enforced in the live DB.
+
+Decision:
+  1. Delete the orphan row (done live).
+  2. Model: `ticker = Column(String, index=True, unique=True)` so fresh DBs get a
+     unique index via create_all.
+  3. Migration `z1a2b3c4d5e6`: dedup (DISTINCT ON ticker, keep latest updated_at
+     then highest id — no-op when clean) then convert `ix_price_cache_ticker` to
+     UNIQUE. Guarded (skips if the index is already unique) so it is idempotent on
+     a fresh create_all'd DB (rule #90). Verified on dev (index unique=False→True;
+     duplicate insert raises IntegrityError) and prod (index unique, 0 dups, ROBO
+     single healthy row).
+
+Why (regression guard):
+  `create_all` only CREATES missing tables — it never adds a constraint to an
+  existing one. So a model-only `unique=True` silently does nothing to a live DB;
+  the migration is what actually enforces it. Never trust a "this column is UNIQUE"
+  claim (model or docs) without checking the live DB via the inspector. Diagnostic
+  tell: a ticker frozen at a stale close / `1970-01-01` cache_date / empty history
+  while its live quote works = suspect a duplicate `price_cache` row
+  (`GROUP BY ticker HAVING count()>1`) BEFORE blaming the data source — the data
+  source is usually fine, a phantom row is shadowing it. Do not drop the unique
+  index or revert the model; do not "keep highest id" when deduping (in this case
+  the orphan had the higher id — dedup by latest `updated_at`).
+
+Linked rule: CLAUDE.md rule #101 + price_cache schema "UNIQUE(ticker)" note
+
 ## ADR-026 — Make the Schwab CONNECTION dot truthful (clock = `created_at`; cross-check actual data health)
 Date: 2026-06-30
 Status: Active
