@@ -256,11 +256,19 @@ def get_status(db: Session) -> dict:
     GREEN/AMBER means the system will auto-recover on the next API call even if
     the access token has expired overnight (30-min lifetime).
 
-    Clock source: updated_at — stamped on every successful token write (OAuth
-    exchange or schwab-py auto-refresh during an API call). If updated_at is
-    < 7 days ago the refresh token is still valid; >= 7 days → broken.
-    The access token's expires_at is intentionally NOT checked here — an expired
-    access token that will auto-recover via schwab-py should not show as red.
+    Clock source: created_at — stamped ONLY on a full OAuth exchange
+    (is_full_oauth=True) and never touched by access-token refreshes. This is the
+    true age of the Schwab refresh token, which has a hard 7-day life from login
+    that access-token refreshes do NOT extend. Counts down accurately all week so
+    the day-5/6 warnings fire BEFORE the token dies.
+
+    Do NOT revert to updated_at: it is re-stamped on every successful access-token
+    refresh (~every 30 min during market hours), so it never ages while the token
+    is healthy — the age would sit at 0–1 days right up until the 7-day wall, then
+    only start climbing AFTER the token already died (false-green; no advance
+    warning). Do NOT use expires_at either: that is the 30-min access-token
+    lifetime (false-red overnight — the original ADR-016 bug). created_at is the
+    only field that is both refresh-stable and OAuth-anchored. See rule #93.
     """
     row = db.query(SchwabToken).first()
     if not row:
@@ -269,18 +277,19 @@ def get_status(db: Session) -> dict:
     try:
         _decrypt(row.access_token)  # verify decryptable / not corrupted
 
-        last_write = datetime.strptime(row.updated_at, "%Y-%m-%d %H:%M:%S").replace(
+        last_oauth = datetime.strptime(row.created_at, "%Y-%m-%d %H:%M:%S").replace(
             tzinfo=timezone.utc
         )
-        days_since_write = (datetime.now(timezone.utc) - last_write).total_seconds() / 86400
+        days_since_oauth = (datetime.now(timezone.utc) - last_oauth).total_seconds() / 86400
 
-        # Truly broken — refresh token has expired (7-day Schwab limit)
-        if days_since_write >= 7:
+        # Truly broken — refresh token has expired (7-day Schwab limit from login)
+        if days_since_oauth >= 7:
             return {"connected": False, "state": "expired"}
 
-        # Aging — approaching the 7-day limit, re-auth soon
-        age_days = int(days_since_write)
-        if days_since_write >= 6:
+        # Aging — approaching the 7-day limit, re-auth soon (aligned with the
+        # day-5 warning email so the dot turns amber in step with the reminder)
+        age_days = int(days_since_oauth)
+        if days_since_oauth >= 5:
             return {"connected": True, "state": "aging", "age_days": age_days}
 
         return {"connected": True, "state": "connected", "age_days": age_days}

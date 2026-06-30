@@ -98,22 +98,49 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
 # ── Connection (Schwab token) ─────────────────────────────────────────────────
 
 def compute_connection(db: Session) -> dict:
+    """
+    Schwab CONNECTION health. This is a REAL health signal, not just token age:
+    GREEN means the token is valid AND Schwab is actually serving data; RED means
+    re-auth is needed — including the case where the token age looks fine but
+    refresh is silently failing (premature revocation / authlib break).
+
+    Two independent failure modes, both surfaced:
+      • Token age:   expired (7-day limit) / missing / undecryptable  → red.
+      • Refresh broken: token age OK but Schwab API calls are failing, so
+        Schwab-eligible tickers fell back to Yahoo (data_source='yahoo_fallback').
+        Token age alone can NEVER catch this (rule #94 / ADR-018) — we cross-check
+        actual data health here so the dot proves the connection works.
+    """
     s = schwab_client.get_status(db)
     state = s.get("state")
     age   = s.get("age_days")
 
-    if state == "connected":
-        return {"state": "fresh", "color": GREEN, "clickable": False,
-                "tooltip": f"Schwab connected · token age {age or 0}d"}
-    if state == "aging":
-        return {"state": "aging", "color": AMBER, "clickable": True,
-                "tooltip": f"Schwab token {age}d old — expires soon. Click to re-authenticate"}
+    # 1 — Hard token failures: red regardless of data source.
     if state == "expired":
         return {"state": "expired", "color": RED, "clickable": True,
                 "tooltip": "Schwab token expired (7-day limit) — click to re-authenticate"}
-    # disconnected — missing / won't decrypt, any age
-    return {"state": "disconnected", "color": RED, "clickable": True,
-            "tooltip": "Schwab disconnected — token invalid or absent. Click to re-authenticate"}
+    if state == "disconnected":
+        return {"state": "disconnected", "color": RED, "clickable": True,
+                "tooltip": "Schwab disconnected — token invalid or absent. Click to re-authenticate"}
+
+    # 2 — Token age is OK, but is Schwab ACTUALLY working? Cross-check the
+    # authoritative live signal: are Schwab-eligible tickers being served by Schwab
+    # or falling back to Yahoo? A freshly issued token (age 0) was just proven by
+    # the OAuth exchange itself — trust it until the next fetch tags data_source.
+    if (age or 0) >= 1 and _yahoo_degraded(db):
+        return {"state": "failing", "color": RED, "clickable": True,
+                "tooltip": ("Schwab token valid but API calls are failing — data on "
+                            "Yahoo fallback. Refresh token likely revoked. "
+                            "Click to re-authenticate")}
+
+    # 3 — Token aging toward the 7-day limit (still working).
+    if state == "aging":
+        return {"state": "aging", "color": AMBER, "clickable": True,
+                "tooltip": f"Schwab token {age}d old — expires soon (7-day limit). Click to re-authenticate"}
+
+    # 4 — Valid AND verified serving data.
+    return {"state": "fresh", "color": GREEN, "clickable": False,
+            "tooltip": f"Schwab connected & serving data · token age {age or 0}d"}
 
 
 # ── Data (source · freshness · run · integrity) ───────────────────────────────

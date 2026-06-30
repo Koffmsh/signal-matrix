@@ -48,6 +48,85 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-026 — Make the Schwab CONNECTION dot truthful (clock = `created_at`; cross-check actual data health)
+Date: 2026-06-30
+Status: Active
+Component: `backend/services/schwab_client.py` — `get_status()`; `backend/services/system_status.py` — `compute_connection()`; `backend/services/scheduler.py` — `_schwab_token_age_alert_job` (consumes `age_days`)
+
+Context:
+  The Schwab connection died silently roughly every 7 days ("every weekend").
+  The CONNECTION dot stayed green/aging and the day-5/6 renewal-reminder emails
+  never fired before the death — the user only discovered the dead connection
+  days later (DATA already on Yahoo fallback, logs full of `invalid_grant:
+  "Refresh token is invalid, expired or revoked"`). Schwab refresh tokens have a
+  hard 7-day life from the OAuth login and are NOT extended by access-token
+  refreshes — a weekly interactive re-auth is unavoidable. The bug was the lack
+  of advance warning, traced to the age clock.
+
+  ADR-016 set the clock to `updated_at`. But `_store_tokens()` re-stamps
+  `updated_at` on EVERY successful access-token refresh — i.e. every ~30 min
+  during market hours, all week. So the computed age sits at 0–1 days the entire
+  healthy week and can never reach the day-5/6 alert thresholds. It only starts
+  climbing AFTER the refresh token hits its 7-day wall and refreshes begin
+  failing (which freezes `updated_at`). Result: false-green, then amber/red and
+  emails 5–7 days too late. (Empirically confirmed: a dead token read "5 days
+  old" because it had already been dead for 5 days.)
+
+Decision:
+  Measure token age from `created_at`. `created_at` is written only on a full
+  OAuth exchange (`is_full_oauth=True` in `_store_tokens`) and is explicitly
+  preserved across access-token refreshes — so it is the true age of the refresh
+  token (= time since login). `state='aging'` now fires at day 5 (aligned with
+  the first warning email so the dot turns amber in step with the reminder);
+  `state='expired'` at day 7. The existing 9 AM daily alert job (runs weekends
+  too) now emails on day 5 and day 6 — BEFORE the death — with the re-auth link.
+
+Why (regression guard):
+  Three candidate clocks, each anchored to a different event:
+    - `expires_at`  → 30-min access-token lifetime → false-RED overnight (ADR-016 bug).
+    - `updated_at`  → last successful refresh → false-GREEN all week, no advance
+                      warning (this ADR's bug).
+    - `created_at`  → OAuth login → refresh-stable AND OAuth-anchored = correct.
+  `created_at` is the only field that is both not bumped by refreshes and reset
+  exactly when the 7-day clock should restart (re-login). Do NOT revert to
+  `updated_at` (reintroduces silent weekly death) or `expires_at` (reintroduces
+  false-red overnight). This fix makes the weekly death PREDICTED, not PREVENTED
+  — Schwab offers no API-only refresh-token renewal, so the manual weekly re-auth
+  stays; the win is reliable day-5/6 email warnings so it never causes a data gap.
+  Limitation: `created_at` does not detect a PREMATURE revocation (e.g. a
+  concurrent-refresh race revoking before day 7) — that would still read green.
+  The authoritative live-health signal remains actual API success
+  (`price_cache.data_source` counts / `invalid_grant` in logs), per rule #94.
+
+Part 2 — CONNECTION dot must prove the connection WORKS, not just that the token
+is young (`compute_connection`):
+  The clock fix above (Part 1) makes the natural 7-day expiry predictable, but a
+  token can also break BEFORE day 7 (premature revocation, an authlib regression,
+  a refresh race). Age — on any clock — can never detect that: the token is young,
+  so it reads green, while every Schwab call returns `invalid_grant`. This is the
+  exact blind spot rule #94 / ADR-018 named ("the green dot only proves the token
+  is < 7 days old, NOT that refresh works").
+  Decision: after the age check passes, `compute_connection` cross-checks
+  `_yahoo_degraded(db)` — the same persisted signal the DATA dot uses, derived
+  from `price_cache.data_source` (`yahoo_fallback` = a Schwab-eligible ticker that
+  should have been Schwab but wasn't). If the token age is OK but data has fallen
+  back to Yahoo, CONNECTION goes RED `failing` ("token valid but API calls
+  failing — click to re-authenticate"). GREEN `fresh` now means token valid AND
+  Schwab verified serving data. Exception: a token issued today (age 0) is trusted
+  (the OAuth exchange just proved connectivity) until the next EOD/REFRESH tags
+  `data_source`, so the dot doesn't flicker red in the gap between re-auth and the
+  first fetch.
+  Reconciles with ADR-020: CONNECTION and DATA stay distinct axes (DATA remains
+  green/amber on good Yahoo data during a Schwab outage — we do NOT red DATA for
+  it). ADR-020's "never let token AGE imply data health" still holds; this is the
+  reverse and intended direction — actual Schwab call-success (data_source) now
+  informs the auth dot. Lag: `data_source` only flips on the next EOD/REFRESH, so
+  a brand-new break shows within ~1 day, not instantly — acceptable, since
+  detecting it sooner would require the status endpoint to make a live Schwab call
+  on every page load (rejected: cost + refresh-race risk).
+
+Linked rule: CLAUDE.md rule #93 (clock) + rule #96 (CONNECTION cross-check) + "Schwab refresh token has a hard 7-day expiry from login"
+
 ## ADR-025 — Isolated local Postgres dev DB (not prod Supabase, not SQLite)
 Date: 2026-06-24
 Status: Active
@@ -377,7 +456,7 @@ Linked rule: CLAUDE.md rule #41
 
 ## ADR-016 — `get_status()` clock source: `updated_at`, not `expires_at`
 Date: 2026-06-17
-Status: Active
+Status: Superseded by ADR-026 (clock moved `updated_at` → `created_at`; the `expires_at`-is-wrong reasoning still holds)
 Component: `backend/services/schwab_client.py` — `get_status()`
 
 Context:
