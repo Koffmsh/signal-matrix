@@ -13,6 +13,7 @@ services:
     command: sh -c "npm install && npm start"
     depends_on:
       - backend
+    restart: unless-stopped
 
   backend:
     build:
@@ -49,6 +50,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
 volumes:
   node_modules:
