@@ -458,6 +458,7 @@ function Dashboard() {
   const [quadSettings,    setQuadSettings]    = useState(null);
   const [countryQuads,    setCountryQuads]    = useState({});   // sector → {cur: quad, next: quad}
   const [quadMapOpen,     setQuadMapOpen]     = useState(false);
+  const [quadsOpen,       setQuadsOpen]       = useState(false);
 
   // Load ticker universe from DB on page load
   useEffect(() => {
@@ -993,6 +994,7 @@ function Dashboard() {
           {sortKey !== "default" && (
             <button onClick={() => { setSortKey("default"); setSortDir(1); }} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "2px 8px", fontSize: "9px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>↺ DEFAULT</button>
           )}
+          <button onClick={() => setQuadsOpen(true)} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>QUADS</button>
           <button onClick={() => setQuadMapOpen(true)} style={{ background: "transparent", border: "1px solid #1a2e45", color: "#8899aa", padding: "4px 12px", fontSize: "10px", borderRadius: "2px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>QUAD MAP</button>
           <span style={{ fontSize: "10px", color: "#8899aa" }}>{filtered.length} of {DATA.length} instruments</span>
         </div>
@@ -1252,6 +1254,16 @@ function Dashboard() {
         );
       })()}
 
+
+      {/* Quads modal */}
+      {quadsOpen && (
+        <div onClick={() => setQuadsOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh", background: "#07111f", border: "1px solid #1a2a3a", borderRadius: "6px", padding: "8px" }}>
+            <button onClick={() => setQuadsOpen(false)} style={{ position: "absolute", top: "8px", right: "8px", background: "transparent", border: "none", color: "#8899aa", fontSize: "18px", cursor: "pointer", lineHeight: 1 }}>✕</button>
+            <img src="/Quads.png" alt="Quads" style={{ display: "block", maxWidth: "85vw", maxHeight: "85vh", objectFit: "contain" }} />
+          </div>
+        </div>
+      )}
 
       {/* Quad Map modal */}
       {quadMapOpen && (
