@@ -1136,8 +1136,8 @@ function Dashboard() {
           ...(row.trendDir !== "Neutral" && row.trendLRR != null ? [
             ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB, trendBreakIsB) : null],
           ] : []),
-          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? "Active break level — invalidates trend on close through" : null],
           ["Trend B" + (trendBreakIsB ? " *" : ""),  fmtPrice(row.trendB), trendBreakIsB  ? "#f0b429" : "#8899aa", false, trendBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
+          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? "Active break level — invalidates trend on close through" : null],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
 
           // ── TAIL ─────────────────────────────────────────────────────────
