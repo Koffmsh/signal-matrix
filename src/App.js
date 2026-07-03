@@ -1260,7 +1260,7 @@ function Dashboard() {
         <div onClick={() => setQuadsOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div onClick={e => e.stopPropagation()} style={{ position: "relative", maxWidth: "90vw", maxHeight: "90vh", background: "#07111f", border: "1px solid #1a2a3a", borderRadius: "6px", padding: "8px" }}>
             <button onClick={() => setQuadsOpen(false)} style={{ position: "absolute", top: "8px", right: "8px", background: "transparent", border: "none", color: "#8899aa", fontSize: "18px", cursor: "pointer", lineHeight: 1 }}>✕</button>
-            <img src="/Quads.png" alt="Quads" style={{ display: "block", maxWidth: "85vw", maxHeight: "85vh", objectFit: "contain" }} />
+            <img src="/Quads.png" alt="Quads" style={{ display: "block", maxWidth: "min(85vw, 1000px)", maxHeight: "85vh", objectFit: "contain" }} />
           </div>
         </div>
       )}
