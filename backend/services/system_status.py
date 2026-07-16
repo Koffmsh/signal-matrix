@@ -16,6 +16,7 @@ Colors are computed here so the frontend stays dumb:
 """
 import json
 import math
+import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -263,20 +264,44 @@ def compute_db_env() -> dict:
     """
     Which database the backend is actually connected to — derived from the live
     engine host, not an env flag, so it honestly reflects misconfiguration.
-    Admin-only (returned in the full payload). PROD = loud amber, DEV = calm grey.
+    Admin-only (returned in the full payload).
+
+    Three states (the badge screams ONLY when there's a real problem):
+      • PROD on the production server (ENVIRONMENT=production + Supabase host)
+        → calm GREEN. This is the normal, healthy state; amber here just looked
+          like a false alarm.
+      • PROD reached from a NON-production process (i.e. a local container whose
+        `.env.dev` is missing and is wrongly hitting Supabase) → loud RED. This
+        is the ADR-025 hazard the badge exists to catch — made louder, not quieter.
+      • DEV (local dev database) → calm grey, unchanged.
     """
     try:
         host = engine.url.host or "sqlite-local"
     except Exception:
         host = "unknown"
-    is_prod = bool(host and "supabase" in host)
+    on_supabase = bool(host and "supabase" in host)
+    is_prod_env = os.getenv("ENVIRONMENT", "development") == "production"
+
+    if on_supabase and is_prod_env:
+        return {
+            "label":   "PROD",
+            "host":    host,
+            "color":   GREEN,
+            "tooltip": f"Production server connected to Supabase ({host}) — healthy",
+        }
+    if on_supabase:  # non-production process on the prod DB — misconfiguration
+        return {
+            "label":   "PROD",
+            "host":    host,
+            "color":   RED,
+            "tooltip": (f"WARNING: a non-production backend is connected to PRODUCTION "
+                        f"Supabase ({host}) — .env.dev is likely missing; changes hit live data"),
+        }
     return {
-        "label":   "PROD" if is_prod else "DEV",
+        "label":   "DEV",
         "host":    host,
-        "color":   "#f0b429" if is_prod else "#8899aa",   # amber (loud) vs grey (calm)
-        "tooltip": (f"Backend connected to PRODUCTION Supabase ({host}) — changes affect live data"
-                    if is_prod else
-                    f"Backend connected to local DEV database ({host})"),
+        "color":   "#8899aa",   # calm grey
+        "tooltip": f"Backend connected to local DEV database ({host})",
     }
 
 

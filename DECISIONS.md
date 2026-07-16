@@ -48,6 +48,40 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-028 — DB badge: PROD is green on the production server (amber-on-PROD retired)
+Date: 2026-07-16
+Status: Active
+Component: `backend/services/system_status.py` (`compute_db_env`)
+
+Context:
+  The admin header DB badge turned **amber whenever the backend was connected to
+  Supabase** (ADR-025). Amber reads as "warning," so on the real production site
+  (`signal.suttonmc.com`) it looked like a live problem when in fact PROD-on-Supabase
+  is the normal, healthy state. `compute_db_env()` derived the label from the engine
+  host alone, so it could not tell "I *am* the production server" (normal) from "I'm a
+  local container that wrongly reached prod" (the ADR-025 hazard the amber was meant to
+  catch) — both just saw `supabase` in the host and both went amber.
+
+Decision:
+  Add `ENVIRONMENT` (already `production` on Fly, drives secure cookies) as a second
+  input, giving three states:
+    • `ENVIRONMENT=production` + Supabase host → **PROD green** (normal/healthy)
+    • non-production process + Supabase host   → **PROD red**  (misconfig — `.env.dev`
+                                                  missing, a local box on live data)
+    • otherwise                                → **DEV grey** (unchanged)
+  Frontend already reads `sys.db_env.color`, so no UI change. Backend-only; deployed to
+  `signal-matrix-api` and verified returning `#00e5a0` on the live machine.
+
+Why (regression guard):
+  Don't revert to host-only amber-on-PROD — it false-alarms on the normal production
+  state, which is exactly the confusion this fixes. The safety intent is *preserved and
+  sharpened*: the badge now screams (red, louder than amber) only in the one genuinely
+  dangerous case (a non-prod process on the prod DB). Green requires BOTH signals
+  (`ENVIRONMENT=production` AND a Supabase host) — never color PROD green from the host
+  alone, or a misconfigured local box on prod would look healthy.
+
+Linked rule: CLAUDE.md rule #89 + "Local Dev Environment (ADR-025)" badge note. Refines ADR-025.
+
 ## ADR-027 — Enforce UNIQUE(ticker) on price_cache (the ROBO duplicate-row bug)
 Date: 2026-06-30
 Status: Active
