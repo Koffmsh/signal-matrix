@@ -28,6 +28,7 @@ YAHOO_SYMBOL_MAP = {
     "/CL":  "CL=F",    # WTI Crude Oil front-month futures
     "/ZN":  "ZN=F",    # 10-Year Treasury Note futures
     "/GC":  "GC=F",    # Gold futures
+    "/HG":  "HG=F",    # COMEX High Grade Copper front-month futures
     # Macro volatility indices — Schwab-unsupported, Yahoo-only
     "VXN":  "^VXN",   # Nasdaq 100 Volatility Index
     "RVX":  "^RVX",   # Russell 2000 Volatility Index
