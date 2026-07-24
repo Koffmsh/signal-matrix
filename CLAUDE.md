@@ -653,12 +653,22 @@ Volume (0 / +10 / +15):
     obv_slope: sign of 3-bar ROC on OBV MA20: 'rising' | 'falling' | 'flat'
     obv_slope_trend: acceleration: slope_now vs slope_prev: 'increasing' | 'decreasing' | 'flat'
 
-VIX/Vol (0 / +5 / +10 / +15 — Domestic Equities only; all other asset classes receive +15 flat):
-  VIX < 19 AND VIX HRR < 19 → +15  (Investable+ — vol firmly locked below threshold)
-  VIX < 19 (HRR still elevated) → +10  (Investable)
-  VIX 19–23 → +5  (Edgy)
-  VIX 24–29 → +0  (Choppy)
-  VIX ≥ 30  → +0  (Danger)
+VIX/Vol (0–15 — Domestic Equities only; all other asset classes receive +15 flat):
+  Direction-aware: elevated VIX is a tailwind for shorts, headwind for longs.
+
+  Bullish / Neutral:
+    VIX < 19 AND VIX HRR < 19 → +15  (Investable+ — vol firmly locked below threshold)
+    VIX < 19 (HRR still elevated) → +10  (Investable)
+    VIX 19–23 → +5  (Edgy)
+    VIX 24–29 → +0  (Choppy)
+    VIX ≥ 30  → +0  (Danger)
+
+  Bearish (asymmetric — +5 floor):
+    VIX ≥ 30  → +15  (Danger — vol confirms short thesis)
+    VIX 24–29 → +10  (Choppy — elevated vol supports shorts)
+    VIX 19–23 → +5   (Edgy)
+    VIX < 19  → +5   (floor — structure is primary filter, low vol doesn't penalize)
+
   VIX HRR sourced from signal_output where ticker='VIX', timeframe='trade'
   Missing VIX row → +15 (default full credit)
 
@@ -1313,7 +1323,7 @@ git checkout -- .   # roll back if needed
 58. **BREAK_OF_TRADE / BREAK_OF_TREND do NOT change direction to Neutral** — direction holds (Bullish/Bearish) during provisional break; only BREAK_CONFIRMED flips direction to Neutral
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
-61. **VIX score tiers (v2.1)** — Investable+ (VIX < 19 AND VIX HRR < 19) +15 · Investable (VIX < 19) +10 · Edgy (19–23) +5 · Choppy (24–29) +0 · Danger (≥ 30) +0. VIX HRR read from `signal_output` (ticker='VIX', timeframe='trade'). **Applies to Domestic Equities only** — all other asset classes receive +15. `get_vix_score(vix_close, asset_class, vix_hrr)`. **NATH Boost (×1.05):** Viewpoint=Bullish AND trade HRR > `price_cache.ath` → multiply conviction_sum by 1.05 after dampener, before cap. Do not change without explicit instruction.
+61. **VIX score tiers (v2.2 — direction-aware)** — **Bullish/Neutral:** Investable+ (VIX < 19 AND VIX HRR < 19) +15 · Investable (VIX < 19) +10 · Edgy (19–23) +5 · Choppy (24–29) +0 · Danger (≥ 30) +0. **Bearish (asymmetric, +5 floor):** Danger (≥ 30) +15 · Choppy (24–29) +10 · Edgy (19–23) +5 · Investable (< 19) +5. Elevated VIX is a tailwind for shorts. VIX HRR read from `signal_output` (ticker='VIX', timeframe='trade'). **Applies to Domestic Equities only** — all other asset classes receive +15. `get_vix_score(vix_close, asset_class, vix_hrr, viewpoint)`. **NATH Boost (×1.05):** Viewpoint=Bullish AND trade HRR > `price_cache.ath` → multiply conviction_sum by 1.05 after dampener, before cap. Do not change without explicit instruction.
 66. **Quad score is probability-weighted (v2.0)** — `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0/0.0/-1.0. Viewpoint=Neutral → quad_score=0. Aligned: +20 (prob≥0.45) or +15 (prob<0.45). Misaligned: -15 (prob≥0.45) or -11 (prob<0.45). Neutral alignment: 0. `quad_score` (Integer) is stored in `signal_output` and shown in popup (green/red/grey). `quad_mult` still written to `signal_output` for debug only — not in v2.0 formula and not shown in popup. Index sectors always return 0.
 67. **Quad settings use upsert semantics** — POST to `/api/quad/settings` checks `UNIQUE(country, forecast_month, quad_type)`: updates existing row if found, inserts new row otherwise. `forecast_month` replaces the old `effective_date` key. Conviction reads the US monthly row whose `forecast_month` = current ET month (not most-recent-row). Admin Panel → QUAD SETUP manages this.
 68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.

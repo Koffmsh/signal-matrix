@@ -164,7 +164,8 @@ def get_vix_mult(vix_close: float | None, asset_class: str) -> tuple:
 
 
 def get_vix_score(vix_close: float | None, asset_class: str,
-                  vix_hrr: float | None = None) -> tuple:
+                  vix_hrr: float | None = None,
+                  viewpoint: str = "Neutral") -> tuple:
     """
     Component 4 — VIX additive score (v2.0).
     Returns (vix_score, vix_zone).
@@ -172,17 +173,34 @@ def get_vix_score(vix_close: float | None, asset_class: str,
     Non-equity asset classes receive full credit (+15) — no VIX penalty.
     Missing VIX row defaults to full credit (no crash assumed).
 
-    Thresholds:
-      Investable+  VIX < 19 AND VIX HRR < 19   +15  (vol firmly locked below threshold)
+    Direction-aware: elevated VIX is a tailwind for shorts, headwind for longs.
+
+    Bullish / Neutral thresholds:
+      Investable+  VIX < 19 AND VIX HRR < 19   +15
       Investable   VIX < 19 (HRR still elevated) +10
       Edgy         19–23                          + 5
       Choppy       24–29                            0
       Danger       ≥ 30                             0
+
+    Bearish thresholds (asymmetric — floor of +5):
+      Danger       ≥ 30                           +15
+      Choppy       24–29                          +10
+      Edgy         19–23                          + 5
+      Investable   < 19                           + 5
     """
     if asset_class not in VIX_REGIME_ASSET_CLASSES:
         return 15, "N/A"
     if vix_close is None:
         return 15, "Unknown"
+
+    if viewpoint == "Bearish":
+        if vix_close >= 30:
+            return 15, "Danger"
+        elif vix_close >= 24:
+            return 10, "Choppy"
+        else:
+            return  5, "Investable" if vix_close < 19 else "Edgy"
+
     if vix_close < 19:
         if vix_hrr is not None and vix_hrr < 19:
             return 15, "Investable"
@@ -1208,7 +1226,8 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             volume_score += 5   # acceleration boost: +5 when slope is accelerating (early in move)
 
     # Component 4 — VIX/Vol (max 15, Domestic Equities only)
-    vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr)
+    vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
+                                        viewpoint=viewpoint)
 
     # Assembly: sum → floor(0) → dampener → cap(100)
     conviction_sum = structural_score + quad_score + volume_score + vix_score
