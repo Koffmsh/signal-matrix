@@ -72,6 +72,8 @@ SCHWAB_UNSUPPORTED = {
     # Precious metals ETFs — Schwab history returns pre-restructuring prices creating
     # a discontinuity vs current post-restructuring quotes; Yahoo history is correct.
     "PALL", "PPLT",
+    # Treasury yield indices — Yahoo-only (^TNX, ^FVX, ^TYX, 2YY=F)
+    "TNX", "FVX", "TYX", "TWO",
 }
 
 # Macro vol index tickers fetchable via Schwab get_price_history() using $ prefix.

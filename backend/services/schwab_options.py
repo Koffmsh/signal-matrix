@@ -42,6 +42,8 @@ IV_INELIGIBLE = {
     "VIX", "$DJI", "SPX", "NDX", "RUT", "/CL", "/ZN", "/GC", "/HG", "VVIX",
     # Macro vol indices — no standard options chains
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    # Treasury yield indices — no options chains
+    "TNX", "FVX", "TYX", "TWO",
 }
 
 # Minimum vol_history observations required before ranks are meaningful.
@@ -568,6 +570,8 @@ _HV_ONLY_TICKERS = {
     "SPX", "NDX", "RUT", "VIX", "$DJI", "USD", "JPY", "/CL", "/ZN", "/GC", "/HG", "VVIX",
     # Macro vol indices
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    # Treasury yield indices
+    "TNX", "FVX", "TYX", "TWO",
 }
 
 

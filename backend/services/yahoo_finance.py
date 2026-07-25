@@ -35,6 +35,11 @@ YAHOO_SYMBOL_MAP = {
     "GVZ":  "^GVZ",   # CBOE Gold ETF Volatility Index
     "OVX":  "^OVX",   # CBOE Crude Oil ETF Volatility Index
     "MOVE": "^MOVE",  # ICE BofA MOVE Index (bond market volatility)
+    # Treasury yield indices
+    "TNX":  "^TNX",   # CBOE 10-Year Treasury Yield
+    "FVX":  "^FVX",   # CBOE 5-Year Treasury Yield
+    "TYX":  "^TYX",   # CBOE 30-Year Treasury Yield
+    "TWO":  "2YY=F",  # 2-Year Treasury Yield Futures
 }
 
 def get_yahoo_symbol(ticker: str) -> str:
