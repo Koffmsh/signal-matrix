@@ -287,6 +287,8 @@ function mergeSignalData(row, signalMap) {
     quadMult:       sig.quad_mult               ?? null,
     quadScore:      sig.quad_score              ?? null,
     quadFit:        sig.quad_fit                 ?? "Neutral",
+    quadFitNext:    sig.quad_fit_next            ?? "Neutral",
+    quadFitQtr:     sig.quad_fit_qtr             ?? "Neutral",
     qFitSort:       sig.quad_fit === "Best" ? 1 : sig.quad_fit === "Worst" ? -1 : 0,
     hTrendUp:       sig.h_trend_up              ?? null,
     hTrendDown:     sig.h_trend_down            ?? null,
@@ -780,52 +782,80 @@ function Dashboard() {
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
           {row.trendLrrWarn && <span title={warnTip(row.trendDir, "lrr", row.trendC, row.trendB, row.trendExtended)} style={{ cursor: "help" }}> ⚠</span>}
         </td>
-        {/* Q FIT — asset class / sector quad fit in current macro environment */}
-        {(() => {
-          const qa = row.quadFit;
-          const icon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
-          const color = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
-          const tip   = qa === "Best"
-            ? "Performs Well — this asset class historically performs well in the current quad environment"
-            : qa === "Worst"
-            ? "Performs Poorly — this asset class historically performs poorly in the current quad environment"
-            : "Neutral — no strong historical edge in the current quad environment";
-          return (
-            <td style={{ padding: "9px 8px", textAlign: "center" }}>
-              <span title={tip} style={{ color, fontWeight: "700", fontSize: "13px", cursor: "help" }}>{icon}</span>
-            </td>
-          );
-        })()}
-        {/* Quad Now — box + prob; international rows use country quarterly quad */}
+        {/* Quad Now — box + prob + Q FIT arrow */}
         {(() => {
           const qColors = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
           const isIntl  = row.assetClass === "International Equities";
           const cq      = isIntl ? countryQuads[row.sector] : null;
           const q       = cq?.cur ?? quadSettings?.monthly?.quad;
           const p       = isIntl ? null : (quadSettings?.monthly ? Math.round((quadSettings.monthly.probability ?? 0) * 100) : null);
+          const qa      = row.quadFit;
+          const fitIcon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
+          const fitColor = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
+          const fitTip   = qa === "Best"
+            ? "Performs Well — this asset class historically performs well in the current quad environment"
+            : qa === "Worst"
+            ? "Performs Poorly — this asset class historically performs poorly in the current quad environment"
+            : "Neutral — no strong historical edge in the current quad environment";
           if (!q) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
           return (
             <td style={{ padding: "9px 8px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span title={fitTip} style={{ color: fitColor, fontWeight: "700", fontSize: "11px", cursor: "help", flexShrink: 0 }}>{fitIcon}</span>
                 <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "20px", background: `${qColors[q]}55`, border: `1px solid ${qColors[q]}`, borderRadius: "3px", color: "#ffffff", fontWeight: "700", fontSize: "12px", flexShrink: 0 }}>{q}</div>
-                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums" }}>{p}%</span>}
+                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums", fontSize: "12px" }}>{p}%</span>}
               </div>
             </td>
           );
         })()}
-        {/* Quad Next — box + prob; international rows use next country quarterly quad */}
+        {/* Quad Next — box + prob + Q FIT arrow */}
         {(() => {
           const qColors = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
           const isIntl  = row.assetClass === "International Equities";
           const cq      = isIntl ? countryQuads[row.sector] : null;
           const q       = cq?.next ?? quadSettings?.next_monthly?.quad;
           const p       = isIntl ? null : (quadSettings?.next_monthly ? Math.round((quadSettings.next_monthly.probability ?? 0) * 100) : null);
+          const qa      = row.quadFitNext;
+          const fitIcon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
+          const fitColor = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
+          const fitTip   = qa === "Best"
+            ? "Performs Well — this asset class historically performs well in the next quad environment"
+            : qa === "Worst"
+            ? "Performs Poorly — this asset class historically performs poorly in the next quad environment"
+            : "Neutral — no strong historical edge in the next quad environment";
           if (!q) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
           return (
             <td style={{ padding: "9px 8px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span title={fitTip} style={{ color: fitColor, fontWeight: "700", fontSize: "11px", cursor: "help", flexShrink: 0 }}>{fitIcon}</span>
                 <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "20px", background: `${qColors[q]}55`, border: `1px solid ${qColors[q]}`, borderRadius: "3px", color: "#ffffff", fontWeight: "700", fontSize: "12px", flexShrink: 0 }}>{q}</div>
-                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums" }}>{p}%</span>}
+                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums", fontSize: "12px" }}>{p}%</span>}
+              </div>
+            </td>
+          );
+        })()}
+        {/* Quad Quarterly — US quarterly quad + Q FIT arrow; international rows use country quarterly quad */}
+        {(() => {
+          const qColors = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
+          const isIntl  = row.assetClass === "International Equities";
+          const cq      = isIntl ? countryQuads[row.sector] : null;
+          const q       = cq?.cur ?? quadSettings?.quarterly?.quad;
+          const p       = isIntl ? null : (quadSettings?.quarterly ? Math.round((quadSettings.quarterly.probability ?? 0) * 100) : null);
+          const qa      = row.quadFitQtr;
+          const fitIcon  = qa === "Best" ? "▲" : qa === "Worst" ? "▼" : "—";
+          const fitColor = qa === "Best" ? "#00e5a0" : qa === "Worst" ? "#ff4d6d" : "#8899aa";
+          const fitTip   = qa === "Best"
+            ? "Performs Well — this asset class historically performs well in the current quarterly quad"
+            : qa === "Worst"
+            ? "Performs Poorly — this asset class historically performs poorly in the current quarterly quad"
+            : "Neutral — no strong historical edge in the current quarterly quad";
+          if (!q) return <td style={{ padding: "9px 8px", textAlign: "center", color: "#8899aa" }}>—</td>;
+          return (
+            <td style={{ padding: "9px 8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span title={fitTip} style={{ color: fitColor, fontWeight: "700", fontSize: "11px", cursor: "help", flexShrink: 0 }}>{fitIcon}</span>
+                <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "24px", height: "20px", background: `${qColors[q]}55`, border: `1px solid ${qColors[q]}`, borderRadius: "3px", color: "#ffffff", fontWeight: "700", fontSize: "12px", flexShrink: 0 }}>{q}</div>
+                {p != null && <span style={{ color: "#c8d8e8", fontVariantNumeric: "tabular-nums", fontSize: "12px" }}>{p}%</span>}
               </div>
             </td>
           );
@@ -1036,17 +1066,18 @@ function Dashboard() {
               <SortHdr label="TRADE HRR"   k="tradeHRR" />
               <SortHdr label="TREND DIR"   k="trendDir" />
               <SortHdr label="TREND LEVEL" k="trendLRR" />
-              {/* Quad month columns — non-sortable, 4 cols: box + prob × 2 months + Q FIT */}
+              {/* Quad columns — monthly now + next + quarterly */}
               {(() => {
                 const fmtMo = (fm) => { if (!fm) return null; const [yr, mo] = fm.split("-"); return new Date(parseInt(yr), parseInt(mo)-1, 1).toLocaleString("en-US", { month: "short" }).toUpperCase() + " '" + yr.slice(2); };
+                const fmtQtr = (fm) => { if (!fm) return null; const [yr, q] = fm.split("-"); return q.toUpperCase() + " '" + yr.slice(2); };
                 const nowLabel  = quadSettings?.monthly?.forecast_month      ? fmtMo(quadSettings.monthly.forecast_month)      : "—";
                 const nextLabel = quadSettings?.next_monthly?.forecast_month ? fmtMo(quadSettings.next_monthly.forecast_month) : "—";
+                const qtrLabel  = quadSettings?.quarterly?.forecast_month    ? fmtQtr(quadSettings.quarterly.forecast_month)   : "QTR";
                 const thStyle = { cursor: "default", userSelect: "none", padding: "10px 8px", textAlign: "center", fontSize: "9px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap" };
                 return (<>
-                  <SortHdr label="Q FIT" k="qFitSort" align="center"
-                    title="Quad Fit — does this asset class historically perform well (▲) or poorly (▼) in the current macro quad environment?" />
-                  <th style={thStyle} title="Current month US quad">{nowLabel}</th>
-                  <th style={thStyle} title="Next month US quad">{nextLabel}</th>
+                  <th style={thStyle} title="Current month US quad + Q Fit">{nowLabel}</th>
+                  <th style={thStyle} title="Next month US quad + Q Fit">{nextLabel}</th>
+                  <th style={thStyle} title="Current quarter US quad + Q Fit">{qtrLabel}</th>
                 </>);
               })()}
             </tr>

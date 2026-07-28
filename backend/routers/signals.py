@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
 
+def _next_calendar_month(ym: str) -> str:
+    year, month = int(ym[:4]), int(ym[5:7])
+    month += 1
+    if month > 12:
+        month = 1
+        year += 1
+    return f"{year:04d}-{month:02d}"
+
+
 def _compute_emerging_direction(closes: list) -> str | None:
     """
     Returns "Bullish", "Bearish", or None.
@@ -212,14 +221,18 @@ def run_output(db: Session) -> dict:
     asset_class_map_out = {t.ticker: (t.asset_class or "") for t in ticker_rows_out}
     sector_map_out      = {t.ticker: (t.sector      or "") for t in ticker_rows_out}
 
-    # Fetch US monthly quad for current ET month
+    # Fetch US monthly quad — shift to next month's quad on the 24th
     from zoneinfo import ZoneInfo
     _ET = ZoneInfo("America/New_York")
     now_et        = datetime.now(_ET)
     current_month = now_et.strftime("%Y-%m")
+    if now_et.day >= 24:
+        conviction_month = _next_calendar_month(current_month)
+    else:
+        conviction_month = current_month
     quad_row = db.query(QuadSettings).filter(
         QuadSettings.country        == "US",
-        QuadSettings.forecast_month == current_month,
+        QuadSettings.forecast_month == conviction_month,
         QuadSettings.quad_type      == "monthly",
     ).first()
     quad_current = quad_row.quad        if quad_row else None
@@ -563,6 +576,19 @@ def get_stored_signals(db: Session = Depends(get_db)):
         QuadSettings.quad_type == "monthly",
     ).first()
     _us_quad = _quad_row.quad if _quad_row else None
+    _next_month = _next_calendar_month(current_month)
+    _next_quad_row = db.query(QuadSettings).filter(
+        QuadSettings.country == "US",
+        QuadSettings.forecast_month == _next_month,
+        QuadSettings.quad_type == "monthly",
+    ).first()
+    _us_quad_next = _next_quad_row.quad if _next_quad_row else None
+    _us_qtr_row = db.query(QuadSettings).filter(
+        QuadSettings.country == "US",
+        QuadSettings.forecast_month == current_quarter,
+        QuadSettings.quad_type == "quarterly",
+    ).first()
+    _us_quad_qtr = _us_qtr_row.quad if _us_qtr_row else None
     _quarterly = {r.country: r.quad for r in db.query(QuadSettings).filter(
         QuadSettings.quad_type == "quarterly",
         QuadSettings.forecast_month == current_quarter,
@@ -577,6 +603,12 @@ def get_stored_signals(db: Session = Depends(get_db)):
     _ac_map  = {t.ticker: (t.asset_class or "") for t in ticker_rows_s}
     _sec_map = {t.ticker: (t.sector      or "") for t in ticker_rows_s}
 
+    def _alignment_label(ac: str, sec: str, quad: int | None) -> str:
+        if quad is None:
+            return "Neutral"
+        alignment = get_quad_alignment(ac, sec, quad)
+        return "Best" if alignment > 0 else "Worst" if alignment < 0 else "Neutral"
+
     def _quad_fit(ticker: str) -> str:
         ac  = _ac_map.get(ticker, "")
         sec = _sec_map.get(ticker, "")
@@ -585,10 +617,27 @@ def get_stored_signals(db: Session = Depends(get_db)):
             quad = _quarterly.get(code) if code else None
         else:
             quad = _us_quad
-        if quad is None:
-            return "Neutral"
-        alignment = get_quad_alignment(ac, sec, quad)
-        return "Best" if alignment > 0 else "Worst" if alignment < 0 else "Neutral"
+        return _alignment_label(ac, sec, quad)
+
+    def _quad_fit_next(ticker: str) -> str:
+        ac  = _ac_map.get(ticker, "")
+        sec = _sec_map.get(ticker, "")
+        if ac == "International Equities":
+            code = _SECTOR_TO_CODE.get(sec)
+            quad = _quarterly.get(code) if code else None
+        else:
+            quad = _us_quad_next
+        return _alignment_label(ac, sec, quad)
+
+    def _quad_fit_qtr(ticker: str) -> str:
+        ac  = _ac_map.get(ticker, "")
+        sec = _sec_map.get(ticker, "")
+        if ac == "International Equities":
+            code = _SECTOR_TO_CODE.get(sec)
+            quad = _quarterly.get(code) if code else None
+        else:
+            quad = _us_quad_qtr
+        return _alignment_label(ac, sec, quad)
 
     # Check whether any lt rows exist — if not, only require trade + trend
     has_lt = any(r.timeframe == "lt" for r in rows)
@@ -612,6 +661,8 @@ def get_stored_signals(db: Session = Depends(get_db)):
                 "quad_mult":       row.quad_mult,
                 "quad_score":      row.quad_score,
                 "quad_fit":        _quad_fit(t),
+                "quad_fit_next":   _quad_fit_next(t),
+                "quad_fit_qtr":    _quad_fit_qtr(t),
                 "h_trend_up":      getattr(h_row, "h_trend_up",   None) if h_row else None,
                 "h_trend_down":    getattr(h_row, "h_trend_down",  None) if h_row else None,
                 "trade": None, "trend": None, "lt": None,

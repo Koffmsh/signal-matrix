@@ -85,9 +85,22 @@ def get_quad_current(db: Session = Depends(get_db)):
             "probability":    row.probability,
         }
 
+    now_et = datetime.now(_ET)
+    current_quarter = f"{now_et.year}-Q{((now_et.month - 1) // 3 + 1)}"
+    qtr_row = db.query(QuadSettings).filter(
+        QuadSettings.country == "US",
+        QuadSettings.forecast_month == current_quarter,
+        QuadSettings.quad_type == "quarterly",
+    ).first()
+
     return {
         "monthly":      _fetch(current_month),
         "next_monthly": _fetch(next_month),
+        "quarterly":    {
+            "forecast_month": qtr_row.forecast_month,
+            "quad":           qtr_row.quad,
+            "probability":    qtr_row.probability,
+        } if qtr_row else None,
     }
 
 
