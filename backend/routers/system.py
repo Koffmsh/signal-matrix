@@ -26,5 +26,8 @@ def system_status(request: Request, db: Session = Depends(get_db)):
     full = sysstat.get_system_status(db)
     if _is_admin(request, db):
         return full
-    # Regular users see only the plain-language roll-up.
-    return {"status": full["status"]}
+    # Regular users see only the plain-language roll-up + freshness timestamp.
+    return {
+        "status": full["status"],
+        "last_signals_calculated_at": full.get("last_signals_calculated_at"),
+    }

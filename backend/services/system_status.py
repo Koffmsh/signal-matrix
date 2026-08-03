@@ -305,8 +305,21 @@ def compute_db_env() -> dict:
     }
 
 
+def _last_signals_calculated_at(db: Session) -> str | None:
+    row = db.query(SignalOutput.calculated_at).order_by(
+        SignalOutput.calculated_at.desc()
+    ).first()
+    return str(row[0]) if row and row[0] else None
+
+
 def get_system_status(db: Session) -> dict:
     connection = compute_connection(db)
     data       = compute_data(db)
     status     = compute_status(data)
-    return {"connection": connection, "data": data, "status": status, "db_env": compute_db_env()}
+    return {
+        "connection": connection,
+        "data": data,
+        "status": status,
+        "db_env": compute_db_env(),
+        "last_signals_calculated_at": _last_signals_calculated_at(db),
+    }

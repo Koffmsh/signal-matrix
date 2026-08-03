@@ -1,4 +1,4 @@
-﻿import { useState, useMemo, useEffect, useRef } from "react";
+﻿import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { fetchCachedMarketData, fetchBatchMarketData, apiFetch } from "./services/api";
 import SystemStatus from "./components/shared/SystemStatus";
@@ -461,6 +461,8 @@ function Dashboard() {
   const [countryQuads,    setCountryQuads]    = useState({});   // sector → {cur: quad, next: quad}
   const [quadMapOpen,     setQuadMapOpen]     = useState(false);
   const [quadsOpen,       setQuadsOpen]       = useState(false);
+  const [newSignalsAvailable, setNewSignalsAvailable] = useState(false);
+  const [loadedCalcAt,   setLoadedCalcAt]    = useState(null);
 
   // Load ticker universe from DB on page load
   useEffect(() => {
@@ -491,10 +493,18 @@ function Dashboard() {
         const m = new Map();
         (data.results || []).forEach(r => m.set(r.ticker, r));
         setSignalMap(m);
-        if (data.calculated_at) setSignalsCalculatedAt(data.calculated_at);
+        if (data.calculated_at) {
+          setSignalsCalculatedAt(data.calculated_at);
+          setLoadedCalcAt(data.calculated_at);
+        }
       })
       .catch(() => {});
   }, []);
+
+  const handleNewSignals = useCallback((backendCalcAt) => {
+    if (!loadedCalcAt || !backendCalcAt) return;
+    if (backendCalcAt > loadedCalcAt) setNewSignalsAvailable(true);
+  }, [loadedCalcAt]);
 
 
   // Load quad settings on page load
@@ -553,7 +563,10 @@ function Dashboard() {
             const m = new Map();
             (storedData.results || []).forEach(r => m.set(r.ticker, r));
             setSignalMap(m);
-            setSignalsCalculatedAt(storedData.calculated_at || calcData.calculated_at || new Date().toISOString());
+            const newCalcAt = storedData.calculated_at || calcData.calculated_at || new Date().toISOString();
+            setSignalsCalculatedAt(newCalcAt);
+            setLoadedCalcAt(newCalcAt);
+            setNewSignalsAvailable(false);
             setIsCalculating(false);
             setCalcStatus("ok");
           });
@@ -580,6 +593,28 @@ function Dashboard() {
         setDataError(true);
       });
   };
+
+  const reloadDashboardData = useCallback(() => {
+    setNewSignalsAvailable(false);
+    Promise.all([
+      fetchCachedMarketData().then(({ map, dataSource }) => {
+        setRealDataMap(map);
+        setBatchDataSource(dataSource);
+      }),
+      apiFetch(`/api/signals/stored`)
+        .then(r => r ? r.json() : null)
+        .then(data => {
+          if (!data) return;
+          const m = new Map();
+          (data.results || []).forEach(r => m.set(r.ticker, r));
+          setSignalMap(m);
+          if (data.calculated_at) {
+            setSignalsCalculatedAt(data.calculated_at);
+            setLoadedCalcAt(data.calculated_at);
+          }
+        }),
+    ]).catch(() => {});
+  }, []);
 
   // Three-step pipeline: mock → price → signals
   const ALL_DATA = useMemo(() =>
@@ -997,8 +1032,27 @@ function Dashboard() {
               return ts ? <div style={{ color: "#8899aa" }}>EOD · {ts}</div> : null;
             })()}
             <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end", marginTop: "2px" }}>
-              <SystemStatus onRefresh={handleRefresh} />
+              <SystemStatus onRefresh={handleRefresh} onNewSignals={handleNewSignals} />
             </div>
+            {newSignalsAvailable && (
+              <button
+                onClick={reloadDashboardData}
+                style={{
+                  background: "#1a1200",
+                  border: "1px solid #f0b429",
+                  color: "#f0b429",
+                  padding: "3px 10px",
+                  fontSize: "9px",
+                  borderRadius: "2px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  letterSpacing: "0.05em",
+                  marginTop: "3px",
+                }}
+              >
+                New signals available · Refresh
+              </button>
+            )}
           </div>
         </div>
       </div>

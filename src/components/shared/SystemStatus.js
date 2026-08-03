@@ -1,20 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "../../services/api";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const POLL_INTERVAL_MS = 60_000;
 
-/**
- * Header system-status indicators. Single source of truth: GET /api/system/status.
- *
- *   Admin → CONNECTION (Schwab auth) + DATA (source · freshness · run · integrity)
- *   User  → STATUS (plain-language roll-up)
- *
- * The backend decides which axes to return based on the caller's role and computes
- * every color/tooltip/clickable, so this component just renders dots.
- *
- * Props:
- *   onRefresh — called when an admin clicks a clickable (red) DATA dot → REFRESH DATA.
- */
 function Dot({ label, axis, onClick }) {
   if (!axis) return null;
   const clickable = axis.clickable && onClick;
@@ -29,21 +18,36 @@ function Dot({ label, axis, onClick }) {
   );
 }
 
-export default function SystemStatus({ onRefresh }) {
+export default function SystemStatus({ onRefresh, onNewSignals }) {
   const [sys, setSys] = useState(null);
+
+  const fetchStatus = useCallback(() => {
+    return apiFetch(`/api/system/status`)
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setSys(d);
+        return d;
+      })
+      .catch(() => null);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    apiFetch(`/api/system/status`)
-      .then((r) => (r && r.ok ? r.json() : null))
-      .then((d) => { if (active && d) setSys(d); })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
+    fetchStatus();
+    const id = setInterval(() => {
+      if (active) fetchStatus();
+    }, POLL_INTERVAL_MS);
+    return () => { active = false; clearInterval(id); };
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    if (sys?.last_signals_calculated_at && onNewSignals) {
+      onNewSignals(sys.last_signals_calculated_at);
+    }
+  }, [sys?.last_signals_calculated_at, onNewSignals]);
 
   if (!sys) return null;
 
-  // Admin view — backend included the detailed axes.
   if (sys.connection && sys.data) {
     return (
       <>
@@ -74,6 +78,5 @@ export default function SystemStatus({ onRefresh }) {
     );
   }
 
-  // Regular user — roll-up only.
   return <Dot label="STATUS" axis={sys.status} />;
 }
