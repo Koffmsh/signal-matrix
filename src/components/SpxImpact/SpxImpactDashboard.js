@@ -92,12 +92,18 @@ const SNAPSHOTS = [
   { key: "1pm",  label: "1 PM"  },
 ];
 
+function fmtShortDate(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-");
+  return `${parseInt(m)}/${parseInt(d)}`;
+}
+
 export default function SpxImpactDashboard() {
   const { user }                  = useAuth();
   const isAdmin                   = user?.role === "admin";
   const fileInputRef              = useRef(null);
   const [snapshots, setSnapshots] = useState({ eod: null, "11am": null, "1pm": null });
-  const [active, setActive]       = useState("eod");
+  const [active, setActive]       = useState(null);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -106,7 +112,12 @@ export default function SpxImpactDashboard() {
   useEffect(() => {
     apiFetch("/api/spx-impact")
       .then(r => r.json())
-      .then(d => { setSnapshots(d); setLoading(false); })
+      .then(d => {
+        setSnapshots(d);
+        const freshest = d["1pm"] ? "1pm" : d["11am"] ? "11am" : "eod";
+        setActive(freshest);
+        setLoading(false);
+      })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
 
@@ -174,6 +185,8 @@ export default function SpxImpactDashboard() {
             {SNAPSHOTS.map(({ key, label }) => {
               const available = !!snapshots[key];
               const isActive  = active === key;
+              const snapDate = snapshots[key]?.computed_date;
+              const dateTag = snapDate ? ` ${fmtShortDate(snapDate)}` : "";
               return (
                 <button
                   key={key}
@@ -192,7 +205,7 @@ export default function SpxImpactDashboard() {
                     transition: "all 150ms ease",
                   }}
                 >
-                  {label}
+                  {label}{available && <span style={{ opacity: 0.7, marginLeft: 4 }}>{dateTag}</span>}
                 </button>
               );
             })}
