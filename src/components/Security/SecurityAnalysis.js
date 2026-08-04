@@ -1,0 +1,658 @@
+import { useEffect, useState, useMemo, useCallback } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import {
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceLine, ReferenceArea,
+} from "recharts";
+import { apiFetch } from "../../services/api";
+
+const GREEN  = "#00e5a0";
+const RED    = "#ff4d6d";
+const AMBER  = "#f0b429";
+const GREY   = "#8899aa";
+const GRID   = "#1a2a3a";
+const LABEL  = "#c8d8e8";
+const BG     = "#0a1628";
+const CARD   = "#0d1f35";
+const BORDER = "#1a2535";
+
+function vpColor(vp) {
+  if (vp === "Bullish") return GREEN;
+  if (vp === "Bearish") return RED;
+  return GREY;
+}
+
+function normalizePillar(name, raw) {
+  if (raw == null) return null;
+  switch (name) {
+    case "PRICE":      return raw === 50 ? 10 : raw === 25 ? 5 : 0;
+    case "VOLUME":     return raw >= 15 ? 10 : raw >= 10 ? 7 : 0;
+    case "VOLATILITY": return raw >= 15 ? 10 : raw >= 10 ? 7 : raw >= 5 ? 3 : 0;
+    case "QUAD":       return Math.round(((raw + 15) / 35) * 10);
+    default:           return 0;
+  }
+}
+
+function pillarLabel(name, score) {
+  if (score == null) return "—";
+  switch (name) {
+    case "PRICE":      return score >= 10 ? "Aligned" : score >= 5 ? "Partial" : "Neutral";
+    case "VOLUME":     return score >= 10 ? "Confirming+" : score >= 7 ? "Confirming" : "Neutral";
+    case "VOLATILITY": return score >= 10 ? "Investable+" : score >= 7 ? "Investable" : score >= 3 ? "Edgy" : "Choppy";
+    case "QUAD":       return score >= 9 ? "Aligned" : score >= 4 ? "Neutral" : "Misaligned";
+    default:           return "—";
+  }
+}
+
+function pillarColor(name, score) {
+  if (score == null) return GREY;
+  if (name === "QUAD" && score <= 3) return RED;
+  if (score >= 7) return GREEN;
+  if (score >= 4) return AMBER;
+  return GREY;
+}
+
+function pillarDetail(name, data) {
+  if (!data) return "";
+  switch (name) {
+    case "PRICE": {
+      const td = data.trade?.direction || "Neutral";
+      const trd = data.trend?.direction || "Neutral";
+      if (td === trd && td !== "Neutral") return `Trade and Trend are both ${td}, fully aligned.`;
+      if (td !== "Neutral" && trd === "Neutral") return `Trade is ${td} but Trend has not confirmed direction.`;
+      if (td === "Neutral" && trd !== "Neutral") return `Trend is ${trd} but Trade has not confirmed direction.`;
+      if (td !== "Neutral" && trd !== "Neutral" && td !== trd) return `Trade and Trend are opposing — no structural alignment.`;
+      return "Neither timeframe has confirmed a direction.";
+    }
+    case "VOLUME": {
+      const dir = data.obv_direction || "Neutral";
+      const confirming = data.vol_signal === "Confirming";
+      if (confirming && dir !== "Neutral") return `Volume is ${dir.toLowerCase()} and confirming the viewpoint.`;
+      if (!confirming && dir !== "Neutral") return `Volume is ${dir.toLowerCase()} and not confirming the viewpoint.`;
+      return "Volume is neutral with no directional bias.";
+    }
+    case "VOLATILITY": {
+      const vix = data.vix_close != null ? data.vix_close.toFixed(1) : null;
+      const regime = data.vix_regime || "—";
+      if (!vix) return "Volatility data unavailable.";
+      if (regime === "Investable" || regime === "Investable+") return `VIX at ${vix} — low volatility supports positioning.`;
+      if (regime === "Edgy") return `VIX at ${vix} — volatility is elevated but manageable.`;
+      if (regime === "Choppy") return `VIX at ${vix} — choppy conditions, proceed with caution.`;
+      if (regime === "Danger") return `VIX at ${vix} — extreme volatility, risk is elevated.`;
+      return `VIX at ${vix}.`;
+    }
+    case "QUAD": {
+      const align = data.quad_alignment;
+      if (align === "Aligned") return "Macro environment is favorable for this position.";
+      if (align === "Misaligned") return "Macro environment is working against this position.";
+      return "Macro environment is neutral for this position.";
+    }
+    default: return "";
+  }
+}
+
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const close = payload.find(p => p.dataKey === "close");
+  return (
+    <div style={{ background: "#0d1f33", border: `1px solid ${GRID}`, borderRadius: 4, padding: "8px 12px", fontSize: 11, fontFamily: "monospace" }}>
+      <div style={{ color: LABEL, marginBottom: 4 }}>{label}</div>
+      {close && <div style={{ color: "#e8f4ff" }}>Close: ${Number(close.value).toFixed(2)}</div>}
+    </div>
+  );
+}
+
+function XTick({ x, y, payload }) {
+  const val = payload?.value || "";
+  const parts = val.split("-");
+  const display = parts.length >= 2 ? `${parts[1]}/${parts[2]?.slice(0,2) || ""}` : val;
+  return (
+    <text x={x} y={y + 14} textAnchor="middle" fill={GREY} fontSize={9} fontFamily="monospace">
+      {display}
+    </text>
+  );
+}
+
+const DATE_RANGES = [
+  { label: "5D",  val: 5 },
+  { label: "1M",  val: 21 },
+  { label: "6M",  val: 126 },
+  { label: "YTD", val: -1 },
+  { label: "1Y",  val: 252 },
+  { label: "5Y",  val: 1260 },
+  { label: "MAX", val: 0 },
+];
+
+const BLOCK1_TABS = ["AI ANALYSIS", "RISK RANGE", "PROFILE"];
+
+const CONTENT_TABS = ["METRICS", "ANALYSIS", "FINANCIALS", "NEWS"];
+
+const THUMBNAILS = [
+  { title: "Vol Risk Premium", desc: "IV30 vs HV30 spread — cheap or expensive options" },
+  { title: "Signal History",   desc: "Conviction over time from daily snapshots" },
+  { title: "Correlation (vs SPX)", desc: "Rolling 60-day correlation to S&P 500" },
+];
+
+export default function SecurityAnalysis({ defaultTicker }) {
+  const params = useParams();
+  const ticker = params.ticker || defaultTicker || "SPY";
+  const navigate = useNavigate();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [navInput, setNavInput] = useState("");
+  const [tickerList, setTickerList] = useState([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [dateRange, setDateRange] = useState(252);
+  const [showRR, setShowRR] = useState(true);
+  const [block1Tab, setBlock1Tab] = useState("AI ANALYSIS");
+  const [contentTab, setContentTab] = useState("METRICS");
+
+  useEffect(() => {
+    apiFetch("/api/tickers?active=true").then(r => r.json()).then(d => setTickerList(d)).catch(() => {});
+  }, []);
+
+  const filteredTickers = useMemo(() => {
+    if (!navInput.trim()) return [];
+    const q = navInput.trim().toLowerCase();
+    return tickerList.filter(t =>
+      t.ticker.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q)
+    ).slice(0, 10);
+  }, [navInput, tickerList]);
+
+  const fetchDetail = useCallback(async (sym) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/security/${encodeURIComponent(sym)}/detail`);
+      if (!res.ok) {
+        if (res.status === 404) { setError("Ticker not found"); setLoading(false); return; }
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      setData(json);
+      localStorage.setItem("lastSecurityTicker", sym);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (ticker) {
+      fetchDetail(ticker);
+      window.scrollTo(0, 0);
+    }
+  }, [ticker, fetchDetail]);
+
+  const handleNav = (e) => {
+    e.preventDefault();
+    const s = navInput.trim().toUpperCase();
+    if (s) { navigate(`/security/${encodeURIComponent(s)}`); setNavInput(""); }
+  };
+
+  const chartData = useMemo(() => {
+    if (!data?.price_history) return [];
+    const { dates, closes } = data.price_history;
+    const len = Math.min(dates.length, closes.length);
+    let start = 0;
+    if (dateRange === -1) {
+      const year = new Date().getFullYear();
+      const ytdStart = `${year}-01-01`;
+      start = dates.findIndex(d => d >= ytdStart);
+      if (start < 0) start = 0;
+    } else if (dateRange > 0) {
+      start = Math.max(0, len - dateRange);
+    }
+    const result = [];
+    for (let i = start; i < len; i++) {
+      result.push({ date: dates[i], close: closes[i] });
+    }
+    return result;
+  }, [data, dateRange]);
+
+  const pillars = useMemo(() => {
+    if (!data) return [];
+    return [
+      { name: "PRICE",      raw: data.structural_score },
+      { name: "VOLUME",     raw: data.volume_score },
+      { name: "VOLATILITY", raw: data.vix_score },
+      { name: "QUAD",       raw: data.quad_score },
+    ].map(p => {
+      const score = normalizePillar(p.name, p.raw);
+      return {
+        ...p,
+        score,
+        label: pillarLabel(p.name, score),
+        color: pillarColor(p.name, score),
+        detail: pillarDetail(p.name, data),
+      };
+    });
+  }, [data]);
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: BG, color: GREY, fontFamily: "monospace", padding: "32px 40px" }}>
+        <style>{`
+          @keyframes shimmer { 0% { opacity: 0.3; } 50% { opacity: 0.6; } 100% { opacity: 0.3; } }
+          .skel { background: #1a2a3a; borderRadius: 3; animation: shimmer 1.5s ease-in-out infinite; }
+        `}</style>
+        <div style={{ display: "flex", gap: 20, marginBottom: 20 }}>
+          <div style={{ flex: 1 }}>
+            <div className="skel" style={{ width: 120, height: 20, borderRadius: 3, marginBottom: 12 }} />
+            <div className="skel" style={{ width: 240, height: 14, borderRadius: 3, marginBottom: 8 }} />
+            <div className="skel" style={{ width: "100%", height: 160, borderRadius: 4, marginTop: 16 }} />
+          </div>
+          <div style={{ width: 340 }}>
+            <div className="skel" style={{ width: "100%", height: 60, borderRadius: 4, marginBottom: 12 }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {[1,2,3,4].map(i => <div key={i} className="skel" style={{ height: 90, borderRadius: 4 }} />)}
+            </div>
+          </div>
+        </div>
+        <div className="skel" style={{ width: "100%", height: 300, borderRadius: 4 }} />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div style={{ minHeight: "100vh", background: BG, color: GREY, fontFamily: "monospace", padding: "32px 40px" }}>
+        <Link to="/" style={{ color: GREY, textDecoration: "none", fontSize: 11, letterSpacing: "0.1em" }}>← DASHBOARD</Link>
+        <div style={{ marginTop: 24, fontSize: 14, color: RED }}>{error || "No data available"}</div>
+      </div>
+    );
+  }
+
+  const changePct = data.change_pct;
+  const changeColor = changePct > 0 ? GREEN : changePct < 0 ? RED : GREY;
+  const lrr = data.trade?.lrr;
+  const hrr = data.trade?.hrr;
+
+  return (
+    <div style={{ minHeight: "100vh", background: BG, color: "#e8f4ff", fontFamily: "monospace", padding: "24px 32px" }}>
+
+      {/* ═══════════ TOP BAR ═══════════ */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <Link to="/" style={{ color: GREY, textDecoration: "none", fontSize: 11, letterSpacing: "0.1em" }}>← DASHBOARD</Link>
+        <div style={{ position: "relative" }}>
+          <form onSubmit={handleNav} style={{ display: "flex" }}>
+            <input
+              value={navInput}
+              onChange={e => { setNavInput(e.target.value); setShowDropdown(true); }}
+              onFocus={() => setShowDropdown(true)}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+              placeholder="Search ticker / name..."
+              style={{
+                background: "#0d1a2a", border: "1px solid #1a2e45", borderRadius: 3,
+                color: "#c8d8e8", fontSize: 11, padding: "6px 12px", outline: "none",
+                width: 180, fontFamily: "inherit",
+              }}
+            />
+          </form>
+          {showDropdown && filteredTickers.length > 0 && (
+            <div style={{
+              position: "absolute", top: "100%", left: 0, width: 280, marginTop: 2,
+              background: "#0d1a2a", border: "1px solid #1a2e45", borderRadius: 3,
+              zIndex: 200, maxHeight: 300, overflowY: "auto",
+            }}>
+              {filteredTickers.map(t => (
+                <div
+                  key={t.ticker}
+                  onMouseDown={() => { navigate(`/security/${encodeURIComponent(t.ticker)}`); setNavInput(""); setShowDropdown(false); }}
+                  style={{
+                    padding: "6px 12px", cursor: "pointer", display: "flex", gap: 8, alignItems: "baseline",
+                    fontSize: 11, fontFamily: "inherit",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#1a2e45"}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                >
+                  <span style={{ color: "#e8f4ff", fontWeight: 700, minWidth: 50 }}>{t.ticker}</span>
+                  <span style={{ color: GREY, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: GREY }}>
+          {data.updated_at || ""}
+        </div>
+      </div>
+
+      {/* ═══════════ TWO-COLUMN LAYOUT ═══════════ */}
+      <div style={{ display: "flex", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+
+        {/* ── Block 1: Stock Details + Tabs ── */}
+        <div style={{ flex: 1, minWidth: 340, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "20px 24px", display: "flex", flexDirection: "column" }}>
+          {/* Ticker badge + description + Viewpoint/Conviction right-justified */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <span style={{
+                display: "inline-block", padding: "5px 14px", borderRadius: 4,
+                border: `1px solid ${GREEN}`, fontSize: 20, fontWeight: 700,
+                color: GREEN, letterSpacing: "0.08em",
+              }}>{data.ticker}</span>
+              <span style={{ fontSize: 18, color: LABEL }}>{data.description}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 4 }}>VIEWPOINT</div>
+                <span style={{
+                  display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
+                  letterSpacing: "0.1em", color: "#fff",
+                  background: vpColor(data.viewpoint),
+                }}>
+                  {data.viewpoint?.toUpperCase() || "NEUTRAL"}
+                </span>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CONVICTION</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: data.conviction != null ? vpColor(data.viewpoint) : GREY }}>
+                  {data.conviction != null ? `${data.conviction}%` : "—"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Price row: Last Price, Change */}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>LAST PRICE</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{data.close?.toFixed(2)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE %</div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: changeColor }}>
+                {changePct != null ? `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%` : "—"}
+              </div>
+            </div>
+          </div>
+
+          {/* Vol metrics row */}
+          <div style={{ display: "flex", gap: 24, marginBottom: 18, flexWrap: "wrap", fontSize: 11 }}>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IMPLIED VOL 30D</div>
+              <div style={{ fontWeight: 700, color: LABEL }}>{data.iv30 != null ? `${(data.iv30 * 100).toFixed(2)}%` : "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>HISTORICAL VOL (HV30)</div>
+              <div style={{ fontWeight: 700, color: LABEL }}>{data.hv30 != null ? `${(data.hv30 * 100).toFixed(2)}%` : "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IV RANK</div>
+              <div style={{ fontWeight: 700, color: LABEL }}>{data.iv_rank != null ? `${data.iv_rank.toFixed(2)}%` : "—"}</div>
+            </div>
+          </div>
+
+          {/* Block 1 tab navigation */}
+          <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${BORDER}`, marginBottom: 16 }}>
+            {BLOCK1_TABS.map(tab => (
+              <button
+                key={tab}
+                onClick={() => setBlock1Tab(tab)}
+                style={{
+                  padding: "8px 16px", fontSize: 10, letterSpacing: "0.12em", fontWeight: 600,
+                  color: block1Tab === tab ? GREEN : GREY,
+                  cursor: "pointer", fontFamily: "monospace",
+                  background: "none", border: "none",
+                  borderBottom: `2px solid ${block1Tab === tab ? GREEN : "transparent"}`,
+                }}
+              >{tab}</button>
+            ))}
+          </div>
+
+          {/* Block 1 tab content */}
+          <div style={{ flex: 1 }}>
+            {block1Tab === "AI ANALYSIS" && (
+              <div>
+                {data.ai_summary ? (
+                  <>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#e8f4ff", marginBottom: 12 }}>
+                      {data.ai_summary.headline}
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.8 }}>
+                      {data.ai_summary.bullets.map((b, i) => (
+                        <li key={i} style={{ fontSize: 12, color: LABEL, marginBottom: 4 }}>{b}</li>
+                      ))}
+                    </ul>
+                    <div style={{ marginTop: 12, fontSize: 10, color: GREY }}>
+                      Generated {data.ai_summary.summary_date} · Regenerate ↻
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 12, color: GREY }}>Summary not yet available.</div>
+                )}
+              </div>
+            )}
+            {block1Tab === "RISK RANGE" && (
+              <div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+                  <thead>
+                    <tr>
+                      {["Timeframe", "Direction", "State", "LRR", "HRR", "Level"].map(h => (
+                        <th key={h} style={{ textAlign: "left", padding: "8px 8px", color: GREY, borderBottom: `1px solid ${BORDER}`, fontSize: 10, letterSpacing: "0.1em" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { tf: "Trade", d: data.trade },
+                      { tf: "Trend", d: data.trend },
+                      { tf: "Tail",  d: data.lt },
+                    ].map(({ tf, d }) => (
+                      <tr key={tf}>
+                        <td style={{ padding: "8px 8px", color: LABEL }}>{tf}</td>
+                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY, fontWeight: 600 }}>{d?.direction || "—"}</td>
+                        <td style={{ padding: "8px 8px", color: GREY, fontSize: 10 }}>{d?.structural_state?.replace(/_/g, " ") || "—"}</td>
+                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>{d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}</td>
+                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>{d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}</td>
+                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>
+                          {tf === "Trade" ? "—" : d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {block1Tab === "PROFILE" && (
+              <div style={{ padding: "4px 0" }}>
+                {data.profile_summary && (
+                  <div style={{ fontSize: 12, color: LABEL, lineHeight: 1.7, marginBottom: 16 }}>
+                    {data.profile_summary}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap", fontSize: 11 }}>
+                  <div><span style={{ color: GREY }}>Asset Class: </span><span style={{ color: LABEL }}>{data.asset_class}</span></div>
+                  <div><span style={{ color: GREY }}>Sector: </span><span style={{ color: LABEL }}>{data.sector}</span></div>
+                </div>
+                {data.viewpoint_since && data.viewpoint !== "Neutral" && (
+                  <div style={{ marginTop: 10, fontSize: 11 }}>
+                    <span style={{ color: GREY }}>Aligned since: </span>
+                    <span style={{ color: LABEL }}>{data.viewpoint_since}</span>
+                  </div>
+                )}
+                {!data.profile_summary && (
+                  <div style={{ marginTop: 12, fontSize: 11, color: GREY }}>Profile description not yet available.</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Block 2: Signal Score — 2×2 pillar grid ── */}
+        <div style={{ flex: 1, minWidth: 340, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "20px 24px" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>SIGNAL SCORE</div>
+
+          {data.alert && (
+            <div style={{
+              background: "#2a1a00", border: `1px solid ${AMBER}`, borderRadius: 6,
+              padding: "8px 14px", marginBottom: 12, fontSize: 11, color: AMBER,
+              fontWeight: 700, letterSpacing: "0.1em", textAlign: "center",
+            }}>
+              ⚡ HIGH CONVICTION ALERT — {data.conviction}%
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {pillars.map(p => (
+              <div key={p.name} style={{
+                background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6,
+                borderTop: `3px solid ${p.color}`, padding: "18px 14px", textAlign: "center",
+                position: "relative", overflow: "hidden",
+              }}>
+                {/* Subtle glow at top */}
+                <div style={{
+                  position: "absolute", top: 0, left: 0, right: 0, height: 40,
+                  background: `linear-gradient(to bottom, ${p.color}11, transparent)`,
+                  pointerEvents: "none",
+                }} />
+                <div style={{ position: "relative" }}>
+                  <div style={{ fontSize: 36, fontWeight: 700, color: p.color, marginBottom: 6, lineHeight: 1 }}>
+                    {p.score != null ? p.score : "—"}
+                  </div>
+                  <div style={{ fontSize: 14, color: p.color, letterSpacing: "0.08em", fontWeight: 600, marginBottom: 10 }}>{p.label}</div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.15em", color: GREY, marginBottom: 10 }}>{p.name}</div>
+                  <div style={{ fontSize: 10, color: GREY, lineHeight: 1.6 }}>{p.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ═══════════ PRICE & RISK RANGE CHART ═══════════ */}
+      <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "20px 24px", marginBottom: 20 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>PRICE & RISK RANGE</div>
+
+        {/* Chart controls: toggle left, date ranges right */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: LABEL, cursor: "pointer" }}>
+            <input
+              type="checkbox" checked={showRR} onChange={e => setShowRR(e.target.checked)}
+              style={{ accentColor: GREEN, width: 14, height: 14 }}
+            />
+            Risk Range
+          </label>
+          <div style={{ display: "flex", gap: 4 }}>
+            {DATE_RANGES.map(r => (
+              <button
+                key={r.label}
+                onClick={() => setDateRange(r.val)}
+                style={{
+                  background: dateRange === r.val ? "#162840" : "transparent",
+                  border: `1px solid ${dateRange === r.val ? GREEN : BORDER}`,
+                  borderRadius: 4, color: dateRange === r.val ? GREEN : GREY,
+                  fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+                  padding: "4px 8px", cursor: "pointer", fontFamily: "monospace",
+                  minWidth: 32, textAlign: "center",
+                }}
+              >{r.label}</button>
+            ))}
+          </div>
+        </div>
+
+        <ResponsiveContainer width="100%" height={400}>
+          <ComposedChart data={chartData} margin={{ top: 10, right: 20, bottom: 5, left: 10 }}>
+            <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="date" tick={<XTick />} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={60} />
+            <YAxis
+              domain={["auto", "auto"]}
+              tick={{ fill: GREY, fontSize: 10, fontFamily: "monospace" }}
+              axisLine={false} tickLine={false}
+              tickFormatter={v => `$${v}`}
+              width={65}
+            />
+            <Tooltip content={<ChartTooltip />} />
+
+            {showRR && lrr != null && hrr != null && (
+              <ReferenceArea y1={lrr} y2={hrr} fill={GREEN} fillOpacity={0.06} />
+            )}
+            {showRR && lrr != null && (
+              <ReferenceLine y={lrr} stroke={GREEN} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: `LRR $${lrr.toFixed(2)}`, position: "right", fill: GREEN, fontSize: 9, fontFamily: "monospace" }} />
+            )}
+            {showRR && hrr != null && (
+              <ReferenceLine y={hrr} stroke={RED} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: `HRR $${hrr.toFixed(2)}`, position: "right", fill: RED, fontSize: 9, fontFamily: "monospace" }} />
+            )}
+
+            <Line type="linear" dataKey="close" stroke="#e8f4ff" strokeWidth={1.5} dot={false} activeDot={{ r: 3, fill: "#e8f4ff" }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+
+        {/* Legend below chart */}
+        <div style={{ display: "flex", gap: 20, marginTop: 10, fontSize: 11 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 20, height: 2, background: "#e8f4ff", display: "inline-block" }} />
+            <span style={{ color: LABEL }}>Price</span>
+          </span>
+          {showRR && (
+            <>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 20, height: 0, display: "inline-block", borderTop: `2px dashed ${GREEN}` }} />
+                <span style={{ color: LABEL }}>LRR (Buy Trade)</span>
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 20, height: 0, display: "inline-block", borderTop: `2px dashed ${RED}` }} />
+                <span style={{ color: LABEL }}>HRR (Sell Trade)</span>
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════ CONTENT TABS ═══════════ */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${BORDER}`, marginBottom: 20 }}>
+          {CONTENT_TABS.map(tab => (
+            <button
+              key={tab}
+              onClick={() => setContentTab(tab)}
+              style={{
+                padding: "10px 20px", fontSize: 11, letterSpacing: "0.12em", fontWeight: 600,
+                color: contentTab === tab ? GREEN : GREY,
+                cursor: "pointer", fontFamily: "monospace",
+                background: "none", border: "none",
+                borderBottom: `2px solid ${contentTab === tab ? GREEN : "transparent"}`,
+              }}
+            >{tab}</button>
+          ))}
+        </div>
+
+        {contentTab === "METRICS" && (
+          <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
+            METRICS — KEY RATIOS, PERFORMANCE, FUNDAMENTALS (COMING SOON)
+          </div>
+        )}
+        {contentTab === "ANALYSIS" && (
+          <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
+            ANALYSIS — DEEP DIVE REPORTS (COMING SOON)
+          </div>
+        )}
+        {contentTab === "FINANCIALS" && (
+          <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
+            FINANCIALS — EARNINGS, REVENUE, MARGINS (COMING SOON)
+          </div>
+        )}
+        {contentTab === "NEWS" && (
+          <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
+            NEWS — RECENT HEADLINES & SENTIMENT (COMING SOON)
+          </div>
+        )}
+      </div>
+
+      {/* ═══════════ THUMBNAIL GRID ═══════════ */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        {THUMBNAILS.map(t => (
+          <div key={t.title} style={{
+            background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8,
+            padding: "16px 18px", cursor: "default",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#e8f4ff", marginBottom: 6 }}>{t.title}</div>
+            <div style={{ fontSize: 11, color: GREY, lineHeight: 1.5 }}>{t.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

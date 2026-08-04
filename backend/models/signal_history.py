@@ -25,6 +25,10 @@ class SignalHistory(Base):
     hrr_warn         = Column(Boolean, nullable=True)
     pivot_b          = Column(Float,   nullable=True)
     pivot_c          = Column(Float,   nullable=True)
+    quad_score          = Column(Integer,  nullable=True)   # additive conviction contribution
+    structural_score    = Column(Integer,  nullable=True)   # pillar: 0/25/50
+    volume_score        = Column(Integer,  nullable=True)   # pillar: 0/10/15
+    vix_score           = Column(Integer,  nullable=True)   # pillar: 0/5/10/15
     hrr_snapped         = Column(Boolean, nullable=False, server_default="0")  # v1.9.1 trade RR snap state
     lrr_snapped         = Column(Boolean, nullable=False, server_default="0")  # v1.9.1 trade RR snap state
     emerging_direction  = Column(String(10), nullable=True)  # "Bullish"|"Bearish"|null — trade tf only

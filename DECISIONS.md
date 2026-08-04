@@ -48,6 +48,34 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-029 — Stale-data banner: poll for new signals, prompt user to refresh
+Date: 2026-08-03
+Status: Active
+Component: `backend/services/system_status.py`, `src/components/shared/SystemStatus.js`, `src/App.js`
+
+Context:
+  After the 4 PM ET scheduler runs (or a manual CALCULATE SIGNALS), the browser
+  still shows stale signal data until the user manually refreshes the page. Users
+  had no way to know new data was available.
+
+Decision:
+  - Backend: `get_system_status()` now includes `last_signals_calculated_at` (max
+    `signal_output.calculated_at`), returned to both admin and regular users.
+  - Frontend: `SystemStatus` polls `/api/system/status` every 60s (was one-shot).
+    When the backend timestamp advances past what the browser loaded on page load,
+    an amber "New signals available · Refresh" button appears below the status dots.
+    Clicking it re-fetches cached market data + stored signals without a full page
+    reload. The banner also clears on manual CALCULATE SIGNALS.
+
+Why (regression guard):
+  Do not remove the poll interval — one-shot status means users sit on stale data
+  indefinitely after the scheduler runs. Do not auto-refresh without user action —
+  it's jarring mid-scroll or while reading a popup. The 60s interval is lightweight
+  (single GET, no DB writes) and the comparison is a simple string compare on UTC
+  timestamps.
+
+Linked rule: none (new feature, no CLAUDE.md rule)
+
 ## ADR-028 — DB badge: PROD is green on the production server (amber-on-PROD retired)
 Date: 2026-07-16
 Status: Active

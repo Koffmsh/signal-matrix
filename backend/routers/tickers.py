@@ -118,9 +118,10 @@ def _row_to_dict(row: Ticker) -> dict:
         "tier":         row.tier,
         "parent_ticker": row.parent_ticker,
         "active":       row.active,
-        "display_order": row.display_order,
-        "created_at":   row.created_at,
-        "updated_at":   row.updated_at,
+        "display_order":    row.display_order,
+        "profile_summary":  row.profile_summary,
+        "created_at":       row.created_at,
+        "updated_at":       row.updated_at,
     }
 
 
@@ -153,16 +154,17 @@ def create_ticker(body: dict, db: Session = Depends(get_db)):
 
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     row = Ticker(
-        ticker        = symbol,
-        description   = body.get("description"),
-        asset_class   = body.get("asset_class"),
-        sector        = body.get("sector"),
-        tier          = body.get("tier", 1),
-        parent_ticker = body.get("parent_ticker"),
-        active        = body.get("active", True),
-        display_order = body.get("display_order", 999),
-        created_at    = now,
-        updated_at    = now,
+        ticker          = symbol,
+        description     = body.get("description"),
+        asset_class     = body.get("asset_class"),
+        sector          = body.get("sector"),
+        tier            = body.get("tier", 1),
+        parent_ticker   = body.get("parent_ticker"),
+        active          = body.get("active", True),
+        display_order   = body.get("display_order", 999),
+        profile_summary = body.get("profile_summary"),
+        created_at      = now,
+        updated_at      = now,
     )
     db.add(row)
     db.commit()
@@ -265,13 +267,16 @@ def lookup_ticker(symbol: str, db: Session = Depends(get_db)):
         elif description is None or asset_class is None or sector is None:
             notes = "Some fields could not be determined — please review"
 
+        profile_summary = info.get("longBusinessSummary") or None
+
         return {
             "symbol": symbol,
             "found":  True,
             "suggestions": {
-                "description": description,
-                "asset_class": asset_class,
-                "sector":      sector,
+                "description":     description,
+                "asset_class":     asset_class,
+                "sector":          sector,
+                "profile_summary": profile_summary,
             },
             "already_exists": already_exists,
             "notes":          notes,
@@ -288,6 +293,111 @@ def lookup_ticker(symbol: str, db: Session = Depends(get_db)):
         }
 
 
+YAHOO_SYMBOL_MAP = {
+    "/CL": "CL=F", "/ZN": "ZN=F", "/GC": "GC=F", "/HG": "HG=F",
+    "USD": "DX-Y.NYB", "JPY": "JPY=X",
+}
+
+SCHWAB_UNSUPPORTED_PROFILES = {
+    "SPX", "NDX", "VIX", "VVIX", "$DJI", "RUT", "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    "USD", "JPY", "/CL", "/ZN", "/GC", "/HG",
+}
+
+
+def _schwab_fetch_profiles(symbols: list, db) -> dict:
+    """Try Schwab Instruments API for profile descriptions. Returns {ticker: description}."""
+    try:
+        import schwab
+        from services.schwab_client import get_schwab_client
+        client = get_schwab_client(db)
+        eligible = [s for s in symbols if s not in SCHWAB_UNSUPPORTED_PROFILES and not s.startswith("$")]
+        if not eligible:
+            return {}
+        resp = client.get_instruments(eligible, schwab.client.Client.Instrument.Projection.FUNDAMENTAL)
+        if resp.status_code != 200:
+            logger.warning(f"Schwab instruments returned {resp.status_code}")
+            return {}
+        data = resp.json()
+        result = {}
+        instruments = data if isinstance(data, dict) else {}
+        if "instruments" in instruments:
+            instruments = instruments["instruments"]
+        for sym, info in instruments.items():
+            desc = None
+            if isinstance(info, dict):
+                fund = info.get("fundamental", {})
+                desc = fund.get("description") or info.get("description")
+            if desc and len(desc) > 30:
+                result[sym.upper()] = desc
+        return result
+    except Exception as e:
+        logger.warning(f"Schwab profile fetch failed (falling back to Yahoo): {e}")
+        return {}
+
+
+def _yahoo_fetch_profile(ticker: str) -> str | None:
+    """Fetch longBusinessSummary from yfinance for a single ticker."""
+    import yfinance as yf
+    import signal as _signal
+    import threading
+
+    yahoo_sym = YAHOO_SYMBOL_MAP.get(ticker, ticker)
+    if yahoo_sym.startswith("$"):
+        yahoo_sym = yahoo_sym.lstrip("$")
+
+    result = [None]
+    def _fetch():
+        try:
+            info = yf.Ticker(yahoo_sym).info
+            result[0] = info.get("longBusinessSummary") or None
+        except Exception as e:
+            logger.warning(f"Yahoo profile fetch failed for {ticker}: {e}")
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()
+    t.join(timeout=15)
+    if t.is_alive():
+        logger.warning(f"Yahoo profile fetch timed out for {ticker}")
+        return None
+    return result[0]
+
+
+@router.post("/backfill-profiles")
+def backfill_profiles(db: Session = Depends(get_db)):
+    import time
+
+    rows = db.query(Ticker).filter(
+        Ticker.active == True,
+        (Ticker.profile_summary == None) | (Ticker.profile_summary == ""),
+    ).all()
+
+    if not rows:
+        return {"backfilled": 0, "total": 0, "message": "All tickers already have profiles"}
+
+    skip_yahoo = {"SPX", "NDX", "VIX", "VVIX", "$DJI", "RUT", "VXN", "RVX", "GVZ", "OVX", "MOVE"}
+    symbols = [r.ticker for r in rows]
+
+    schwab_profiles = _schwab_fetch_profiles(symbols, db)
+    logger.info(f"Schwab returned profiles for {len(schwab_profiles)} tickers")
+
+    filled = 0
+    for row in rows:
+        summary = schwab_profiles.get(row.ticker)
+
+        if not summary and row.ticker not in skip_yahoo:
+            summary = _yahoo_fetch_profile(row.ticker)
+            time.sleep(0.3)
+
+        if summary:
+            row.profile_summary = summary
+            row.updated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            filled += 1
+
+    db.commit()
+    logger.info(f"Backfilled {filled}/{len(rows)} ticker profiles")
+    return {"backfilled": filled, "total": len(rows)}
+
+
 @router.put("/{symbol:path}")
 def update_ticker(symbol: str, body: dict, db: Session = Depends(get_db)):
     symbol = symbol.upper()
@@ -302,7 +412,8 @@ def update_ticker(symbol: str, body: dict, db: Session = Depends(get_db)):
     if "tier"          in body: row.tier           = body["tier"]
     if "parent_ticker" in body: row.parent_ticker  = body["parent_ticker"]
     if "active"        in body: row.active         = body["active"]
-    if "display_order" in body: row.display_order  = body["display_order"]
+    if "display_order"   in body: row.display_order    = body["display_order"]
+    if "profile_summary" in body: row.profile_summary  = body["profile_summary"]
     row.updated_at = now
 
     db.commit()

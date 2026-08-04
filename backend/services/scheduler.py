@@ -244,6 +244,7 @@ def schwab_data_job() -> None:
         except Exception as _e:
             logger.warning(f"Schwab data job: SPX impact failed (non-fatal) — {_e}")
 
+
         status = "success"
 
     except Exception as e:

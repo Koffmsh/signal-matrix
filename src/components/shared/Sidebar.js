@@ -62,6 +62,16 @@ function MacroVolIcon({ color }) {
   );
 }
 
+function SecurityIcon({ color }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke={color} strokeWidth="1.2" fill="none" />
+      <polyline points="3,8 6,5 9,9 12,4 14,6" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <line x1="2" y1="13" x2="14" y2="13" stroke={color} strokeWidth="1" opacity="0.4" />
+    </svg>
+  );
+}
+
 function LockIcon({ locked, color }) {
   return locked ? (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -85,6 +95,12 @@ const NAV_ITEMS = [
     path: "/",
     exact: true,
     icon: (color) => <GridIcon color={color} />,
+  },
+  {
+    label: "SECURITY",
+    path: "/security",
+    exact: false,
+    icon: (color) => <SecurityIcon color={color} />,
   },
   {
     label: "SPX VOL",

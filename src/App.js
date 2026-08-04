@@ -1,11 +1,12 @@
 ﻿import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Link } from "react-router-dom";
 import { fetchCachedMarketData, fetchBatchMarketData, apiFetch } from "./services/api";
 import SystemStatus from "./components/shared/SystemStatus";
 import AdminPanel from "./components/Admin/AdminPanel";
 import Sidebar from "./components/shared/Sidebar";
 import Header from "./components/shared/Header";
 import TickerAnalysis from "./components/Analysis/TickerAnalysis";
+import SecurityAnalysis from "./components/Security/SecurityAnalysis";
 import SpxVolChart from "./components/Vol/SpxVolChart";
 import MacroVolChart from "./components/Vol/MacroVolChart";
 import SpxImpactDashboard from "./components/SpxImpact/SpxImpactDashboard";
@@ -63,6 +64,11 @@ export default function App() {
   );
 }
 
+function SecurityRedirect() {
+  const last = localStorage.getItem("lastSecurityTicker") || "SPY";
+  return <SecurityAnalysis defaultTicker={last} />;
+}
+
 function AppLayout() {
   const location = useLocation();
   const showSidebar = !location.pathname.startsWith("/admin");
@@ -80,6 +86,8 @@ function AppLayout() {
         )}
         <div style={{ flex: 1, overflow: "auto", marginLeft: sidebarWidth, transition: "margin-left 200ms ease" }}>
           <Routes>
+            <Route path="/security/:ticker" element={<SecurityAnalysis />} />
+            <Route path="/security" element={<SecurityRedirect />} />
             <Route path="/ticker/:symbol" element={<TickerAnalysis />} />
             <Route path="/vol"             element={<SpxVolChart />} />
             <Route path="/vol/macro"      element={<MacroVolChart />} />
@@ -738,8 +746,8 @@ function Dashboard() {
     return (
       <tr
         key={isTier2 ? `t2-${row.ticker}` : row.ticker}
+        style={{ background: rowBg, borderLeft: isSelected ? "2px solid #0077ff" : "2px solid transparent", transition: "background 0.15s", cursor: "pointer" }}
         onClick={() => setSelected(isSelected ? null : row.ticker)}
-        style={{ background: rowBg, borderLeft: isSelected ? "2px solid #0077ff" : "2px solid transparent", cursor: "pointer", transition: "background 0.15s" }}
         onMouseEnter={e => e.currentTarget.style.background = "#0d1a28"}
         onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
@@ -752,7 +760,9 @@ function Dashboard() {
         {/* Alert */}
         <td style={{ padding: "9px 8px", textAlign: "center" }}>{row.isAlert ? <span style={{ color: "#f0b429" }}>⚡</span> : ""}</td>
         {/* Ticker */}
-        <td style={{ padding: isTier2 ? "9px 8px 9px 24px" : "9px 8px", fontWeight: "700", color: isTier2 ? "#b0c4d8" : "#e8f4ff", letterSpacing: "0.05em" }}>{row.ticker}</td>
+        <td style={{ padding: isTier2 ? "9px 8px 9px 24px" : "9px 8px", fontWeight: "700", letterSpacing: "0.05em" }}>
+          <Link to={`/security/${encodeURIComponent(row.ticker)}`} onClick={e => e.stopPropagation()} style={{ color: isTier2 ? "#b0c4d8" : "#e8f4ff", textDecoration: "none" }} onMouseEnter={e => { e.currentTarget.style.color = "#2196F3"; e.currentTarget.style.textDecoration = "underline"; }} onMouseLeave={e => { e.currentTarget.style.color = isTier2 ? "#b0c4d8" : "#e8f4ff"; e.currentTarget.style.textDecoration = "none"; }}>{row.ticker}</Link>
+        </td>
         {/* Description */}
         <td style={{ padding: "9px 8px", color: isTier2 ? "#506070" : "#6688aa", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.description}</td>
         {/* Close */}
@@ -1132,6 +1142,7 @@ function Dashboard() {
                   <th style={thStyle} title="Current month US quad + Q Fit">{nowLabel}</th>
                   <th style={thStyle} title="Next month US quad + Q Fit">{nextLabel}</th>
                   <th style={thStyle} title="Current quarter US quad + Q Fit">{qtrLabel}</th>
+                  <th style={{ ...thStyle, width: "28px" }}></th>
                 </>);
               })()}
             </tr>
