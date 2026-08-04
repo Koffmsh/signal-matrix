@@ -48,6 +48,39 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-030 — Security Analysis page: on-demand AI summaries, not scheduled
+Date: 2026-08-04
+Status: Active
+Component: `backend/routers/security.py`, `backend/services/ai_summary.py`, `src/components/Security/SecurityAnalysis.js`
+
+Context:
+  Security Analysis (`/security/:ticker`) is a single-ticker deep-dive page with
+  pillar score tiles, a price + risk-range chart, AI-generated summary, and company
+  profile. The AI summary uses Anthropic Haiku to generate a headline + bullets from
+  signal_output and price_cache data.
+
+Decision:
+  - AI summaries generate **on-demand** when the security page is viewed, not in the
+    EOD scheduler. Cached per day in `ai_summaries` table (UNIQUE ticker+summary_date).
+    Falls back to most recent cached summary if generation fails.
+  - Profile descriptions backfill via Schwab Instruments API (primary) with yfinance
+    fallback (15s per-ticker thread timeout). Stored in `tickers.profile_summary`.
+  - Three pillar score columns (`structural_score`, `volume_score`, `vix_score`) added
+    to `signal_output` and `signal_history` — already computed in conviction_engine,
+    now persisted for the pillar tiles.
+  - Ticker cell clicks navigate to `/security/:ticker`; row clicks open the popup.
+    `stopPropagation` on ticker cell separates the two behaviors.
+
+Why (regression guard):
+  Do not move AI summary generation into the scheduler — it would generate summaries
+  for all ~51 tickers every day regardless of whether anyone views them (wasteful API
+  spend). On-demand means you only pay for tickers people actually look at. Do not
+  remove the fallback to most-recent cached summary — it handles API credit exhaustion
+  and transient Anthropic errors gracefully. Do not remove the Schwab→Yahoo fallback
+  in profile backfill — Schwab Instruments API doesn't cover indices/futures/FX.
+
+Linked rule: #103, #104, #105
+
 ## ADR-029 — Stale-data banner: poll for new signals, prompt user to refresh
 Date: 2026-08-03
 Status: Active

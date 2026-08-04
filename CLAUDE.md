@@ -178,13 +178,15 @@ signal-matrix/
 │   │   ├── Analysis/
 │   │   │   └── TickerAnalysis.js          ← stub — /ticker/:symbol route; full page future scope
 │   │   ├── Dashboard/                     ← placeholder, logic still in App.js
+│   │   ├── Security/
+│   │   │   └── SecurityAnalysis.js        ← /security/:ticker deep-dive — pillars, price+RR chart, AI summary, profile
 │   │   ├── Macro/
 │   │   │   └── SectorPerformance.js       ← /sector route; absolute + relative sector perf tables (1D/MTD/QTD/YTD vs SPX)
 │   │   ├── Vol/
 │   │   │   └── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
 │   │   └── shared/
 │   │       ├── Header.js                  ← global top bar (48px fixed); brand left, user profile right
-│   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px
+│   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px; includes SECURITY nav item
 │   │       └── SystemStatus.js            ← ADR-020 — header CONNECTION/DATA (admin) + STATUS (user) dots; reads /api/system/status
 │   ├── data/
 │   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is the Postgres tickers table
@@ -211,7 +213,8 @@ signal-matrix/
 │   │   ├── vol_history.py                  ← Task 5.5 — IV history DB model ✅
 │   │   ├── intraday_alert_log.py          ← Intraday monitor alert dedup log
 │   │   ├── user.py                        ← Auth — users (+ phone/alert_email_enabled/alert_sms_enabled for Alert Creator)
-│   │   └── user_alert_subscription.py     ← Per-user, per-alert on/off (Phase 1 Alert Creator)
+│   │   ├── user_alert_subscription.py     ← Per-user, per-alert on/off (Phase 1 Alert Creator)
+│   │   └── ai_summary.py                 ← AI-generated summaries cache (ticker+date keyed, Anthropic Haiku)
 │   ├── alembic/                           ← Task 5.1 — DB migration tooling ✅
 │   │   ├── env.py
 │   │   └── versions/
@@ -237,7 +240,10 @@ signal-matrix/
 │   │       ├── t5u6v7w8x9y0_add_spx_impact_cache.py                              ← spx_impact_cache table (EOD constituent impact)
 │   │       ├── u6v7w8x9y0z1_spx_impact_add_label_weights.py                      ← added snapshot_label + weights_json (intraday snapshot support)
 │   │       ├── y0z1a2b3c4d5_add_alert_delivery_settings.py                       ← users.phone/alert_email_enabled/alert_sms_enabled + user_alert_subscriptions table (Phase 1 Alert Creator)
-│   │       └── z1a2b3c4d5e6_price_cache_unique_ticker.py                          ← dedup + enforce UNIQUE(ticker) on price_cache (ADR-027; fixes the ROBO duplicate-row bug)
+│   │       ├── z1a2b3c4d5e6_price_cache_unique_ticker.py                          ← dedup + enforce UNIQUE(ticker) on price_cache (ADR-027; fixes the ROBO duplicate-row bug)
+│   │       ├── a2b3c4d5e6f7_signal_output_add_pillar_scores.py                    ← structural_score/volume_score/vix_score on signal_output + signal_history (+ quad_score on signal_history)
+│   │       ├── b3c4d5e6f7g8_add_ai_summaries_table.py                             ← ai_summaries table (on-demand AI summary cache, ADR-030)
+│   │       └── c4d5e6f7g8h9_tickers_add_profile_summary.py                        ← tickers.profile_summary (company profile text from Schwab/yfinance backfill)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -252,7 +258,8 @@ signal-matrix/
 │   │   ├── sms.py                         ← Telnyx SMS wrapper (globally disabled — SMS_DISABLED, pending 10DLC) ✅
 │   │   ├── email_alert.py                 ← Gmail SMTP email wrapper (send_email / send_email_to) ✅
 │   │   ├── alert_catalog.py               ← canonical alert list (keys/labels/tooltips) — Alert Creator ✅
-│   │   └── system_status.py               ← ADR-020 — computes connection/data/status axes + standing integrity scan ✅
+│   │   ├── system_status.py               ← ADR-020 — computes connection/data/status axes + standing integrity scan ✅
+│   │   └── ai_summary.py                 ← On-demand AI summary generation (Anthropic Haiku); called from security router, NOT scheduler (ADR-030)
 │   └── routers/
 │       ├── market_data.py
 │       ├── signals.py                     ← Task 3.3/3.4/4.3 — Signal endpoints + history ✅
@@ -262,7 +269,8 @@ signal-matrix/
 │       ├── spx_impact.py                  ← GET /api/spx-impact — returns eod + intraday snapshots ✅
 │       ├── sector_performance.py          ← GET /api/sector-performance — 1D/MTD/QTD/YTD absolute + relative sector tables
 │       ├── system.py                       ← ADR-020 — GET /api/system/status (admin: connection+data+status; user: status only)
-│       └── alerts.py                       ← GET/PUT /api/alerts/my-settings — per-user alert delivery settings (Phase 1 Alert Creator)
+│       ├── alerts.py                       ← GET/PUT /api/alerts/my-settings — per-user alert delivery settings (Phase 1 Alert Creator)
+│       └── security.py                    ← GET /api/security/{ticker}/detail — aggregated deep-dive endpoint; POST /{ticker}/summary — admin regen (ADR-030)
 ├── .env                                   ← NOT in Git — backend secrets (Supabase, Schwab, JWT_SECRET, admin seed creds, email)
 ├── .gitignore                             ← .env and signal_matrix.db excluded
 ├── CLAUDE.md                              ← this file
@@ -531,6 +539,10 @@ or split into separate per-viewpoint alerts; the builder supports either. Implie
 - `GET /api/alerts/my-settings` — user's channels + per-alert state + catalog + `sms_globally_disabled`.
 - `PUT /api/alerts/my-settings` — Apply button; validates phone (E.164-ish) and rejects "SMS on without
   phone" and unknown alert keys; upserts subscriptions.
+
+**Endpoints (`routers/security.py`):**
+- `GET /api/security/{ticker}/detail` — aggregated deep-dive: price_cache + signal_output (all 3 tfs) + signal_history (trade RR history) + ai_summary (on-demand generation if none cached today) + ticker profile. Single call for the Security Analysis page.
+- `POST /api/security/{ticker}/summary` — admin-only: force-regenerate AI summary for a ticker.
 
 **Guardrails:**
 - Migration `y0z1a2b3c4d5` is idempotent (guarded `add_column` + `create_table`) — required because
@@ -962,8 +974,20 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 quad_score,                 ← Integer — additive conviction contribution: +20/+15/0/−11/−15; shown in popup (v2.0)
                 hrr_snapped,                ← Boolean — v1.9.1 trade RR snap state (HRR side, persistent across runs)
                 lrr_snapped,                ← Boolean — v1.9.1 trade RR snap state (LRR side, persistent across runs)
+                structural_score,           ← Integer — pillar: 0/25/50 (trade tf only; NULL on trend/lt)
+                volume_score,               ← Integer — pillar: 0/10/15 (trade tf only)
+                vix_score,                  ← Integer — pillar: 0/5/10/15 (trade tf only)
                 calculated_at
                 UNIQUE(ticker, timeframe)
+
+ai_summaries:   id (INTEGER PRIMARY KEY),
+                ticker          (STRING NOT NULL, indexed)
+                summary_date    (STRING(10) NOT NULL)   -- ET YYYY-MM-DD
+                headline        (TEXT)                   -- one-line AI-generated headline
+                bullets_json    (TEXT)                   -- JSON array of 2-5 bullet strings
+                model           (STRING(50))             -- e.g. 'claude-haiku-4-5-20251001'
+                created_at      (STRING)                 -- UTC timestamp
+                UNIQUE(ticker, summary_date)
 
 quad_settings:  id (INTEGER PRIMARY KEY),
                 country        (STRING(10) NOT NULL, DEFAULT 'US')       -- 'US', 'JP', 'CN', etc.
@@ -1369,6 +1393,9 @@ git checkout -- .   # roll back if needed
 99. **Never append a `today`-stamped history bar on a non-trading day** — the append path dates bars with wall-clock `today`; on a manual REFRESH during a holiday/weekend the quote APIs return the prior close, which would otherwise be stored as a phantom bar (the 2026-06-19 Juneteenth + 2026-05-23 Saturday phantoms across 93 tickers → 1-day notches on the union-date macro-vol chart). `_history_fetch_mode` downgrades `append`→`skip` when `today` is not an NYSE session (covers Schwab + Yahoo paths). FX (USD/JPY) + futures (/CL,/ZN,/GC) are exempt via `_NON_NYSE_CALENDAR` (non-NYSE calendars). The scheduler's holiday guard is NOT sufficient — manual REFRESH bypasses it. `short`/`bootstrap` merges stay unguarded (real source dates self-heal stored phantoms). Cleanup of existing phantoms = remove non-NYSE-session dates from history + recompute ma/std20/ATH/spark; idempotent. See **ADR-023**.
 100. **Trade-RR vol series falls back to HV-from-closes for newly-activated tickers (ADR-024)** — `get_trade_rr_vol_series` resolves in order: stored IV30 (≥256 rows) → stored HV30 (≥256 rows) → **HV30 reconstructed on the fly from `price_cache.history_json`** (`_hv30_series_from_closes`; same formula as `accumulate_hv_only`: `std(log-rets[-21:], ddof=0)·√252`; source tag `hv_computed`) → None. Needed because the 252-day rank window requires ≥256 vol rows, but `vol_history` is forward-accumulated only (no vol bootstrap), so a freshly-activated ticker (e.g. UUP, and the macro-vol indices VXN/RVX/GVZ/OVX/MOVE) would otherwise show a blank trade LRR/HRR for ~1 year. Never raise the ≥256 gate or remove the fallback (it re-blanks new tickers). IV30 is **not** reconstructable (Schwab serves no historical option chains) — never try to backfill IV; HV-only fallback is correct. Self-heals to stored `iv`/`hv` as rows accumulate; existing long-history tickers (VIX `hv`, GLD `iv`) are unchanged. A DB-only recompute is futile until the code deploys — live deployed code overwrites `signal_output` on the next REFRESH/CALCULATE/EOD run. See **ADR-024**.
 101. **`price_cache.ticker` is UNIQUE — enforced in the DB, not just the model (ADR-027)** — the unique index `ix_price_cache_ticker` (migration `z1a2b3c4d5e6`) is the real guard; the model declares `Column(String, index=True, unique=True)` so fresh DBs get it via `create_all`. **Why both are required:** `create_all` only ever CREATES missing tables — it never ALTERs an existing one to add a constraint, so adding `unique=True` to the model alone does nothing to a live DB (prod ran ~unconstrained until 2026-06-30, which let a duplicate ROBO row — a stale `yahoo_fallback`/`1970-01-01` orphan — persist; `_upsert`'s `.filter(ticker==…).first()` updated one row while the read path served both, non-deterministically showing stale data). Any schema-vs-prod "this column is UNIQUE" claim must be **verified against the live DB** (`inspect(engine).get_unique_constraints/get_indexes`), never assumed from the model or CLAUDE.md. When a ticker shows frozen/`1970-01-01`/empty-history despite a live quote, **suspect a duplicate `price_cache` row first** (`GROUP BY ticker HAVING count()>1`), not the data source. See **ADR-027**.
+103. **AI summaries are on-demand only — never in the scheduler (ADR-030)** — `generate_summary(ticker, db)` in `services/ai_summary.py` fires when the security page is viewed and no cached summary exists for today. Cached per day in `ai_summaries` table (`UNIQUE(ticker, summary_date)`). Falls back to most recent cached summary (any date) if generation fails or API credits exhausted. Model: `claude-haiku-4-5-20251001`. Do not wire into `schwab_data_job` or any scheduler job — generates for all ~51 tickers daily regardless of views (wasteful API spend).
+104. **Ticker cell click → `/security/:ticker`; row click → popup** — `<Link>` on ticker cell uses `onClick={e => e.stopPropagation()}` to prevent the row click handler from firing. Hover-only blue (`#2196F3` + underline on hover, original color on leave). Do not remove `stopPropagation` — it separates the two navigation paths.
+105. **Profile backfill: Schwab Instruments primary, yfinance fallback** — `POST /api/tickers/backfill-profiles` (admin-only). Schwab `get_instruments(symbols, Projection.FUNDAMENTAL)` batch for equity/ETF descriptions; yfinance `longBusinessSummary` per-ticker with 15s thread timeout for indices/futures/FX (`SCHWAB_UNSUPPORTED_PROFILES`). Stored in `tickers.profile_summary`. Backfill is manual, not scheduled.
 
 ---
 
