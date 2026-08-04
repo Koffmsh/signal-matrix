@@ -97,7 +97,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Bar windows:** `TIMEFRAMES["lt"]=50`, `TIMEFRAMES["trend"]=10` — do not increase without verifying that 3–4-month-old (lt) / <6-week (trend) reversals still register.
 
 ### Conviction / OBV / UI guardrails
-- **OBV direction** (`conviction_engine.py`) — current method is a **rolling 20-bar z-score of OBV → 40-bar regression slope, sign-only (band 0)** (rule #41, **ADR-017**); prior single-window slope÷std (ADR-005), ABCD-pivot / HH+HL / price-momentum methods are superseded. Vol Signal compares OBV direction against **Trade Dir** (not Viewpoint): Confirming = matches, Diverging = opposes, Neutral = no structure. `obv_direction`/`obv_confirming` stored in `signal_output`.
+- **OBV direction** (`conviction_engine.py`) — current method is a **21-bar lookback** (`_OBV_LOOKBACK = 21`): current OBV vs OBV 21 bars ago — higher → Bullish, lower → Bearish, equal → Neutral. Prior z-score regression (ADR-017), single-window slope÷std (ADR-005), ABCD-pivot / HH+HL / price-momentum methods are superseded. Vol Signal is a **two-layer** verdict: MA20 slope AND 21-bar lookback must BOTH confirm Trade Dir for Confirming; BOTH oppose for Diverging; mixed = Neutral. `obv_direction`/`obv_confirming` stored in `signal_output`.
 - **VIX regime cutoff is strictly `< 19`** (Green/Investable) — never use 20. `19 ≤ VIX < 30` amber, `≥ 30` red.
 - **Vol popup naming** (`App.js`) — never rename DB field `vol_signal` → `obv_signal`. Popup shows "Vol Direction" (`obv_direction`) + "Vol Signal vs Trade" (`obv_confirming`, vs Trade Dir).
 - **EXTENDED architectural cleanup** — `d_extended` boolean replaced the EXTENDED/WARNING `structural_state` values; `is_warning`/`_compute_warn_flags` take `d_extended` (`break_level = b if d_extended else c`); `compute_output` never sets `state="WARNING"`. See **ADR-002** (migration `e2f4a6b8c1d0`).
@@ -657,9 +657,10 @@ Quad (−15 / −11 / 0 / +15 / +20):
   Misaligned, prob≥0.45 → −15; Misaligned, prob<0.45 → −11
 
 Volume (0 / +10 / +15):
-  obv_direction: 40-bar regression on OBV series, normalized by std(OBV[-40:])
-  obv_confirming: STRICT — regression dir AND MA20 slope (3-bar ROC) both confirm Trade Dir
-  obv_confirming → +10; + obv_slope_trend accelerating in trade dir → +15
+  obv_direction: 21-bar lookback — current OBV vs OBV 21 bars ago (Bullish/Bearish/Neutral)
+  obv_confirming: both MA20 slope AND 21-bar lookback confirm Trade Dir
+  Two independent layers: slope confirms (+5), lookback confirms (+5) → both = +10 (Confirming)
+  Acceleration bonus (+5, total +15) only when Confirming AND obv_slope_trend accelerating
 
   OBV signals:
     obv_slope: sign of 3-bar ROC on OBV MA20: 'rising' | 'falling' | 'flat'
@@ -1116,7 +1117,7 @@ GET /api/tickers/lookup/{symbol}  ← Task 4.7 ✅  (yfinance suggestions)
 | Relative IV Percentile | **Frequentist** | Rank within own 52-week history — informational only (v1.7) |
 | Conviction Score | **Frequentist** | Structural + Quad + Volume + VIX additive (v2.0) |
 | Trend / Tail Level | **Frequentist** | MA100 / MA200 slope-confirmed floor or ceiling (v1.7) |
-| OBV Direction | **Frequentist** | Rolling 20-bar z-score of OBV → 40-bar regression slope (sign-only) |
+| OBV Direction | **Frequentist** | 21-bar lookback: current OBV vs OBV 21 bars ago (Bullish/Bearish/Neutral) |
 | Quad Probability Distribution | **Bayesian** | Continuously updated belief across 4 quads |
 | Forward Quarter Projections Q2-Q4 | **Bayesian** | Prior decay without new confirming evidence |
 | Policy Signal Modifiers | **Bayesian** | Discrete evidence updates to forward projections |
@@ -1324,7 +1325,7 @@ git checkout -- .   # roll back if needed
 38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
 39. **One close through break level = BREAK_OF_TRADE immediately** — break level = C normally; B when `d_extended=True`. Direction HOLDS during BREAK_OF_TRADE (not Neutral). Forgiveness: recovery on day 1 restores prior state; 2+ consecutive closes = BREAK_CONFIRMED → direction → Neutral. Recovery from BREAK_CONFIRMED: close above B (non-extended); close at or above D when `d_extended=True` (B is too close to oscillation noise — only re-establishing D proves the extension can be reclaimed). Implemented in `compute_d_and_state`: early-return `UPTREND_VALID` when `current_price >= d_price`; `_check_break_confirmed` receives `d_price` as recovery threshold instead of `b_price` in d_extended branches.
 40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
-41. **OBV direction uses a rolling z-score oscillator (ADR-017)** — `_obv_direction()` builds OBV, computes a **rolling 20-bar z-score** (`_rolling_zscore`, each bar normalized by its own trailing 20-bar mean/std — `_OBV_ZSCORE_WINDOW`), then takes the **40-bar regression slope** (`_OBV_REGRESSION_WINDOW`) of that stationary oscillator. **Sign-only** (`_OBV_NEUTRAL_BAND = 0.0`): slope > 0 → Bullish, < 0 → Bearish, == 0 → Neutral. Needs ≥ 59 OBV bars (20+40−1) else Neutral. Replaces the single-window slope÷std (ADR-005) — adopted for responsiveness (turns ~3 days earlier on vol shocks), NOT to fix an inversion (slope÷std never inverted; only the broken ThinkScript `OBV/StDev` level÷dispersion study did). Band 0 means Neutral is essentially only volumeless indices (VIX) → expect more frequent Confirming/Diverging. `obv_confirming` is strict and unchanged: z-score regression direction AND raw-OBV MA20 3-bar ROC slope must both confirm Trade Dir (the MA20 signals stay on raw OBV — sign-only, scale-irrelevant).
+41. **OBV direction uses a 21-bar lookback** — `_obv_direction()` builds OBV, compares current OBV vs OBV 21 bars ago (`_OBV_LOOKBACK = 21`): higher → Bullish, lower → Bearish, equal → Neutral. Needs ≥ 22 OBV bars else Neutral. Supersedes the z-score regression method (ADR-017) — simpler, inherently self-scaling (same ticker vs itself), and no cross-ticker normalization needed. **Volume scoring is two independent layers:** MA20 slope confirms Trade Dir → +5; 21-bar lookback confirms Trade Dir → +5. Both layers must confirm for `vol_signal = "Confirming"` (+10); both must oppose for `"Diverging"` (0); mixed = `"Neutral"` (+5 from whichever confirms). Acceleration bonus (+5, total 15) only when Confirming AND `obv_slope_trend` accelerating in trade direction.
 42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
 43. **schwab-py is the only Schwab API client** — never write raw HTTP calls against Schwab endpoints
 44. **Yahoo Finance is a permanent fallback** — never remove it; always called when Schwab is unavailable

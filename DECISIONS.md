@@ -48,6 +48,35 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-031 — OBV volume pillar: 21-bar lookback + MA20 slope (replaces z-score regression)
+Date: 2026-08-04
+Status: Active
+Component: `conviction_engine.py` (`_obv_direction`, `compute_output`)
+
+Context:
+  The 40-bar regression on a 20-bar z-score oscillator (ADR-017) was too slow — it took
+  weeks to respond to volume flow reversals because the regression window smoothed out
+  directional changes. Needed a faster, simpler, verifiable-in-TOS approach.
+
+Decision:
+  Replace the z-score regression with a direct 21-bar (1-month) OBV lookback comparison:
+  current OBV vs OBV 21 bars ago. Higher → Bullish, lower → Bearish, equal → Neutral.
+  Volume scoring becomes two independent layers: (1) MA20 slope confirms Trade Dir → +5,
+  (2) 21-bar lookback confirms Trade Dir → +5. Both must confirm for vol_signal = "Confirming"
+  (+10); both must oppose for "Diverging" (0); any mixed state = "Neutral" (+5 from whichever
+  confirms). Acceleration bonus (+5, total 15) requires Confirming status. Removed:
+  `_rolling_zscore`, `_OBV_ZSCORE_WINDOW`, `_OBV_REGRESSION_WINDOW`, `_OBV_NEUTRAL_BAND`.
+
+Why (regression guard):
+  The lookback is inherently self-scaling (same ticker vs itself, no normalization needed),
+  responds within one bar of a volume flow change (vs weeks for regression), and is trivially
+  verifiable in ThinkorSwim. Two independent layers ensure both short-term momentum (slope)
+  and medium-term level (lookback) must agree before calling it Confirming — stricter than
+  requiring just one transform to flip. Do NOT revert to the z-score regression or any
+  transform that smooths over >21 bars — the whole point is speed.
+
+Linked rule: CLAUDE.md rule #41
+
 ## ADR-030 — Security Analysis page: on-demand AI summaries, not scheduled
 Date: 2026-08-04
 Status: Active
@@ -560,7 +589,7 @@ Linked rule: CLAUDE.md rule #94
 
 ## ADR-017 — OBV direction: rolling z-score oscillator → 40-bar regression (replaces slope÷std)
 Date: 2026-06-18
-Status: Active
+Status: Superseded by ADR-031 (21-bar lookback + two-layer scoring replaces z-score regression)
 Component: `conviction_engine.py` (`_obv_direction`, `_rolling_zscore`)
 
 Context:

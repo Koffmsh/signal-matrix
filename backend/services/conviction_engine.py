@@ -49,58 +49,25 @@ def _build_obv(closes: list, volumes: list) -> list:
     return obv
 
 
-_OBV_ZSCORE_WINDOW     = 20    # rolling z-score normalization window
-_OBV_REGRESSION_WINDOW = 40    # regression window applied to the z-score series
-_OBV_NEUTRAL_BAND      = 0.0   # sign-only — maximally responsive (no dead band)
-
-
-def _rolling_zscore(series: list, window: int) -> list:
-    """
-    Rolling z-score: each point is normalized by its OWN trailing-`window` mean and std.
-
-    This is the stationary-oscillator transform — distinct from a single-window
-    (OBV - mean)/std. Because OBV is a large, slowly-moving cumulative level,
-    dividing the raw level by σ produces a 1/σ signal that moves INVERSELY to trend
-    strength. Subtracting each point's rolling mean removes the giant constant level
-    and leaves the deviation-from-recent-average, which rises correctly during
-    accumulation. Returns one z-value per bar from index `window-1` onward.
-    """
-    out = []
-    for t in range(window - 1, len(series)):
-        w  = series[t - window + 1 : t + 1]
-        mu = sum(w) / window
-        sd = float(np.std(w))
-        out.append((series[t] - mu) / sd if sd else 0.0)
-    return out
+_OBV_LOOKBACK = 21   # 1-month (21 trading days) OBV level comparison
 
 
 def _obv_direction(closes: list, volumes: list) -> str:
     """
-    Determine OBV trend direction via the slope of a stationary OBV oscillator:
-      1. Build OBV from closes/volumes.
-      2. Rolling z-score (20-bar) → stationary oscillator (no inversion on vol shocks).
-      3. Linear regression slope (40-bar) on the z-score series → momentum of accumulation.
-    Sign-only classification (band 0): slope > 0 → Bullish, < 0 → Bearish, == 0 → Neutral.
-    Requires (zscore_window + regression_window - 1) OBV bars; else Neutral.
-    Returns: 'Bullish' | 'Bearish' | 'Neutral'
+    OBV trend direction via 21-bar lookback comparison.
+    Current OBV vs OBV 21 bars ago: higher → Bullish, lower → Bearish, equal → Neutral.
+    Requires at least 22 bars (21 lookback + current). Returns 'Bullish' | 'Bearish' | 'Neutral'.
     """
     obv = _build_obv(closes, volumes)
-    zn  = _OBV_ZSCORE_WINDOW
-    rn  = _OBV_REGRESSION_WINDOW
-    if len(obv) < zn + rn - 1:
+    if len(obv) < _OBV_LOOKBACK + 1:
         return "Neutral"
 
-    z = _rolling_zscore(obv, zn)
-    if len(z) < rn:
-        return "Neutral"
+    current = obv[-1]
+    prior   = obv[-1 - _OBV_LOOKBACK]
 
-    y     = np.asarray(z[-rn:], dtype=float)
-    x     = np.arange(rn, dtype=float)
-    slope = float(np.polyfit(x, y, 1)[0])   # slope of the stationary z-score oscillator
-
-    if slope >  _OBV_NEUTRAL_BAND:
+    if current > prior:
         return "Bullish"
-    if slope < -_OBV_NEUTRAL_BAND:
+    if current < prior:
         return "Bearish"
     return "Neutral"
 
@@ -985,7 +952,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     # MA/STD computed from raw closes (v1.9.1); Trend Level uses break pivot directly.
     ma200       = float(cache_row.ma200)       if (cache_row and cache_row.ma200 is not None) else None
 
-    # OBV direction (40-bar regression) + MA20 slope — computed once, used in vol_signal and conviction
+    # OBV direction (21-bar lookback) + MA20 slope — computed once, used in vol_signal and conviction
     if prices and volumes and len(prices) == len(volumes):
         obv_dir  = _obv_direction(prices, volumes)
         obv_ma20 = _build_obv_ma20(prices, volumes)
@@ -1148,14 +1115,26 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     else:
         viewpoint = "Neutral"
 
-    # ── OBV vol_signal — strict: regression direction AND MA20 slope both confirm Trade Dir
-    _obv_slope_confirms = (
+    # ── OBV vol_signal — two independent layers: MA20 slope + 21-bar lookback
+    # Each confirms independently (+5 each). Both must confirm for Confirming.
+    # Both must oppose for Diverging. Mixed = Neutral.
+    _slope_confirms = (
         (trade_dir == "Bullish" and obv_slope_early == "rising") or
         (trade_dir == "Bearish" and obv_slope_early == "falling")
     )
-    if trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir and _obv_slope_confirms:
+    _slope_opposes = (
+        (trade_dir == "Bullish" and obv_slope_early == "falling") or
+        (trade_dir == "Bearish" and obv_slope_early == "rising")
+    )
+    _lookback_confirms = (trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir)
+    _lookback_opposes  = (
+        trade_dir in ("Bullish", "Bearish") and
+        obv_dir != "Neutral" and obv_dir != trade_dir
+    )
+
+    if trade_dir in ("Bullish", "Bearish") and _slope_confirms and _lookback_confirms:
         vol_signal = "Confirming"
-    elif obv_dir != "Neutral" and obv_dir != trade_dir:
+    elif trade_dir in ("Bullish", "Bearish") and _slope_opposes and _lookback_opposes:
         vol_signal = "Diverging"
     else:
         vol_signal = "Neutral"
@@ -1217,13 +1196,17 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         quad_mult_val    = 1.00
 
     # Component 3 — Volume (max 15)
-    # obv_confirming = strict check: regression direction AND MA20 slope both confirm Trade Dir
+    # Two independent layers: MA20 slope confirms (+5), 21-bar lookback confirms (+5).
+    # Acceleration bonus (+5) only when both layers confirm (Confirming).
     volume_score = 0
+    if _slope_confirms:
+        volume_score += 5
+    if _lookback_confirms:
+        volume_score += 5
     if obv_confirming:
-        volume_score += 10
         if ((trade_dir == "Bullish" and obv_slope_trend == "increasing") or
                 (trade_dir == "Bearish" and obv_slope_trend == "decreasing")):
-            volume_score += 5   # acceleration boost: +5 when slope is accelerating (early in move)
+            volume_score += 5
 
     # Component 4 — VIX/Vol (max 15, Domestic Equities only)
     vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
