@@ -48,32 +48,41 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
-## ADR-031 — OBV volume pillar: 21-bar lookback + MA20 slope (replaces z-score regression)
+## ADR-031 — OBV volume pillar: 21-bar lookback + MA20 slope + consensus direction
 Date: 2026-08-04
 Status: Active
 Component: `conviction_engine.py` (`_obv_direction`, `compute_output`)
 
 Context:
-  The 40-bar regression on a 20-bar z-score oscillator (ADR-017) was too slow — it took
-  weeks to respond to volume flow reversals because the regression window smoothed out
-  directional changes. Needed a faster, simpler, verifiable-in-TOS approach.
+  Two problems with the prior volume pillar: (1) the 40-bar regression on a 20-bar z-score
+  oscillator (ADR-017) was too slow — took weeks to respond to volume flow reversals.
+  (2) Comparing OBV against Trade Dir only missed recoveries where Trend had already flipped
+  but Trade pivots hadn't formed yet (no B/C structure = Trade stuck Neutral).
 
 Decision:
   Replace the z-score regression with a direct 21-bar (1-month) OBV lookback comparison:
   current OBV vs OBV 21 bars ago. Higher → Bullish, lower → Bearish, equal → Neutral.
-  Volume scoring becomes two independent layers: (1) MA20 slope confirms Trade Dir → +5,
-  (2) 21-bar lookback confirms Trade Dir → +5. Both must confirm for vol_signal = "Confirming"
+  Volume scoring becomes two independent layers: (1) MA20 slope confirms → +5,
+  (2) 21-bar lookback confirms → +5. Both must confirm for vol_signal = "Confirming"
   (+10); both must oppose for "Diverging" (0); any mixed state = "Neutral" (+5 from whichever
   confirms). Acceleration bonus (+5, total 15) requires Confirming status. Removed:
   `_rolling_zscore`, `_OBV_ZSCORE_WINDOW`, `_OBV_REGRESSION_WINDOW`, `_OBV_NEUTRAL_BAND`.
+
+  Volume now confirms against the **consensus direction** (`_vol_dir`) instead of Trade Dir
+  alone. Consensus = Trade OR Trend (whichever is directional); if both aligned, use that;
+  if one is Neutral, use the other; if opposing (Bullish vs Bearish), no consensus →
+  volume_score = 0. This lets volume contribute during early recoveries when Trend has
+  confirmed but Trade structure is still forming.
 
 Why (regression guard):
   The lookback is inherently self-scaling (same ticker vs itself, no normalization needed),
   responds within one bar of a volume flow change (vs weeks for regression), and is trivially
   verifiable in ThinkorSwim. Two independent layers ensure both short-term momentum (slope)
-  and medium-term level (lookback) must agree before calling it Confirming — stricter than
-  requiring just one transform to flip. Do NOT revert to the z-score regression or any
-  transform that smooths over >21 bars — the whole point is speed.
+  and medium-term level (lookback) must agree before calling it Confirming. Consensus
+  direction ensures volume credit during recoveries where Trend leads Trade — a common
+  pattern where the stock bounces without forming clean trade-timeframe pivots. Do NOT
+  revert to Trade-Dir-only comparison (misses the recovery pattern) or to the z-score
+  regression (too slow).
 
 Linked rule: CLAUDE.md rule #41
 
