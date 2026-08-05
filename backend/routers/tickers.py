@@ -142,6 +142,37 @@ def get_tickers(
     return [_row_to_dict(r) for r in rows]
 
 
+def _auto_populate_profile(row, db):
+    """Try Schwab instruments, then yfinance, to fill profile_summary on creation."""
+    sym = row.ticker
+    try:
+        from services.schwab_client import get_schwab_client
+        from schwab.client import Client
+        client = get_schwab_client(db)
+        if client:
+            resp = client.get_instruments([sym], Client.Instrument.Projection.FUNDAMENTAL)
+            if resp.status_code == 200:
+                data = resp.json()
+                info = data.get(sym)
+                if info and info.get("description"):
+                    row.profile_summary = info["description"]
+                    db.commit()
+                    logger.info(f"Profile via Schwab: {sym}")
+                    return
+    except Exception:
+        pass
+    try:
+        import yfinance as yf
+        t = yf.Ticker(sym)
+        summary = (t.info or {}).get("longBusinessSummary", "")
+        if summary:
+            row.profile_summary = summary
+            db.commit()
+            logger.info(f"Profile via yfinance: {sym}")
+    except Exception:
+        pass
+
+
 @router.post("")
 def create_ticker(body: dict, db: Session = Depends(get_db)):
     symbol = (body.get("ticker") or "").upper().strip()
@@ -170,6 +201,13 @@ def create_ticker(body: dict, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(row)
     logger.info(f"Created ticker: {symbol}")
+
+    if not row.profile_summary:
+        try:
+            _auto_populate_profile(row, db)
+        except Exception as e:
+            logger.warning(f"Auto-populate profile for {symbol} failed: {e}")
+
     return _row_to_dict(row)
 
 

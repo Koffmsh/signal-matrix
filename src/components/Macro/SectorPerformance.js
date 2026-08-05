@@ -67,7 +67,7 @@ function PerfTable({ title, rows, labels, showSpxSeparator, asOf }) {
             SIGNAL MATRIX
           </div>
           <div style={{ fontSize: 10, color: GREY, marginTop: 2 }}>
-            EOD · {asOf}
+            {asOf}
           </div>
         </div>
       </div>
@@ -222,16 +222,38 @@ function PerfTable({ title, rows, labels, showSpxSeparator, asOf }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function SectorPerformance() {
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const cached = sessionStorage.getItem("sectorLive");
+  const cachedLive = cached ? JSON.parse(cached) : null;
+  const [snapshots, setSnapshots] = useState({ eod: null, live: cachedLive });
+  const [active, setActive]       = useState(cachedLive ? "live" : "eod");
+  const [loading, setLoading]     = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError]         = useState(null);
 
   useEffect(() => {
     apiFetch("/api/sector-performance")
       .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
+      .then(d => {
+        setSnapshots(prev => ({ ...prev, eod: d }));
+        setLoading(false);
+      })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
+
+  const handleLive = async () => {
+    setRefreshing(true);
+    try {
+      const res = await apiFetch("/api/sector-performance?live=true");
+      const d = await res.json();
+      setSnapshots(prev => ({ ...prev, live: d }));
+      setActive("live");
+      sessionStorage.setItem("sectorLive", JSON.stringify(d));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const containerStyle = {
     minHeight: "100vh",
@@ -248,7 +270,7 @@ export default function SectorPerformance() {
     );
   }
 
-  if (error || !data) {
+  if (error && !snapshots.eod) {
     return (
       <div style={{ ...containerStyle, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ color: RED, fontSize: 13 }}>Failed to load sector data</div>
@@ -256,21 +278,75 @@ export default function SectorPerformance() {
     );
   }
 
+  const data = snapshots[active] || snapshots.eod;
+
+  // Disable LIVE after EOD run: check if current ET time is past 4:15 PM on a weekday
+  const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const dayOfWeek = nowET.getDay();
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+  const pastEOD = isWeekday && nowET.getHours() >= 16;
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const liveDisabled = pastEOD || isWeekend;
+
   return (
     <div style={containerStyle}>
+      {/* Snapshot toggle */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+        {[
+          { key: "eod",  label: "EOD" },
+          { key: "live", label: "LIVE" },
+        ].map(({ key, label }) => {
+          const available = !!snapshots[key];
+          const isActive = active === key;
+          const timestamp = key === "live" && snapshots.live?.refreshed_at
+            ? snapshots.live.refreshed_at : null;
+          const disabled = key === "live" && (refreshing || liveDisabled);
+          return (
+            <button
+              key={key}
+              onClick={() => {
+                if (disabled) return;
+                if (key === "live") {
+                  handleLive();
+                } else {
+                  setActive(key);
+                }
+              }}
+              disabled={disabled}
+              style={{
+                padding: "6px 14px",
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.1em",
+                fontFamily: "monospace",
+                cursor: (key === "live" && refreshing) ? "wait" : "pointer",
+                border: `1px solid ${isActive ? GREEN : BORDER}`,
+                borderRadius: 4,
+                background: isActive ? "rgba(0, 229, 160, 0.12)" : "transparent",
+                color: isActive ? GREEN : available ? HEADER : GREY,
+                opacity: (!available && key !== "live") ? 0.4 : 1,
+              }}
+            >
+              {key === "live" && refreshing ? "⟳ FETCHING..." : label}
+              {timestamp && <span style={{ fontWeight: 400, marginLeft: 6, opacity: 0.7 }}>{timestamp}</span>}
+            </button>
+          );
+        })}
+      </div>
+
       <PerfTable
         title="Sector Performance"
         rows={data.absolute}
         labels={data.labels}
         showSpxSeparator
-        asOf={data.as_of}
+        asOf={active === "live" && data.refreshed_at ? `Live · ${data.refreshed_at}` : data.as_of}
       />
       <PerfTable
         title="Sector Relative Performance"
         rows={data.relative}
         labels={data.labels}
         showSpxSeparator={false}
-        asOf={data.as_of}
+        asOf={active === "live" && data.refreshed_at ? `Live · ${data.refreshed_at}` : data.as_of}
       />
     </div>
   );

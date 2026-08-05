@@ -117,6 +117,8 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
         "hv30":         pc.hv30,
         "hv90":         pc.hv90,
         "vrp":          round(pc.iv30 - pc.hv30, 4) if pc.iv30 and pc.hv30 else None,
+        "vrp_rank":     pc.vrp_rank,
+        "hv_rank":      pc.hv_rank,
         "risk_reversal": pc.risk_reversal,
         "skew_rank":    pc.skew_rank,
         "put_call_ratio": pc.put_call_ratio,

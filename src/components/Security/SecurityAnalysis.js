@@ -337,7 +337,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 4 }}>VIEWPOINT</div>
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 4 }}>VIEWPOINT</div>
                 <span style={{
                   display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
                   letterSpacing: "0.1em", color: "#fff",
@@ -347,7 +347,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                 </span>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CONVICTION</div>
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CONVICTION</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: data.conviction != null ? vpColor(data.viewpoint) : GREY }}>
                   {data.conviction != null ? `${data.conviction}%` : "—"}
                 </div>
@@ -358,11 +358,11 @@ export default function SecurityAnalysis({ defaultTicker }) {
           {/* Price row: Last Price, Change */}
           <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>LAST PRICE</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>LAST PRICE</div>
               <div style={{ fontSize: 18, fontWeight: 600 }}>{data.close?.toFixed(2)}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE %</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE %</div>
               <div style={{ fontSize: 18, fontWeight: 600, color: changeColor }}>
                 {changePct != null ? `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%` : "—"}
               </div>
@@ -370,18 +370,44 @@ export default function SecurityAnalysis({ defaultTicker }) {
           </div>
 
           {/* Vol metrics row */}
-          <div style={{ display: "flex", gap: 24, marginBottom: 18, flexWrap: "wrap", fontSize: 11 }}>
+          <div style={{ display: "flex", gap: 24, marginBottom: 18, flexWrap: "wrap", fontSize: 12 }}>
             <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IMPLIED VOL 30D</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IMPLIED VOL 30D</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.iv30 != null ? `${(data.iv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>HISTORICAL VOL (HV30)</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>HISTORICAL VOL (HV30)</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.hv30 != null ? `${(data.hv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IV RANK</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IV RANK</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.iv_rank != null ? `${data.iv_rank.toFixed(2)}%` : "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>VRP</div>
+              {(() => {
+                const vrpPct = data.vrp != null ? data.vrp * 100 : null;
+                const ivr = data.iv_rank;
+                let regime = null, regimeColor = AMBER;
+                if (vrpPct != null && ivr != null) {
+                  if (ivr > 80 && vrpPct < -15)      { regime = "Falling Knife"; regimeColor = RED; }
+                  else if (ivr > 50 && vrpPct < -10)  { regime = "Gamma Trap"; regimeColor = AMBER; }
+                  else if (ivr > 50 && vrpPct > 5)    { regime = "Yield Harvest"; regimeColor = GREEN; }
+                  else if (ivr < 30 && vrpPct > 5)    { regime = "Upside Panic"; regimeColor = AMBER; }
+                  else if (ivr < 20 && vrpPct > -2 && vrpPct < 5) { regime = "Quiet Accumulation"; regimeColor = "#66eebb"; }
+                  else                                 { regime = "Neutral"; regimeColor = GREY; }
+                }
+                return (
+                  <div style={{ fontWeight: 700, color: vrpPct != null ? (vrpPct < 0 ? GREEN : vrpPct > 0 ? RED : LABEL) : GREY }}>
+                    {vrpPct != null ? `${vrpPct.toFixed(2)}%` : "—"}
+                    {regime && (
+                      <span style={{ fontSize: 10, fontWeight: 400, marginLeft: 6, color: regimeColor }}>
+                        {regime}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -392,7 +418,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                 key={tab}
                 onClick={() => setBlock1Tab(tab)}
                 style={{
-                  padding: "8px 16px", fontSize: 10, letterSpacing: "0.12em", fontWeight: 600,
+                  padding: "8px 16px", fontSize: 11, letterSpacing: "0.12em", fontWeight: 600,
                   color: block1Tab === tab ? GREEN : GREY,
                   cursor: "pointer", fontFamily: "monospace",
                   background: "none", border: "none",
@@ -431,7 +457,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   <thead>
                     <tr>
                       {["Timeframe", "Direction", "State", "LRR", "HRR", "Level"].map(h => (
-                        <th key={h} style={{ textAlign: "left", padding: "8px 8px", color: GREY, borderBottom: `1px solid ${BORDER}`, fontSize: 10, letterSpacing: "0.1em" }}>{h}</th>
+                        <th key={h} style={{ textAlign: "left", padding: "8px 8px", color: GREY, borderBottom: `1px solid ${BORDER}`, fontSize: 11, letterSpacing: "0.1em" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -483,7 +509,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
 
         {/* ── Block 2: Signal Score — 2×2 pillar grid ── */}
         <div style={{ flex: 1, minWidth: 340, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "20px 24px" }}>
-          <div style={{ fontSize: 10, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>SIGNAL SCORE</div>
+          <div style={{ fontSize: 12, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>SIGNAL SCORE</div>
 
           {data.alert && (
             <div style={{
@@ -513,8 +539,8 @@ export default function SecurityAnalysis({ defaultTicker }) {
                     {p.score != null ? p.score : "—"}
                   </div>
                   <div style={{ fontSize: 14, color: p.color, letterSpacing: "0.08em", fontWeight: 600, marginBottom: 10 }}>{p.label}</div>
-                  <div style={{ fontSize: 9, letterSpacing: "0.15em", color: GREY, marginBottom: 10 }}>{p.name}</div>
-                  <div style={{ fontSize: 10, color: GREY, lineHeight: 1.6 }}>{p.detail}</div>
+                  <div style={{ fontSize: 11, letterSpacing: "0.15em", color: GREY, marginBottom: 10 }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: "#a8b8c8", lineHeight: 1.6 }}>{p.detail}</div>
                 </div>
               </div>
             ))}
@@ -524,7 +550,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
 
       {/* ═══════════ PRICE & RISK RANGE CHART ═══════════ */}
       <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "20px 24px", marginBottom: 20 }}>
-        <div style={{ fontSize: 10, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>PRICE & RISK RANGE</div>
+        <div style={{ fontSize: 12, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>PRICE & RISK RANGE</div>
 
         {/* Chart controls: toggle left, date ranges right */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
