@@ -1116,25 +1116,36 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         viewpoint = "Neutral"
 
     # ── OBV vol_signal — two independent layers: MA20 slope + 21-bar lookback
-    # Each confirms independently (+5 each). Both must confirm for Confirming.
-    # Both must oppose for Diverging. Mixed = Neutral.
+    # Compared against consensus direction (Trade OR Trend, not conflicting):
+    #   Both aligned → use that direction
+    #   One directional + one Neutral → use the directional one
+    #   Opposing (Bullish vs Bearish) or both Neutral → no comparison, volume_score = 0
+    if trade_dir != "Neutral" and trend_dir != "Neutral" and trade_dir != trend_dir:
+        _vol_dir = "Neutral"   # conflicting — no consensus
+    elif trade_dir != "Neutral":
+        _vol_dir = trade_dir
+    elif trend_dir != "Neutral":
+        _vol_dir = trend_dir
+    else:
+        _vol_dir = "Neutral"
+
     _slope_confirms = (
-        (trade_dir == "Bullish" and obv_slope_early == "rising") or
-        (trade_dir == "Bearish" and obv_slope_early == "falling")
+        (_vol_dir == "Bullish" and obv_slope_early == "rising") or
+        (_vol_dir == "Bearish" and obv_slope_early == "falling")
     )
     _slope_opposes = (
-        (trade_dir == "Bullish" and obv_slope_early == "falling") or
-        (trade_dir == "Bearish" and obv_slope_early == "rising")
+        (_vol_dir == "Bullish" and obv_slope_early == "falling") or
+        (_vol_dir == "Bearish" and obv_slope_early == "rising")
     )
-    _lookback_confirms = (trade_dir in ("Bullish", "Bearish") and obv_dir == trade_dir)
+    _lookback_confirms = (_vol_dir in ("Bullish", "Bearish") and obv_dir == _vol_dir)
     _lookback_opposes  = (
-        trade_dir in ("Bullish", "Bearish") and
-        obv_dir != "Neutral" and obv_dir != trade_dir
+        _vol_dir in ("Bullish", "Bearish") and
+        obv_dir != "Neutral" and obv_dir != _vol_dir
     )
 
-    if trade_dir in ("Bullish", "Bearish") and _slope_confirms and _lookback_confirms:
+    if _vol_dir in ("Bullish", "Bearish") and _slope_confirms and _lookback_confirms:
         vol_signal = "Confirming"
-    elif trade_dir in ("Bullish", "Bearish") and _slope_opposes and _lookback_opposes:
+    elif _vol_dir in ("Bullish", "Bearish") and _slope_opposes and _lookback_opposes:
         vol_signal = "Diverging"
     else:
         vol_signal = "Neutral"
