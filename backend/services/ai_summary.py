@@ -116,6 +116,8 @@ def generate_summary(ticker: str, db: Session, force: bool = False) -> dict | No
             messages=[{"role": "user", "content": prompt}],
         )
         text = resp.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
         parsed = json.loads(text)
         headline = parsed.get("headline", "")

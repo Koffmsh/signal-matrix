@@ -139,6 +139,8 @@ export default function SecurityAnalysis({ defaultTicker }) {
   const [showRR, setShowRR] = useState(true);
   const [block1Tab, setBlock1Tab] = useState("AI ANALYSIS");
   const [contentTab, setContentTab] = useState("METRICS");
+  const [aiSummary, setAiSummary] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/tickers?active=true").then(r => r.json()).then(d => setTickerList(d)).catch(() => {});
@@ -174,6 +176,13 @@ export default function SecurityAnalysis({ defaultTicker }) {
   useEffect(() => {
     if (ticker) {
       fetchDetail(ticker);
+      setAiSummary(null);
+      setAiLoading(true);
+      apiFetch(`/api/security/${encodeURIComponent(ticker)}/summary`)
+        .then(r => r.json())
+        .then(d => { if (d.headline) setAiSummary(d); })
+        .catch(() => {})
+        .finally(() => setAiLoading(false));
       window.scrollTo(0, 0);
     }
   }, [ticker, fetchDetail]);
@@ -421,22 +430,24 @@ export default function SecurityAnalysis({ defaultTicker }) {
           <div style={{ flex: 1 }}>
             {block1Tab === "AI ANALYSIS" && (
               <div>
-                {data.ai_summary ? (
+                {aiLoading ? (
+                  <div style={{ fontSize: 12, color: GREY }}>Analyzing...</div>
+                ) : aiSummary ? (
                   <>
                     <div style={{ fontSize: 14, fontWeight: 600, color: "#e8f4ff", marginBottom: 12 }}>
-                      {data.ai_summary.headline}
+                      {aiSummary.headline}
                     </div>
                     <ul style={{ margin: 0, paddingLeft: 16, lineHeight: 1.8 }}>
-                      {data.ai_summary.bullets.map((b, i) => (
+                      {aiSummary.bullets.map((b, i) => (
                         <li key={i} style={{ fontSize: 12, color: LABEL, marginBottom: 4 }}>{b}</li>
                       ))}
                     </ul>
                     <div style={{ marginTop: 12, fontSize: 10, color: GREY }}>
-                      Generated {data.ai_summary.summary_date} · Regenerate ↻
+                      Generated {aiSummary.summary_date}
                     </div>
                   </>
                 ) : (
-                  <div style={{ fontSize: 12, color: GREY }}>Summary not yet available.</div>
+                  <div style={{ fontSize: 12, color: GREY }}>Summary not available.</div>
                 )}
               </div>
             )}

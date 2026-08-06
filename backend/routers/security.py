@@ -69,27 +69,9 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
                     "hrr": round(hrr_val, 2),
                 })
 
-    today_et = datetime.now(_ET).strftime("%Y-%m-%d")
     ai_summary = db.query(AiSummary).filter(
-        AiSummary.ticker == ticker,
-        AiSummary.summary_date == today_et,
-    ).first()
-
-    if not ai_summary:
-        try:
-            from services.ai_summary import generate_summary
-            generate_summary(ticker, db)
-            ai_summary = db.query(AiSummary).filter(
-                AiSummary.ticker == ticker,
-                AiSummary.summary_date == today_et,
-            ).first()
-        except Exception as e:
-            logger.warning(f"On-demand AI summary for {ticker} failed: {e}")
-
-    if not ai_summary:
-        ai_summary = db.query(AiSummary).filter(
-            AiSummary.ticker == ticker
-        ).order_by(AiSummary.summary_date.desc()).first()
+        AiSummary.ticker == ticker
+    ).order_by(AiSummary.summary_date.desc()).first()
 
     def _tf_data(row):
         if not row:
@@ -169,6 +151,53 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
             "generated_at": ai_summary.created_at,
             "summary_date": ai_summary.summary_date,
         } if ai_summary else None,
+    }
+
+
+@router.get("/{ticker:path}/summary")
+def get_summary(ticker: str, db: Session = Depends(get_db)):
+    ticker = ticker.upper()
+    today_et = datetime.now(_ET).strftime("%Y-%m-%d")
+
+    cached = db.query(AiSummary).filter(
+        AiSummary.ticker == ticker,
+        AiSummary.summary_date == today_et,
+    ).first()
+    if cached:
+        return {
+            "headline": cached.headline,
+            "bullets": json.loads(cached.bullets_json or "[]"),
+            "summary_date": cached.summary_date,
+            "generated_at": cached.created_at,
+            "model": cached.model,
+        }
+
+    from services.ai_summary import generate_summary
+    result = generate_summary(ticker, db)
+    if not result:
+        stale = db.query(AiSummary).filter(
+            AiSummary.ticker == ticker
+        ).order_by(AiSummary.summary_date.desc()).first()
+        if stale:
+            return {
+                "headline": stale.headline,
+                "bullets": json.loads(stale.bullets_json or "[]"),
+                "summary_date": stale.summary_date,
+                "generated_at": stale.created_at,
+                "model": stale.model,
+            }
+        return {"headline": None, "bullets": [], "summary_date": None, "generated_at": None, "model": None}
+
+    row = db.query(AiSummary).filter(
+        AiSummary.ticker == ticker,
+        AiSummary.summary_date == today_et,
+    ).first()
+    return {
+        "headline": row.headline if row else result["headline"],
+        "bullets": json.loads(row.bullets_json) if row else result["bullets"],
+        "summary_date": row.summary_date if row else today_et,
+        "generated_at": row.created_at if row else None,
+        "model": row.model if row else None,
     }
 
 
