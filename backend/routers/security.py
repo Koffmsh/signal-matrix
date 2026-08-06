@@ -12,8 +12,18 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
 import logging
+import math
 
 logger = logging.getLogger(__name__)
+
+
+def _safe(v):
+    """Replace NaN/Inf with None so JSON serialization never fails."""
+    if v is None:
+        return None
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return None
+    return v
 router = APIRouter(prefix="/api/security", tags=["security"])
 _ET = ZoneInfo("America/New_York")
 
@@ -50,11 +60,13 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
             SignalHistory.timeframe == "trade",
         ).order_by(SignalHistory.snapshot_date.asc()).all()
         for h in hist_rows:
-            if h.lrr is not None and h.hrr is not None:
+            lrr_val = _safe(h.lrr)
+            hrr_val = _safe(h.hrr)
+            if lrr_val is not None and hrr_val is not None:
                 rr_history.append({
                     "date": h.snapshot_date,
-                    "lrr": round(h.lrr, 2),
-                    "hrr": round(h.hrr, 2),
+                    "lrr": round(lrr_val, 2),
+                    "hrr": round(hrr_val, 2),
                 })
 
     today_et = datetime.now(_ET).strftime("%Y-%m-%d")
@@ -83,8 +95,8 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
         if not row:
             return None
         return {
-            "lrr":              row.lrr,
-            "hrr":              row.hrr,
+            "lrr":              _safe(row.lrr),
+            "hrr":              _safe(row.hrr),
             "structural_state": row.structural_state,
             "direction":        row.trade_direction,
             "h_value":          row.h_value,
@@ -94,8 +106,8 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
             "lrr_extended":     bool(row.lrr_extended or False),
             "hrr_extended":     bool(row.hrr_extended or False),
             "d_extended":       bool(row.d_extended or False),
-            "pivot_b":          row.pivot_b,
-            "pivot_c":          row.pivot_c,
+            "pivot_b":          _safe(row.pivot_b),
+            "pivot_c":          _safe(row.pivot_c),
         }
 
     vix_pc = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
@@ -107,26 +119,26 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
         "asset_class":     ticker_row.asset_class,
         "sector":          ticker_row.sector,
         "profile_summary": ticker_row.profile_summary,
-        "close":        pc.close,
-        "prev_close":   prev_close,
-        "change_pct":   change_pct,
+        "close":        _safe(pc.close),
+        "prev_close":   _safe(prev_close),
+        "change_pct":   _safe(change_pct),
         "updated_at":   str(pc.updated_at) if pc.updated_at else None,
-        "iv_rank":      pc.rel_iv,
+        "iv_rank":      _safe(pc.rel_iv),
         "iv_source":    pc.iv_source,
-        "iv30":         pc.iv30,
-        "hv30":         pc.hv30,
-        "hv90":         pc.hv90,
-        "vrp":          round(pc.iv30 - pc.hv30, 4) if pc.iv30 and pc.hv30 else None,
-        "vrp_rank":     pc.vrp_rank,
-        "hv_rank":      pc.hv_rank,
-        "risk_reversal": pc.risk_reversal,
-        "skew_rank":    pc.skew_rank,
-        "put_call_ratio": pc.put_call_ratio,
-        "vix_close":    vix_close,
+        "iv30":         _safe(pc.iv30),
+        "hv30":         _safe(pc.hv30),
+        "hv90":         _safe(pc.hv90),
+        "vrp":          _safe(round(pc.iv30 - pc.hv30, 4)) if pc.iv30 and pc.hv30 else None,
+        "vrp_rank":     _safe(pc.vrp_rank),
+        "hv_rank":      _safe(pc.hv_rank),
+        "risk_reversal": _safe(pc.risk_reversal),
+        "skew_rank":    _safe(pc.skew_rank),
+        "put_call_ratio": _safe(pc.put_call_ratio),
+        "vix_close":    _safe(vix_close),
 
         "viewpoint":       trade_row.viewpoint if trade_row else None,
         "viewpoint_since": trade_row.viewpoint_since if trade_row else None,
-        "conviction":      trade_row.conviction if trade_row else None,
+        "conviction":      _safe(trade_row.conviction) if trade_row else None,
         "alert":           bool(trade_row.alert or False) if trade_row else False,
         "vix_regime":      trade_row.vix_regime if trade_row else None,
         "quad_alignment":  trade_row.quad_alignment if trade_row else None,

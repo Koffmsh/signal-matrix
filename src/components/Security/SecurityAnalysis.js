@@ -22,34 +22,26 @@ function vpColor(vp) {
   return GREY;
 }
 
-function normalizePillar(name, raw) {
-  if (raw == null) return null;
+function pillarLabel(name, raw) {
+  if (raw == null) return "—";
   switch (name) {
-    case "PRICE":      return raw === 50 ? 10 : raw === 25 ? 5 : 0;
-    case "VOLUME":     return raw >= 15 ? 10 : raw >= 10 ? 7 : 0;
-    case "VOLATILITY": return raw >= 15 ? 10 : raw >= 10 ? 7 : raw >= 5 ? 3 : 0;
-    case "QUAD":       return Math.round(((raw + 15) / 35) * 10);
-    default:           return 0;
-  }
-}
-
-function pillarLabel(name, score) {
-  if (score == null) return "—";
-  switch (name) {
-    case "PRICE":      return score >= 10 ? "Aligned" : score >= 5 ? "Partial" : "Neutral";
-    case "VOLUME":     return score >= 10 ? "Confirming+" : score >= 7 ? "Confirming" : "Neutral";
-    case "VOLATILITY": return score >= 10 ? "Investable+" : score >= 7 ? "Investable" : score >= 3 ? "Edgy" : "Choppy";
-    case "QUAD":       return score >= 9 ? "Aligned" : score >= 4 ? "Neutral" : "Misaligned";
+    case "PRICE":      return raw >= 50 ? "Aligned" : raw >= 25 ? "Partial" : "Neutral";
+    case "VOLUME":     return raw >= 15 ? "Confirming+" : raw >= 10 ? "Confirming" : "Neutral";
+    case "VOLATILITY": return raw >= 15 ? "Investable+" : raw >= 10 ? "Investable" : raw >= 5 ? "Edgy" : "Choppy";
+    case "QUAD":       return raw > 0 ? "Aligned" : raw < 0 ? "Misaligned" : "Neutral";
     default:           return "—";
   }
 }
 
-function pillarColor(name, score) {
-  if (score == null) return GREY;
-  if (name === "QUAD" && score <= 3) return RED;
-  if (score >= 7) return GREEN;
-  if (score >= 4) return AMBER;
-  return GREY;
+function pillarColor(name, raw) {
+  if (raw == null) return GREY;
+  switch (name) {
+    case "PRICE":      return raw >= 50 ? GREEN : raw >= 25 ? AMBER : GREY;
+    case "VOLUME":     return raw >= 10 ? GREEN : GREY;
+    case "VOLATILITY": return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
+    case "QUAD":       return raw > 0 ? GREEN : raw < 0 ? RED : GREY;
+    default:           return GREY;
+  }
 }
 
 function pillarDetail(name, data) {
@@ -219,16 +211,13 @@ export default function SecurityAnalysis({ defaultTicker }) {
       { name: "VOLUME",     raw: data.volume_score },
       { name: "VOLATILITY", raw: data.vix_score },
       { name: "QUAD",       raw: data.quad_score },
-    ].map(p => {
-      const score = normalizePillar(p.name, p.raw);
-      return {
-        ...p,
-        score,
-        label: pillarLabel(p.name, score),
-        color: pillarColor(p.name, score),
-        detail: pillarDetail(p.name, data),
-      };
-    });
+    ].map(p => ({
+      ...p,
+      score: p.raw,
+      label: pillarLabel(p.name, p.raw),
+      color: pillarColor(p.name, p.raw),
+      detail: pillarDetail(p.name, data),
+    }));
   }, [data]);
 
   if (loading) {
