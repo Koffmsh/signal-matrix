@@ -1193,12 +1193,16 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         if (structural_score == 0 and viewpoint == "Neutral") or _quad_alignment == 0.0:
             quad_score = 0
             quad_align_label = "Neutral"
-        elif _quad_alignment > 0:
-            quad_score = 20 if quad_prob >= 0.45 else 15
-            quad_align_label = "Aligned"
         else:
-            quad_score = -15 if quad_prob >= 0.45 else -11
-            quad_align_label = "Misaligned"
+            _bullish_best  = (viewpoint == "Bullish" and _quad_alignment > 0)
+            _bearish_worst = (viewpoint == "Bearish" and _quad_alignment < 0)
+            _aligned = _bullish_best or _bearish_worst
+            if _aligned:
+                quad_score = 20 if quad_prob >= 0.45 else 15
+                quad_align_label = "Aligned"
+            else:
+                quad_score = -15 if quad_prob >= 0.45 else -11
+                quad_align_label = "Misaligned"
         # Informational quad_mult — stored for popup/debug, not used in v2.0 formula
         quad_mult_val, _ = get_quad_multiplier(viewpoint, asset_class, sector, quad_current, quad_prob)
     else:
