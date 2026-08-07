@@ -22,10 +22,17 @@ function vpColor(vp) {
   return GREY;
 }
 
-function pillarLabel(name, raw) {
+function pillarLabel(name, raw, data) {
   if (raw == null) return "—";
   switch (name) {
-    case "PRICE":      return raw >= 50 ? "Aligned" : raw >= 25 ? "Partial" : "Neutral";
+    case "PRICE": {
+      if (raw >= 50) return data?.viewpoint || "Neutral";
+      if (raw >= 25) {
+        const dir = data?.trade?.direction !== "Neutral" ? data?.trade?.direction : data?.trend?.direction;
+        return dir && dir !== "Neutral" ? `Leaning ${dir}` : "Neutral";
+      }
+      return "Neutral";
+    }
     case "VOLUME":     return raw >= 15 ? "Confirming+" : raw >= 10 ? "Confirming" : "Neutral";
     case "VOLATILITY": return null;
     case "QUAD":       return raw > 0 ? "Aligned" : raw < 0 ? "Misaligned" : "Neutral";
@@ -238,7 +245,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
     ].map(p => ({
       ...p,
       score: p.raw,
-      label: p.name === "VOLATILITY" ? (data.vix_regime || "—") : pillarLabel(p.name, p.raw),
+      label: p.name === "VOLATILITY" ? (data.vix_regime || "—") : pillarLabel(p.name, p.raw, data),
       color: pillarColor(p.name, p.raw),
       detail: pillarDetail(p.name, data),
     }));
@@ -329,7 +336,12 @@ export default function SecurityAnalysis({ defaultTicker }) {
           )}
         </div>
         <div style={{ fontSize: 11, color: GREY }}>
-          {data.updated_at || ""}
+          {data.updated_at ? (() => {
+            try {
+              const d = new Date(data.updated_at.replace(" ", "T"));
+              return d.toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) + " ET";
+            } catch { return data.updated_at; }
+          })() : ""}
         </div>
       </div>
 
@@ -350,7 +362,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 4 }}>VIEWPOINT</div>
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 8 }}>VIEWPOINT</div>
                 <span style={{
                   display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
                   letterSpacing: "0.1em", color: "#fff",
@@ -359,8 +371,8 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   {data.viewpoint?.toUpperCase() || "NEUTRAL"}
                 </span>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CONVICTION</div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 8 }}>CONVICTION</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: data.conviction != null ? vpColor(data.viewpoint) : GREY }}>
                   {data.conviction != null ? `${data.conviction}%` : "—"}
                 </div>
@@ -383,25 +395,31 @@ export default function SecurityAnalysis({ defaultTicker }) {
           </div>
 
           {/* Vol metrics row */}
-          <div style={{ display: "flex", gap: 24, marginBottom: 18, flexWrap: "wrap", fontSize: 12 }}>
+          <div style={{ display: "flex", gap: 24, marginBottom: 24, flexWrap: "wrap", fontSize: 12 }}>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IMPLIED VOL 30D</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>IMPLIED VOL 30D</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.iv30 != null ? `${(data.iv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>HISTORICAL VOL (HV30)</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>HISTORICAL VOL (HV30)</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.hv30 != null ? `${(data.hv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>IV RANK</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>IV RANK</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.iv_rank != null ? `${data.iv_rank.toFixed(2)}%` : "—"}</div>
             </div>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 2 }}>VRP</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>VRP</div>
+              <div style={{ fontWeight: 700, color: data.vrp != null ? (data.vrp < 0 ? GREEN : data.vrp > 0 ? RED : LABEL) : GREY }}>
+                {data.vrp != null ? `${(data.vrp * 100).toFixed(2)}%` : "—"}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>VOLATILITY REGIME</div>
               {(() => {
                 const vrpPct = data.vrp != null ? data.vrp * 100 : null;
                 const ivr = data.iv_rank;
-                let regime = null, regimeColor = AMBER;
+                let regime = "—", regimeColor = GREY;
                 if (vrpPct != null && ivr != null) {
                   if (ivr > 80 && vrpPct < -15)      { regime = "Falling Knife"; regimeColor = RED; }
                   else if (ivr > 50 && vrpPct < -10)  { regime = "Gamma Trap"; regimeColor = AMBER; }
@@ -410,16 +428,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   else if (ivr < 20 && vrpPct > -2 && vrpPct < 5) { regime = "Quiet Accumulation"; regimeColor = "#66eebb"; }
                   else                                 { regime = "Neutral"; regimeColor = GREY; }
                 }
-                return (
-                  <div style={{ fontWeight: 700, color: vrpPct != null ? (vrpPct < 0 ? GREEN : vrpPct > 0 ? RED : LABEL) : GREY }}>
-                    {vrpPct != null ? `${vrpPct.toFixed(2)}%` : "—"}
-                    {regime && (
-                      <span style={{ fontSize: 10, fontWeight: 400, marginLeft: 6, color: regimeColor }}>
-                        {regime}
-                      </span>
-                    )}
-                  </div>
-                );
+                return <div style={{ fontWeight: 700, color: regimeColor }}>{regime}</div>;
               })()}
             </div>
           </div>
@@ -442,7 +451,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
           </div>
 
           {/* Block 1 tab content */}
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, maxHeight: 115, overflowY: "auto" }}>
             {block1Tab === "AI ANALYSIS" && (
               <div>
                 {aiLoading ? (
