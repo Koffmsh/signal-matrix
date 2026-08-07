@@ -27,7 +27,7 @@ function pillarLabel(name, raw) {
   switch (name) {
     case "PRICE":      return raw >= 50 ? "Aligned" : raw >= 25 ? "Partial" : "Neutral";
     case "VOLUME":     return raw >= 15 ? "Confirming+" : raw >= 10 ? "Confirming" : "Neutral";
-    case "VOLATILITY": return raw >= 15 ? "Investable+" : raw >= 10 ? "Investable" : raw >= 5 ? "Edgy" : "Choppy";
+    case "VOLATILITY": return null;
     case "QUAD":       return raw > 0 ? "Aligned" : raw < 0 ? "Misaligned" : "Neutral";
     default:           return "—";
   }
@@ -238,7 +238,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
     ].map(p => ({
       ...p,
       score: p.raw,
-      label: pillarLabel(p.name, p.raw),
+      label: p.name === "VOLATILITY" ? (data.vix_regime || "—") : pillarLabel(p.name, p.raw),
       color: pillarColor(p.name, p.raw),
       detail: pillarDetail(p.name, data),
     }));
