@@ -157,7 +157,7 @@ def get_vol_score(vol_close: float | None, vol_hrr: float | None,
       Investable+  close < ceiling AND HRR < ceiling   +15
       Investable   close < ceiling                      +10
       Choppy       ceiling ≤ close < danger_floor         0
-      Danger       close ≥ danger_floor                   0
+      Danger       close ≥ danger_floor                 -10
 
     Bearish (asymmetric — +5 floor):
       Danger       close ≥ danger_floor                 +15
@@ -184,7 +184,7 @@ def get_vol_score(vol_close: float | None, vol_hrr: float | None,
     elif vol_close < danger_floor:
         return 0, "Choppy"
     else:
-        return 0, "Danger"
+        return -10, "Danger"
 
 
 def get_vix_score(vol_close: float | None, asset_class: str,

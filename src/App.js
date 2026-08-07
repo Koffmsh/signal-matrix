@@ -1122,7 +1122,7 @@ function Dashboard() {
               <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Structural (50) + Quad (±20) + Volume (15) + VIX (15) → floor(0) → dampener → cap 100&#10;Show ≥45 · Green/Red ≥45 (Bullish/Bearish) · Grey ≥45 (Neutral) · ⚡ ≥80" />
+                title="Structural (50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → dampener → cap 105&#10;Show ≥45 · Green/Red ≥45 (Bullish/Bearish) · Grey ≥45 (Neutral) · ⚡ ≥80" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -1205,7 +1205,7 @@ function Dashboard() {
           ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Vol Regime",   row.vixRegime || "—",
                            (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
-                           false, "Volatility regime — routed per asset (VIX/VXN/RVX/GVZ/OVX/MOVE)\nBullish/Neutral: Investable+ (HRR<threshold) +15 · Investable +10 · Choppy +0 · Danger +0\nBearish: Danger +15 · Choppy +10 · Investable +5 (floor)\nNo vol index: +15 flat"],
+                           false, "Volatility regime — routed per asset (VIX/VXN/RVX/GVZ/OVX/MOVE)\nBullish/Neutral: Investable+ (HRR<threshold) +15 · Investable +10 · Choppy +0 · Danger −10\nBearish: Danger +15 · Choppy +10 · Investable +5 (floor)\nNo vol index: +15 flat"],
           ...(row.quadAlignment ? [
             ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
                                row.quadAlignment === "Aligned" ? "#00e5a0" : row.quadAlignment === "Misaligned" ? "#ff4d6d" : "#8899aa",
