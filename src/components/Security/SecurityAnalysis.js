@@ -33,7 +33,7 @@ function pillarLabel(name, raw, data) {
       }
       return "Neutral";
     }
-    case "VOLUME":     return raw >= 15 ? "Confirming+" : raw >= 10 ? "Confirming" : "Neutral";
+    case "VOLUME":     return data.obv_direction || "Neutral";
     case "VOLATILITY": return null;
     case "QUAD":       return raw > 0 ? "Aligned" : raw < 0 ? "Misaligned" : "Neutral";
     default:           return "—";
@@ -44,7 +44,7 @@ function pillarColor(name, raw) {
   if (raw == null) return GREY;
   switch (name) {
     case "STRUCTURE":      return raw >= 50 ? GREEN : raw >= 25 ? AMBER : GREY;
-    case "VOLUME":     return raw >= 10 ? GREEN : GREY;
+    case "VOLUME":     return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "VOLATILITY": return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "QUAD":       return raw > 0 ? GREEN : raw < 0 ? RED : GREY;
     default:           return GREY;
@@ -65,10 +65,9 @@ function pillarDetail(name, data) {
     }
     case "VOLUME": {
       const dir = data.obv_direction || "Neutral";
-      const confirming = data.vol_signal === "Confirming";
-      if (confirming && dir !== "Neutral") return `Volume is ${dir.toLowerCase()} and confirming the viewpoint.`;
-      if (!confirming && dir !== "Neutral") return `Volume is ${dir.toLowerCase()} and not confirming the viewpoint.`;
-      return "Volume is neutral with no directional bias.";
+      if (dir === "Bullish" || dir === "Bearish") return `Volume is ${dir.toLowerCase()} — both OBV layers aligned.`;
+      if (dir === "Leaning Bullish" || dir === "Leaning Bearish") return `Volume is ${dir.toLowerCase()} — one OBV layer directional.`;
+      return "Volume is neutral — no directional bias.";
     }
     case "VOLATILITY": {
       const volVal = data.vix_close != null ? data.vix_close.toFixed(1) : null;

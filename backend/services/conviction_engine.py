@@ -52,23 +52,63 @@ def _build_obv(closes: list, volumes: list) -> list:
 _OBV_LOOKBACK = 21   # 1-month (21 trading days) OBV level comparison
 
 
-def _obv_direction(closes: list, volumes: list) -> str:
+def _obv_lookback_direction(closes: list, volumes: list) -> str:
     """
-    OBV trend direction via 21-bar lookback comparison.
-    Current OBV vs OBV 21 bars ago: higher → Bullish, lower → Bearish, equal → Neutral.
-    Requires at least 22 bars (21 lookback + current). Returns 'Bullish' | 'Bearish' | 'Neutral'.
+    OBV 21-bar lookback: current OBV vs OBV 21 bars ago.
+    Returns 'Bullish' | 'Bearish' | 'Neutral'.
     """
     obv = _build_obv(closes, volumes)
     if len(obv) < _OBV_LOOKBACK + 1:
         return "Neutral"
-
     current = obv[-1]
     prior   = obv[-1 - _OBV_LOOKBACK]
-
     if current > prior:
         return "Bullish"
     if current < prior:
         return "Bearish"
+    return "Neutral"
+
+
+def _obv_direction(slope_dir: str, lookback_dir: str) -> str:
+    """
+    Combined OBV direction from both layers (MA20 slope + 21-bar lookback).
+    Mirrors Structure pillar logic: both aligned → full direction,
+    one directional + one Neutral → Leaning, opposing → Neutral.
+
+    slope_dir:    'rising' | 'falling' | 'flat' (from OBV MA20 slope)
+    lookback_dir: 'Bullish' | 'Bearish' | 'Neutral' (from 21-bar lookback)
+
+    Returns: 'Bullish' | 'Bearish' | 'Leaning Bullish' | 'Leaning Bearish' | 'Neutral'
+    """
+    slope_bull = slope_dir == "rising"
+    slope_bear = slope_dir == "falling"
+    slope_neutral = not slope_bull and not slope_bear
+
+    look_bull = lookback_dir == "Bullish"
+    look_bear = lookback_dir == "Bearish"
+    look_neutral = lookback_dir == "Neutral"
+
+    # Both aligned
+    if slope_bull and look_bull:
+        return "Bullish"
+    if slope_bear and look_bear:
+        return "Bearish"
+
+    # Opposing → Neutral
+    if (slope_bull and look_bear) or (slope_bear and look_bull):
+        return "Neutral"
+
+    # One directional, one Neutral → Leaning
+    if slope_bull and look_neutral:
+        return "Leaning Bullish"
+    if look_bull and slope_neutral:
+        return "Leaning Bullish"
+    if slope_bear and look_neutral:
+        return "Leaning Bearish"
+    if look_bear and slope_neutral:
+        return "Leaning Bearish"
+
+    # Both Neutral
     return "Neutral"
 
 
@@ -962,15 +1002,15 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     # MA/STD computed from raw closes (v1.9.1); Trend Level uses break pivot directly.
     ma200       = float(cache_row.ma200)       if (cache_row and cache_row.ma200 is not None) else None
 
-    # OBV direction (21-bar lookback) + MA20 slope — computed once, used in vol_signal and conviction
+    # OBV two-layer direction — 21-bar lookback + MA20 slope combined
     if prices and volumes and len(prices) == len(volumes):
-        obv_dir  = _obv_direction(prices, volumes)
-        obv_ma20 = _build_obv_ma20(prices, volumes)
+        _lookback_dir = _obv_lookback_direction(prices, volumes)
+        obv_ma20      = _build_obv_ma20(prices, volumes)
     else:
-        obv_dir  = "Neutral"
-        obv_ma20 = []
+        _lookback_dir = "Neutral"
+        obv_ma20      = []
 
-    # OBV MA20 slope — needed for strict vol_signal check and v2.0 volume_score
+    # OBV MA20 slope direction + acceleration
     if len(obv_ma20) >= 6:
         _slope_now  = obv_ma20[-1] - obv_ma20[-4]
         _slope_prev = obv_ma20[-2] - obv_ma20[-5]
@@ -986,6 +1026,9 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     else:
         obv_slope_early = "flat"
         obv_slope_trend = "flat"
+
+    # Combined OBV direction from both layers
+    obv_dir = _obv_direction(obv_slope_early, _lookback_dir)
 
     h_map = {
         "trade": getattr(hurst_row, "h_trade", None) if hurst_row else None,
@@ -1125,42 +1168,28 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     else:
         viewpoint = "Neutral"
 
-    # ── OBV vol_signal — two independent layers: MA20 slope + 21-bar lookback
-    # Compared against consensus direction (Trade OR Trend, not conflicting):
-    #   Both aligned → use that direction
-    #   One directional + one Neutral → use the directional one
-    #   Opposing (Bullish vs Bearish) or both Neutral → no comparison, volume_score = 0
+    # ── OBV direction vs structure — volume scoring mirrors structure logic
+    # obv_dir is the two-layer combined direction: Bullish / Bearish / Leaning Bullish / Leaning Bearish / Neutral
+    # Structure's directional bias determines what volume is checked against.
     if trade_dir != "Neutral" and trend_dir != "Neutral" and trade_dir != trend_dir:
-        _vol_dir = "Neutral"   # conflicting — no consensus
+        _struct_bias = "Neutral"   # opposing — no directional bias
     elif trade_dir != "Neutral":
-        _vol_dir = trade_dir
+        _struct_bias = trade_dir
     elif trend_dir != "Neutral":
-        _vol_dir = trend_dir
+        _struct_bias = trend_dir
     else:
-        _vol_dir = "Neutral"
+        _struct_bias = "Neutral"
 
-    _slope_confirms = (
-        (_vol_dir == "Bullish" and obv_slope_early == "rising") or
-        (_vol_dir == "Bearish" and obv_slope_early == "falling")
-    )
-    _slope_opposes = (
-        (_vol_dir == "Bullish" and obv_slope_early == "falling") or
-        (_vol_dir == "Bearish" and obv_slope_early == "rising")
-    )
-    _lookback_confirms = (_vol_dir in ("Bullish", "Bearish") and obv_dir == _vol_dir)
-    _lookback_opposes  = (
-        _vol_dir in ("Bullish", "Bearish") and
-        obv_dir != "Neutral" and obv_dir != _vol_dir
-    )
+    # Does OBV direction align with structure's directional bias?
+    _obv_is_bull = obv_dir in ("Bullish", "Leaning Bullish")
+    _obv_is_bear = obv_dir in ("Bearish", "Leaning Bearish")
+    _obv_full    = obv_dir in ("Bullish", "Bearish")
+    _obv_leaning = obv_dir in ("Leaning Bullish", "Leaning Bearish")
 
-    if _vol_dir in ("Bullish", "Bearish") and _slope_confirms and _lookback_confirms:
-        vol_signal = "Confirming"
-    elif _vol_dir in ("Bullish", "Bearish") and _slope_opposes and _lookback_opposes:
-        vol_signal = "Diverging"
-    else:
-        vol_signal = "Neutral"
-
-    obv_confirming = vol_signal == "Confirming"
+    obv_confirming = (
+        (_struct_bias == "Bullish" and _obv_is_bull) or
+        (_struct_bias == "Bearish" and _obv_is_bear)
+    )
 
     # ── Vol index close + HRR — route ticker to its vol index ──────────────
     _vol_index = _resolve_vol_index(ticker, asset_class)
@@ -1226,17 +1255,19 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         quad_mult_val    = 1.00
 
     # Component 3 — Volume (max 15)
-    # Two independent layers: MA20 slope confirms (+5), 21-bar lookback confirms (+5).
-    # Acceleration bonus (+5) only when both layers confirm (Confirming).
+    # Mirrors Structure pillar: both OBV metrics aligned + matches structure = full (10),
+    # one directional + one Neutral matching structure = partial (5), opposing = 0.
+    # Acceleration bonus (+5) only on full alignment (obv_dir = Bullish/Bearish).
     volume_score = 0
-    if _slope_confirms:
-        volume_score += 5
-    if _lookback_confirms:
-        volume_score += 5
-    if obv_confirming:
-        if ((trade_dir == "Bullish" and obv_slope_trend == "increasing") or
-                (trade_dir == "Bearish" and obv_slope_trend == "decreasing")):
-            volume_score += 5
+    if _struct_bias == "Neutral":
+        volume_score = 0
+    elif obv_confirming and _obv_full:
+        volume_score = 10
+        if ((_struct_bias == "Bullish" and obv_slope_trend == "increasing") or
+                (_struct_bias == "Bearish" and obv_slope_trend == "decreasing")):
+            volume_score = 15
+    elif obv_confirming and _obv_leaning:
+        volume_score = 5
 
     # Component 4 — Volatility (max 15, routed per vol index)
     vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
@@ -1295,7 +1326,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         "structural_score": structural_score,
         "volume_score":    volume_score,
         "vix_score":       vix_score,
-        "vol_signal":      vol_signal,
+        "vol_signal":      None,
         "obv_direction":   obv_dir,
         "obv_confirming":  obv_confirming,
         "alert":           alert,

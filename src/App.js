@@ -329,7 +329,7 @@ function defaultSort(a, b) {
 
 // ── Color helpers ────────────────────────────────────────────────────────────
 const dirIcon    = (d)  => d === "Bullish" ? "▲" : d === "Bearish" ? "▼" : "—";
-const dirColor   = (d)  => d === "Bullish" ? "#00e5a0" : d === "Bearish" ? "#ff4d6d" : "#8899aa";
+const dirColor   = (d)  => (d === "Bullish" || d === "Leaning Bullish") ? "#00e5a0" : (d === "Bearish" || d === "Leaning Bearish") ? "#ff4d6d" : "#8899aa";
 const vpColor    = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
 const convColor  = (c)        => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
 // v2.0: Neutral viewpoint → always grey regardless of score; Bullish/Bearish → score-based color
@@ -1202,7 +1202,6 @@ function Dashboard() {
           ] : []),
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColorVP(row.conviction, row.viewpoint) : "#8899aa", false],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
-          ["Vol Signal vs Trade", row.obvConfirming ? "Confirming ✓" : row.obvDirection !== "Neutral" ? "Diverging ✗" : "Neutral —", row.obvConfirming ? "#00e5a0" : row.obvDirection !== "Neutral" ? "#f0b429" : "#8899aa", false],
           ["Vol Regime",   row.vixRegime || "—",
                            (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
                            false, "Volatility regime — routed per asset (VIX/VXN/RVX/GVZ/OVX/MOVE)\nBullish/Neutral: Investable+ (HRR<threshold) +15 · Investable +10 · Choppy +0 · Danger −10\nBearish: Danger +15 · Choppy +10 · Investable +5 (floor)\nNo vol index: +15 flat"],
