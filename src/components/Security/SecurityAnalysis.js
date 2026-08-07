@@ -94,6 +94,21 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
+function PriceBubble({ viewBox, value, color, textColor, yOffset }) {
+  const w = value.length * 6.0 + 4;
+  const h = 16;
+  const rx = (viewBox?.x ?? 0) + (viewBox?.width ?? 0) + 8;
+  const ry = (viewBox?.y ?? 0) - h / 2 + (yOffset || 0);
+  return (
+    <g>
+      <rect x={rx} y={ry} width={w} height={h} rx={3} fill={color} />
+      <text x={rx + w / 2} y={ry + h / 2} textAnchor="middle" dominantBaseline="central" fill={textColor || "#fff"} fontSize={9} fontFamily="monospace" fontWeight={600}>
+        {value}
+      </text>
+    </g>
+  );
+}
+
 function XTick({ x, y, payload }) {
   const val = payload?.value || "";
   const parts = val.split("-");
@@ -580,8 +595,8 @@ export default function SecurityAnalysis({ defaultTicker }) {
         </div>
 
         <ResponsiveContainer width="100%" height={400}>
-          <ComposedChart data={chartData} margin={{ top: 10, right: 20, bottom: 5, left: 10 }}>
-            <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
+          <ComposedChart data={chartData} margin={{ top: 20, right: 55, bottom: 10, left: 10 }}>
+            <CartesianGrid stroke="#3a4f65" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="date" tick={<XTick />} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={60} />
             <YAxis
               domain={["auto", "auto"]}
@@ -595,12 +610,34 @@ export default function SecurityAnalysis({ defaultTicker }) {
             {showRR && lrr != null && hrr != null && (
               <ReferenceArea y1={lrr} y2={hrr} fill={GREEN} fillOpacity={0.06} />
             )}
+
             {showRR && lrr != null && (
-              <ReferenceLine y={lrr} stroke={GREEN} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: `LRR $${lrr.toFixed(2)}`, position: "right", fill: GREEN, fontSize: 9, fontFamily: "monospace" }} />
+              <ReferenceLine y={lrr} stroke={GREEN} strokeDasharray="6 4" strokeWidth={1.5} label={<PriceBubble value={`$${lrr.toFixed(2)}`} color={GREEN} />} />
             )}
             {showRR && hrr != null && (
-              <ReferenceLine y={hrr} stroke={RED} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: `HRR $${hrr.toFixed(2)}`, position: "right", fill: RED, fontSize: 9, fontFamily: "monospace" }} />
+              <ReferenceLine y={hrr} stroke={RED} strokeDasharray="6 4" strokeWidth={1.5} label={<PriceBubble value={`$${hrr.toFixed(2)}`} color={RED} />} />
             )}
+            {data.close != null && (() => {
+              let yOff = 0;
+              if (showRR && chartData.length > 0) {
+                const prices = chartData.map(d => d.close).filter(Boolean);
+                const yMin = Math.min(...prices, lrr || Infinity, hrr || -Infinity);
+                const yMax = Math.max(...prices, lrr || -Infinity, hrr || Infinity);
+                const range = yMax - yMin || 1;
+                const pxPerUnit = 360 / range;
+                if (hrr != null) {
+                  const gapPx = Math.abs(data.close - hrr) * pxPerUnit;
+                  if (gapPx < 18) yOff = 18 - gapPx;
+                }
+                if (lrr != null) {
+                  const gapPx = Math.abs(data.close - lrr) * pxPerUnit;
+                  if (gapPx < 18 && (yOff === 0 || data.close > lrr)) yOff = -(18 - gapPx);
+                }
+              }
+              return (
+                <ReferenceLine y={data.close} stroke="transparent" label={<PriceBubble value={`$${data.close.toFixed(2)}`} color="#ffffff" textColor="#0a1628" yOffset={yOff} />} />
+              );
+            })()}
 
             <Line type="linear" dataKey="close" stroke="#e8f4ff" strokeWidth={1.5} dot={false} activeDot={{ r: 3, fill: "#e8f4ff" }} />
           </ComposedChart>
@@ -616,11 +653,11 @@ export default function SecurityAnalysis({ defaultTicker }) {
             <>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ width: 20, height: 0, display: "inline-block", borderTop: `2px dashed ${GREEN}` }} />
-                <span style={{ color: LABEL }}>LRR (Buy Trade)</span>
+                <span style={{ color: LABEL }}>LRR (Buy/Add)</span>
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ width: 20, height: 0, display: "inline-block", borderTop: `2px dashed ${RED}` }} />
-                <span style={{ color: LABEL }}>HRR (Sell Trade)</span>
+                <span style={{ color: LABEL }}>HRR (Sell/Reduce)</span>
               </span>
             </>
           )}
