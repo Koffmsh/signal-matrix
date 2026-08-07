@@ -292,6 +292,13 @@ export default function SecurityAnalysis({ defaultTicker }) {
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: "#e8f4ff", fontFamily: "monospace", padding: "24px 32px" }}>
+      <style>{`
+        .sa-tab-scroll::-webkit-scrollbar { width: 4px; }
+        .sa-tab-scroll::-webkit-scrollbar-track { background: transparent; }
+        .sa-tab-scroll::-webkit-scrollbar-thumb { background: #445566; border-radius: 2px; }
+        .sa-tab-scroll::-webkit-scrollbar-thumb:hover { background: #667788; }
+        .sa-tab-scroll { scrollbar-width: thin; scrollbar-color: #445566 transparent; }
+      `}</style>
 
       {/* ═══════════ TOP BAR ═══════════ */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -451,7 +458,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
           </div>
 
           {/* Block 1 tab content */}
-          <div style={{ flex: 1, maxHeight: 115, overflowY: "auto" }}>
+          <div className="sa-tab-scroll" style={{ flex: 1, maxHeight: 115, overflowY: "auto" }}>
             {block1Tab === "AI ANALYSIS" && (
               <div>
                 {aiLoading ? (
