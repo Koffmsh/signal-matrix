@@ -102,98 +102,108 @@ def get_effective_h_trend(asset_class: str, ticker: str, viewpoint: str,
     return h_trend  # fallback — insufficient directional history
 
 
-VIX_REGIME_ASSET_CLASSES = {"Domestic Equities"}
+# ── Vol Index Routing ─────────────────────────────────────────────────────────
+# Maps ticker → vol index ticker for conviction Component 4.
+# Tickers not listed here fall through to asset-class default (VIX for
+# Domestic Equities, flat +15 for everything else).
+
+VOL_INDEX_TICKER_MAP = {
+    # VXN — Nasdaq-heavy
+    "QQQ": "VXN", "NDX": "VXN", "XLK": "VXN", "SMH": "VXN", "SOXX": "VXN",
+    "CIBR": "VXN", "QTUM": "VXN", "GRID": "VXN",
+    "AAPL": "VXN", "MSFT": "VXN", "NVDA": "VXN", "AVGO": "VXN",
+    "GOOGL": "VXN", "META": "VXN", "NFLX": "VXN",
+    # RVX — Russell 2000
+    "IWM": "RVX", "RUT": "RVX",
+    # GVZ — Gold
+    "GLD": "GVZ", "SGOL": "GVZ", "/GC": "GVZ",
+    # OVX — Oil / Energy
+    "USO": "OVX", "/CL": "OVX", "XOP": "OVX", "OIH": "OVX",
+    # MOVE — Fixed Income
+    "TLT": "MOVE", "/ZN": "MOVE", "SHY": "MOVE", "IEF": "MOVE",
+    "VGIT": "MOVE", "LQD": "MOVE", "MBB": "MOVE", "PFF": "MOVE", "TIP": "MOVE",
+}
+
+# Per-index thresholds: (investable_ceiling, danger_floor)
+# Three tiers: Investable (< ceiling), Choppy (ceiling to danger), Danger (≥ danger)
+VOL_INDEX_THRESHOLDS = {
+    "VIX":  (19, 30),
+    "VXN":  (22, 32),
+    "RVX":  (22, 32),
+    "GVZ":  (22, 32),
+    "OVX":  (38, 60),
+    "MOVE": (85, 120),
+}
 
 
-def get_vix_mult(vix_close: float | None, asset_class: str) -> tuple:
+def _resolve_vol_index(ticker: str, asset_class: str) -> str | None:
+    """Return the vol index ticker for a given asset ticker, or None for flat +15."""
+    if ticker in VOL_INDEX_TICKER_MAP:
+        return VOL_INDEX_TICKER_MAP[ticker]
+    if asset_class == "Domestic Equities":
+        return "VIX"
+    return None
+
+
+def get_vol_score(vol_close: float | None, vol_hrr: float | None,
+                  thresholds: tuple, viewpoint: str = "Neutral") -> tuple:
     """
-    Layer 4 — VIX regime multiplier, asset-class gated.
-    Only applies to Domestic Equities; all other asset classes return (1.00, 'N/A').
+    Component 4 — Volatility additive score (v2.2).
+    Returns (vol_score, vol_zone).
 
-    Thresholds (locked):
-      Investable  VIX < 19   × 1.10
-      Edgy        19–23      × 1.00
-      Choppy      24–29      × 0.90
-      Danger      ≥ 30       × 0.80
+    Generic scorer for any vol index. Three tiers (Edgy eliminated):
+
+    Bullish / Neutral:
+      Investable+  close < ceiling AND HRR < ceiling   +15
+      Investable   close < ceiling                      +10
+      Choppy       ceiling ≤ close < danger_floor         0
+      Danger       close ≥ danger_floor                   0
+
+    Bearish (asymmetric — +5 floor):
+      Danger       close ≥ danger_floor                 +15
+      Choppy       ceiling ≤ close < danger_floor       +10
+      Investable   close < ceiling                      + 5
     """
-    if asset_class not in VIX_REGIME_ASSET_CLASSES:
-        return 1.00, "N/A"
-    if vix_close is None:
-        return 1.00, "Unknown"
-    if vix_close < 19:
-        return 1.10, "Investable"
-    elif vix_close < 24:
-        return 1.00, "Edgy"
-    elif vix_close < 30:
-        return 0.90, "Choppy"
-    else:
-        return 0.80, "Danger"
-
-
-def get_vix_score(vix_close: float | None, asset_class: str,
-                  vix_hrr: float | None = None,
-                  viewpoint: str = "Neutral") -> tuple:
-    """
-    Component 4 — VIX additive score (v2.0).
-    Returns (vix_score, vix_zone).
-
-    Non-equity asset classes receive full credit (+15) — no VIX penalty.
-    Missing VIX row defaults to full credit (no crash assumed).
-
-    Direction-aware: elevated VIX is a tailwind for shorts, headwind for longs.
-
-    Bullish / Neutral thresholds:
-      Investable+  VIX < 19 AND VIX HRR < 19   +15
-      Investable   VIX < 19 (HRR still elevated) +10
-      Edgy         19–23                          + 5
-      Choppy       24–29                            0
-      Danger       ≥ 30                             0
-
-    Bearish thresholds (asymmetric — floor of +5):
-      Danger       ≥ 30                           +15
-      Choppy       24–29                          +10
-      Edgy         19–23                          + 5
-      Investable   < 19                           + 5
-    """
-    if asset_class not in VIX_REGIME_ASSET_CLASSES:
-        return 15, "N/A"
-    if vix_close is None:
+    if vol_close is None:
         return 15, "Unknown"
 
+    ceiling, danger_floor = thresholds
+
     if viewpoint == "Bearish":
-        if vix_close >= 30:
+        if vol_close >= danger_floor:
             return 15, "Danger"
-        elif vix_close >= 24:
+        elif vol_close >= ceiling:
             return 10, "Choppy"
         else:
-            return  5, "Investable" if vix_close < 19 else "Edgy"
+            return 5, "Investable"
 
-    if vix_close < 19:
-        if vix_hrr is not None and vix_hrr < 19:
+    if vol_close < ceiling:
+        if vol_hrr is not None and vol_hrr < ceiling:
             return 15, "Investable"
         return 10, "Investable"
-    elif vix_close < 24:
-        return  5, "Edgy"
-    elif vix_close < 30:
-        return  0, "Choppy"
+    elif vol_close < danger_floor:
+        return 0, "Choppy"
     else:
-        return  0, "Danger"
+        return 0, "Danger"
 
 
-def get_vix_regime_multiplier(db) -> tuple:
-    """Legacy helper — returns (multiplier, zone_label) for non-gated VIX display."""
-    vix_row = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
-    vix_close = float(vix_row.close) if (vix_row and vix_row.close is not None) else None
-    if vix_close is None:
-        return 1.00, "Unknown"
-    if vix_close < 19:
-        return 1.10, "Investable"
-    elif vix_close < 24:
-        return 1.00, "Edgy"
-    elif vix_close < 30:
-        return 0.90, "Choppy"
-    else:
-        return 0.80, "Danger"
+def get_vix_score(vol_close: float | None, asset_class: str,
+                  vix_hrr: float | None = None,
+                  viewpoint: str = "Neutral",
+                  vol_index: str | None = None) -> tuple:
+    """
+    Component 4 — Volatility additive score (v2.2).
+    Returns (vix_score, vix_zone).
+
+    Wraps get_vol_score with index routing. If vol_index is None, returns
+    flat +15 (no applicable vol index for this asset class).
+    """
+    if vol_index is None:
+        return 15, "N/A"
+    thresholds = VOL_INDEX_THRESHOLDS.get(vol_index)
+    if thresholds is None:
+        return 15, "N/A"
+    return get_vol_score(vol_close, vix_hrr, thresholds, viewpoint)
 
 
 # ── Quad Alignment ────────────────────────────────────────────────────────────
@@ -1152,14 +1162,19 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
     obv_confirming = vol_signal == "Confirming"
 
-    # ── VIX close + HRR — read once; used for Component 4 and display ───────
-    vix_row   = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first() if db else None
-    vix_close = float(vix_row.close) if (vix_row and vix_row.close is not None) else None
-    vix_sig_row = db.query(SignalOutput).filter(
-        SignalOutput.ticker    == "VIX",
-        SignalOutput.timeframe == "trade",
-    ).first() if db else None
-    vix_hrr = float(vix_sig_row.hrr) if (vix_sig_row and vix_sig_row.hrr is not None) else None
+    # ── Vol index close + HRR — route ticker to its vol index ──────────────
+    _vol_index = _resolve_vol_index(ticker, asset_class)
+    if _vol_index and db:
+        _vol_row = db.query(PriceCache).filter(PriceCache.ticker == _vol_index).first()
+        vix_close = float(_vol_row.close) if (_vol_row and _vol_row.close is not None) else None
+        _vol_sig = db.query(SignalOutput).filter(
+            SignalOutput.ticker    == _vol_index,
+            SignalOutput.timeframe == "trade",
+        ).first()
+        vix_hrr = float(_vol_sig.hrr) if (_vol_sig and _vol_sig.hrr is not None) else None
+    else:
+        vix_close = None
+        vix_hrr = None
 
     # ── Effective H — display + regime classification only (not in conviction) ─
     h_eff = get_effective_h_trend(
@@ -1223,9 +1238,9 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
                 (trade_dir == "Bearish" and obv_slope_trend == "decreasing")):
             volume_score += 5
 
-    # Component 4 — VIX/Vol (max 15, Domestic Equities only)
+    # Component 4 — Volatility (max 15, routed per vol index)
     vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
-                                        viewpoint=viewpoint)
+                                        viewpoint=viewpoint, vol_index=_vol_index)
 
     # Assembly: sum → floor(0) → dampener → cap(100)
     conviction_sum = structural_score + quad_score + volume_score + vix_score

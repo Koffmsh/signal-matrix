@@ -25,7 +25,7 @@ function vpColor(vp) {
 function pillarLabel(name, raw, data) {
   if (raw == null) return "—";
   switch (name) {
-    case "PRICE": {
+    case "STRUCTURE": {
       if (raw >= 50) return data?.viewpoint || "Neutral";
       if (raw >= 25) {
         const dir = data?.trade?.direction !== "Neutral" ? data?.trade?.direction : data?.trend?.direction;
@@ -43,7 +43,7 @@ function pillarLabel(name, raw, data) {
 function pillarColor(name, raw) {
   if (raw == null) return GREY;
   switch (name) {
-    case "PRICE":      return raw >= 50 ? GREEN : raw >= 25 ? AMBER : GREY;
+    case "STRUCTURE":      return raw >= 50 ? GREEN : raw >= 25 ? AMBER : GREY;
     case "VOLUME":     return raw >= 10 ? GREEN : GREY;
     case "VOLATILITY": return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "QUAD":       return raw > 0 ? GREEN : raw < 0 ? RED : GREY;
@@ -54,7 +54,7 @@ function pillarColor(name, raw) {
 function pillarDetail(name, data) {
   if (!data) return "";
   switch (name) {
-    case "PRICE": {
+    case "STRUCTURE": {
       const td = data.trade?.direction || "Neutral";
       const trd = data.trend?.direction || "Neutral";
       if (td === trd && td !== "Neutral") return `Trade and Trend are both ${td}, fully aligned.`;
@@ -71,14 +71,15 @@ function pillarDetail(name, data) {
       return "Volume is neutral with no directional bias.";
     }
     case "VOLATILITY": {
-      const vix = data.vix_close != null ? data.vix_close.toFixed(1) : null;
+      const volVal = data.vix_close != null ? data.vix_close.toFixed(1) : null;
       const regime = data.vix_regime || "—";
-      if (!vix) return "Volatility data unavailable.";
-      if (regime === "Investable" || regime === "Investable+") return `VIX at ${vix} — low volatility supports positioning.`;
-      if (regime === "Edgy") return `VIX at ${vix} — volatility is elevated but manageable.`;
-      if (regime === "Choppy") return `VIX at ${vix} — choppy conditions, proceed with caution.`;
-      if (regime === "Danger") return `VIX at ${vix} — extreme volatility, risk is elevated.`;
-      return `VIX at ${vix}.`;
+      const idx = data.vol_index || "VIX";
+      if (!volVal) return "Volatility data unavailable.";
+      if (regime === "N/A") return `No vol index applies — full credit (+15).`;
+      if (regime === "Investable" || regime === "Investable+") return `${idx} at ${volVal} — low volatility supports positioning.`;
+      if (regime === "Choppy") return `${idx} at ${volVal} — choppy conditions, proceed with caution.`;
+      if (regime === "Danger") return `${idx} at ${volVal} — extreme volatility, risk is elevated.`;
+      return `${idx} at ${volVal}.`;
     }
     case "QUAD": {
       const align = data.quad_alignment;
@@ -238,14 +239,14 @@ export default function SecurityAnalysis({ defaultTicker }) {
   const pillars = useMemo(() => {
     if (!data) return [];
     return [
-      { name: "PRICE",      raw: data.structural_score },
+      { name: "STRUCTURE",   raw: data.structural_score },
       { name: "VOLUME",     raw: data.volume_score },
       { name: "VOLATILITY", raw: data.vix_score },
       { name: "QUAD",       raw: data.quad_score },
     ].map(p => ({
       ...p,
       score: p.raw,
-      label: p.name === "VOLATILITY" ? (data.vix_regime || "—") : pillarLabel(p.name, p.raw, data),
+      label: p.name === "VOLATILITY" ? (data.vix_regime && data.vix_regime !== "N/A" ? data.vix_regime : "Full Credit") : pillarLabel(p.name, p.raw, data),
       color: pillarColor(p.name, p.raw),
       detail: pillarDetail(p.name, data),
     }));

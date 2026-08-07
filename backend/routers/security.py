@@ -8,6 +8,7 @@ from models.ticker import Ticker
 from models.ai_summary import AiSummary
 from models.vol_history import VolHistory
 from services.auth_service import require_admin_user
+from services.conviction_engine import _resolve_vol_index
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
@@ -92,8 +93,10 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
             "pivot_c":          _safe(row.pivot_c),
         }
 
-    vix_pc = db.query(PriceCache).filter(PriceCache.ticker == "VIX").first()
-    vix_close = vix_pc.close if vix_pc else None
+    vol_index = _resolve_vol_index(ticker, ticker_row.asset_class or "")
+    vol_index_ticker = vol_index or "VIX"
+    vol_pc = db.query(PriceCache).filter(PriceCache.ticker == vol_index_ticker).first()
+    vol_close = vol_pc.close if vol_pc else None
 
     return {
         "ticker":          ticker,
@@ -116,7 +119,8 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
         "risk_reversal": _safe(pc.risk_reversal),
         "skew_rank":    _safe(pc.skew_rank),
         "put_call_ratio": _safe(pc.put_call_ratio),
-        "vix_close":    _safe(vix_close),
+        "vix_close":    _safe(vol_close),
+        "vol_index":    vol_index_ticker,
 
         "viewpoint":       trade_row.viewpoint if trade_row else None,
         "viewpoint_since": trade_row.viewpoint_since if trade_row else None,

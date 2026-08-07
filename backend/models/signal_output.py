@@ -31,7 +31,7 @@ class SignalOutput(Base):
     hrr_extended     = Column(Boolean, nullable=True)   # daily overshoot flag: close > prior HRR (bullish)
     d_extended       = Column(Boolean, nullable=True)   # True when D > B + abs(B-C); B becomes break level
     h_trade_delta    = Column(Float,   nullable=True)   # H_trade change over ~20 trading days; NULL if insufficient history
-    vix_regime       = Column(String(20), nullable=True)  # VIX regime zone: Investable|Edgy|Choppy|Danger
+    vix_regime       = Column(String(20), nullable=True)  # Vol regime zone: Investable|Choppy|Danger|N/A
     quad_alignment   = Column(String(20), nullable=True)  # Aligned | Misaligned | Neutral
     quad_mult        = Column(Float,      nullable=True)  # stored for debugging (informational only in v2.0)
     quad_score       = Column(Integer,    nullable=True)  # additive conviction contribution: +20/+15/0/−11/−15
