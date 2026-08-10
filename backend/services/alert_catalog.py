@@ -27,6 +27,15 @@ ALERT_CATALOG = [
             "Once per day."
         ),
     },
+    {
+        "key": "BREAK_OF_TRADE",
+        "label": "Break of Trade",
+        "description": (
+            "structural_state ∈ {UPTREND_VALID, DOWNTREND_VALID} AND "
+            "price crosses break level (C; B when d_extended). "
+            "Once per day."
+        ),
+    },
 ]
 
 ALERT_KEYS = {a["key"] for a in ALERT_CATALOG}

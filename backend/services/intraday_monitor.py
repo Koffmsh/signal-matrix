@@ -228,6 +228,20 @@ def _retrace_message(
     )
 
 
+def _break_of_trade_message(
+    ticker: str, viewpoint: str, close: float,
+    break_level: float, d_extended: bool, conviction: float | None,
+) -> str:
+    conv_str = f" | Conv {int(conviction)}%" if conviction else ""
+    level_label = "B (extended)" if d_extended else "C"
+    direction = "below" if viewpoint == "Bullish" else "above"
+    return (
+        f"🔻 {ticker} — BREAK OF TRADE ({viewpoint})\n"
+        f"{_fmt_price(close)} trading {direction} {level_label} at {_fmt_price(break_level)}{conv_str}\n"
+        f"[Trade tf — intraday, requires EOD confirmation]"
+    )
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def run_intraday_check(db: Session) -> dict:
@@ -355,6 +369,31 @@ def run_intraday_check(db: Session) -> dict:
                         f"Intraday alert RETRACEMENT_50: "
                         f"{ticker} close={close} level_50={level_50:.2f}"
                     )
+
+        # ── BREAK_OF_TRADE ───────────────────────────────────────────────
+        bot_bucket = alert_recipients.get("BREAK_OF_TRADE")
+        if bot_bucket and piv:
+            state = piv.structural_state or ""
+            if state in _VALID_STATES:
+                break_level = piv.pivot_b if piv.d_extended else piv.pivot_c
+                if break_level is not None:
+                    crossed = (
+                        (state == "UPTREND_VALID" and close < break_level) or
+                        (state == "DOWNTREND_VALID" and close > break_level)
+                    )
+                    if crossed and not _already_fired(db, today, ticker, "BREAK_OF_TRADE", None):
+                        msg = _break_of_trade_message(
+                            ticker, viewpoint, close,
+                            break_level, bool(piv.d_extended), sig.conviction,
+                        )
+                        _dispatch(bot_bucket, f"🔻 {ticker} — BREAK OF TRADE", msg)
+                        _log_alert(db, today, now_str, ticker, "BREAK_OF_TRADE",
+                                   close, None, sig.conviction, None)
+                        alerts_sent += 1
+                        logger.info(
+                            f"Intraday alert BREAK_OF_TRADE: "
+                            f"{ticker} close={close} break_level={break_level}"
+                        )
 
     db.commit()
     logger.info(
