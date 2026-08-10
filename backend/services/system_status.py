@@ -26,6 +26,7 @@ from database import engine
 from models.price_cache import PriceCache
 from models.signal_output import SignalOutput
 from models.scheduler_log import SchedulerLog
+from models.ticker import Ticker
 import services.schwab_client as schwab_client
 from services.scheduler import _is_trading_day
 
@@ -67,8 +68,10 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
     scalar columns + one small JSON array per row are scanned.
     """
     hits = []
+    active_tickers = {t.ticker for t in db.query(Ticker.ticker).filter(Ticker.active.is_(True)).all()}
     pc_rows = (
         db.query(PriceCache)
+          .filter(PriceCache.ticker.in_(active_tickers))
           .options(*[defer(getattr(PriceCache, c)) for c in _PC_BLOB_COLS])
           .all()
     )
@@ -116,9 +119,13 @@ def scan_history_gaps(db: Session) -> tuple[bool, str]:
     if len(expected_dates) < 5:
         return True, ""
 
+    active_tickers = {t.ticker for t in db.query(Ticker.ticker).filter(Ticker.active.is_(True)).all()}
     rows = (
         db.query(PriceCache.ticker, PriceCache.history_dates_json)
-          .filter(PriceCache.history_dates_json.isnot(None))
+          .filter(
+              PriceCache.history_dates_json.isnot(None),
+              PriceCache.ticker.in_(active_tickers),
+          )
           .all()
     )
     tickers_with_gaps = []
