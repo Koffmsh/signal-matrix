@@ -15,7 +15,7 @@ Called by:
 import json
 import time
 import logging
-from datetime import datetime, date as date_cls
+from datetime import datetime, date as date_cls, timedelta
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -136,6 +136,21 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
     today        = date_cls.fromisoformat(today_str)
     calendar_gap = (today - last_date).days
     if calendar_gap == 0:
+        # Last date is today, but check for internal gaps in the recent history.
+        # Missing intermediate bars corrupt OBV/MA calculations. Check the last
+        # ~6 weeks of stored dates against the NYSE calendar; if any sessions are
+        # missing, escalate to short so the merge upsert fills them.
+        ticker = getattr(existing_row, "ticker", None)
+        if ticker not in _NON_NYSE_CALENDAR:
+            recent_dates = set(dates[-30:])
+            scan_start = date_cls.fromisoformat(dates[-30]) if len(dates) >= 30 else date_cls.fromisoformat(dates[0])
+            sched = _NYSE_CAL.schedule(
+                start_date=scan_start.isoformat(),
+                end_date=today.isoformat(),
+            )
+            expected = set(d.strftime("%Y-%m-%d") for d in sched.index)
+            if expected - recent_dates:
+                return "short"
         return "skip"
     elif calendar_gap <= 5:
         # Never append a `today`-dated bar on a non-trading day. On a manual REFRESH
@@ -146,6 +161,21 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
         ticker = getattr(existing_row, "ticker", None)
         if ticker not in _NON_NYSE_CALENDAR and not _is_nyse_trading_day(today):
             return "skip"
+        # Detect missed trading days between last stored date and today.
+        # A weekend gap (Fri→Mon) has no missed sessions — append is correct.
+        # But if NYSE sessions fell between last_date and today, append would
+        # only add today's bar, permanently losing the intermediate days.
+        # Escalate to short so the full history merge backfills the gaps.
+        if calendar_gap >= 2 and ticker not in _NON_NYSE_CALENDAR:
+            missed_start = last_date + timedelta(days=1)
+            missed_end   = today - timedelta(days=1)
+            if missed_start <= missed_end:
+                sched = _NYSE_CAL.schedule(
+                    start_date=missed_start.isoformat(),
+                    end_date=missed_end.isoformat(),
+                )
+                if not sched.empty:
+                    return "short"
         return "append"
     elif calendar_gap <= 45:
         return "short"

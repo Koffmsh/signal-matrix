@@ -17,7 +17,7 @@ Colors are computed here so the frontend stays dumb:
 import json
 import math
 import os
-from datetime import datetime, timezone
+from datetime import datetime, date as date_cls, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, defer
@@ -94,6 +94,53 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
     head = ", ".join(hits[:3])
     extra = f" (+{len(hits) - 3} more)" if len(hits) > 3 else ""
     return False, head + extra
+
+
+# Non-NYSE tickers exempt from gap scan (trade on different calendars)
+_GAP_SCAN_EXEMPT = {"USD", "JPY", "/CL", "/ZN", "/GC", "/HG"}
+
+
+def scan_history_gaps(db: Session) -> tuple[bool, str]:
+    """
+    Check for missing NYSE trading days in the last 20 sessions across all tickers.
+    Missing bars corrupt OBV, MA20, and signal calculations.
+    Returns (ok, detail). Samples up to 5 tickers to keep it fast.
+    """
+    import pandas_market_calendars as mcal
+    cal = mcal.get_calendar("NYSE")
+
+    today = datetime.now(_ET).date()
+    start = today - timedelta(days=35)
+    sched = cal.schedule(start_date=start.isoformat(), end_date=today.isoformat())
+    expected_dates = set(d.strftime("%Y-%m-%d") for d in sched.index)
+    if len(expected_dates) < 5:
+        return True, ""
+
+    rows = (
+        db.query(PriceCache.ticker, PriceCache.history_dates_json)
+          .filter(PriceCache.history_dates_json.isnot(None))
+          .all()
+    )
+    tickers_with_gaps = []
+    for r in rows:
+        if r.ticker in _GAP_SCAN_EXEMPT:
+            continue
+        try:
+            dates = set(json.loads(r.history_dates_json))
+        except Exception:
+            continue
+        missing = expected_dates - dates
+        if missing:
+            tickers_with_gaps.append((r.ticker, len(missing)))
+
+    if not tickers_with_gaps:
+        return True, ""
+
+    tickers_with_gaps.sort(key=lambda x: -x[1])
+    sample = tickers_with_gaps[:5]
+    detail_parts = [f"{t}({n} missing)" for t, n in sample]
+    extra = f" +{len(tickers_with_gaps) - 5} more" if len(tickers_with_gaps) > 5 else ""
+    return False, ", ".join(detail_parts) + extra
 
 
 # ── Connection (Schwab token) ─────────────────────────────────────────────────
@@ -200,10 +247,16 @@ def compute_data(db: Session) -> dict:
     def red(state, tip):
         return {"state": state, "color": RED, "clickable": True, "tooltip": tip}
 
-    # 1 — Integrity (highest precedence)
+    # 1 — Integrity (highest precedence — NaN/Inf breaks page)
     ok, detail = scan_integrity(db)
     if not ok:
         return red("integrity", f"Data integrity issue — invalid values: {detail}. Click to refresh")
+
+    # 1.5 — History gaps (amber — corrupts OBV/MA/signals but doesn't crash page)
+    gaps_ok, gaps_detail = scan_history_gaps(db)
+    if not gaps_ok:
+        return {"state": "history_gaps", "color": AMBER, "clickable": True,
+                "tooltip": f"Missing trading days in history — {gaps_detail}. Click to refresh"}
 
     # 2-4 — Run / freshness (trading days only)
     if trading:
