@@ -437,6 +437,18 @@ Downtrend: d_eff = min(pivot_d, close)          # intraday D may extend lower
 - Dedup key includes `pivot_c` — new C = new setup = alert resets for same ticker same day
 - SMS: ticker, viewpoint, price, D level, C pivot, 50% level, conviction
 
+**BREAK_OF_TRADE** — intraday price crosses through the break level (early warning before EOD confirmation):
+```
+Gate: structural_state must be UPTREND_VALID or DOWNTREND_VALID
+Break level: pivot_c normally; pivot_b when d_extended=True
+Uptrend:   fires when close < break_level
+Downtrend: fires when close > break_level
+```
+- Fires once per ticker per day (pivot_c = NULL in dedup key, like PROXIMITY)
+- Message: ticker, viewpoint, price, break level, whether B (extended) or C, conviction
+- Notes that EOD confirmation is required (intraday crossing ≠ confirmed break)
+- Does NOT recalculate signals — purely observational (rule #75)
+
 ### Scheduler — CronTrigger (clock-aligned)
 ```python
 CronTrigger(
@@ -462,6 +474,7 @@ CronTrigger(
 6. For each ticker (only for alert types that have recipients):
    a. PROXIMITY check → _dispatch(email/SMS) + log if prox >= 0.85 and not already fired today
    b. RETRACEMENT_50 check → _dispatch + log if at/past 50% level and not already fired today
+   c. BREAK_OF_TRADE check → _dispatch + log if price crosses break level and not already fired today
 7. db.commit()
 ```
 
@@ -533,7 +546,7 @@ or split into separate per-viewpoint alerts; the builder supports either. Implie
 - `user_alert_subscriptions` (id, user_id FK, alert_type, enabled, updated_at; `UNIQUE(user_id, alert_type)`)
   — the per-alert on/off toggles.
 - `services/alert_catalog.py` — `ALERT_CATALOG` (key/label/description) is the single source of truth
-  for alert keys; keys MUST match what the intraday monitor fires (`PROXIMITY`, `RETRACEMENT_50`).
+  for alert keys; keys MUST match what the intraday monitor fires (`PROXIMITY`, `RETRACEMENT_50`, `BREAK_OF_TRADE`).
 
 **Endpoints (`routers/alerts.py`):**
 - `GET /api/alerts/my-settings` — user's channels + per-alert state + catalog + `sms_globally_disabled`.
