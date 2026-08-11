@@ -112,9 +112,14 @@ def scan_history_gaps(db: Session) -> tuple[bool, str]:
     import pandas_market_calendars as mcal
     cal = mcal.get_calendar("NYSE")
 
-    today = datetime.now(_ET).date()
+    now_et = datetime.now(_ET)
+    today  = now_et.date()
+    # Only expect bars through yesterday — today's bar isn't confirmed until after
+    # market close (~4 PM ET).  Including today before close flags every ticker as
+    # "1 missing" the moment the date flips at midnight ET.
+    end = today - timedelta(days=1) if now_et.hour < 17 else today
     start = today - timedelta(days=35)
-    sched = cal.schedule(start_date=start.isoformat(), end_date=today.isoformat())
+    sched = cal.schedule(start_date=start.isoformat(), end_date=end.isoformat())
     expected_dates = set(d.strftime("%Y-%m-%d") for d in sched.index)
     if len(expected_dates) < 5:
         return True, ""

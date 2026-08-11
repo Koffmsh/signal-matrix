@@ -368,28 +368,36 @@ def schwab_fetch_all(db: Session) -> dict:
     if not tickers:
         return {"fetched": 0, "errors": 0, "data_source": "yahoo"}
 
-    # Idempotency check — skip if already fetched from Schwab today.
-    # Use a Schwab-supported ticker (exclude SCHWAB_UNSUPPORTED) to avoid
-    # perpetual cache miss when the first ticker is a Yahoo-only symbol.
+    # Idempotency check — skip if ALL Schwab-supported tickers already fresh today.
+    # Previously checked a single ticker and assumed all were fresh; this missed
+    # tickers whose history wasn't appended (cache_date stale from a partial run).
     schwab_tickers = [t for t in tickers if t not in SCHWAB_UNSUPPORTED]
-    check_ticker   = schwab_tickers[0] if schwab_tickers else None
-    if check_ticker:
-        sample = (
+    if schwab_tickers:
+        fresh_count = (
             db.query(PriceCache)
             .filter(
-                PriceCache.ticker      == check_ticker,
+                PriceCache.ticker.in_(schwab_tickers),
                 PriceCache.cache_date  == today,
                 PriceCache.data_source == "schwab",
             )
-            .first()
+            .count()
         )
-        if sample:
+        if fresh_count >= len(schwab_tickers):
             logger.info("Schwab: cache already fresh for today — skipping Schwab re-fetch")
-            # Still refresh Yahoo-only tickers — they have no Schwab idempotency guard
-            # and their updated_at must be stamped so the header timestamp stays current
-            unsupported = [t for t in tickers if t in SCHWAB_UNSUPPORTED]
-            if unsupported:
-                _yahoo_fetch_subset(db, unsupported, data_source="yahoo")
+            # Still refresh unsupported tickers — split the same way _schwab_fetch does:
+            # index vol tickers (VXN, RVX, GVZ, OVX, MOVE) go to Schwab history API,
+            # everything else goes to Yahoo.
+            unsupported  = [t for t in tickers if t in SCHWAB_UNSUPPORTED]
+            yahoo_only   = [t for t in unsupported if t not in SCHWAB_INDEX_HISTORY_MAP]
+            schwab_index = [t for t in unsupported if t in SCHWAB_INDEX_HISTORY_MAP]
+            if yahoo_only:
+                _yahoo_fetch_subset(db, yahoo_only, data_source="yahoo")
+            if schwab_index:
+                try:
+                    client = schwab_client_svc.get_schwab_client(db)
+                    _schwab_fetch_index_histories(db, schwab_index, client)
+                except (RuntimeError, ValueError) as e:
+                    logger.warning(f"Schwab index (idempotent path): client unavailable ({e}) — skipping index tickers")
             return {"fetched": len(tickers), "errors": 0, "data_source": "schwab"}
 
     # Try to build a Schwab client

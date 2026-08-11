@@ -332,8 +332,6 @@ QUAD_ALIGNMENT = {
         },
         "worst": {
             "asset_class": [
-                "Domestic Equities",
-                "International Equities",
                 "Digital Assets",
             ],
             "sector": [
