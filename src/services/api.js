@@ -127,6 +127,17 @@ export async function fetchBondVolHistory() {
   }
 }
 
+export async function fetchHyCreditHistory() {
+  try {
+    const response = await apiFetch(`/api/vol/hy-credit-history`);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchHyCreditHistory failed", err);
+    return null;
+  }
+}
+
 export async function fetchYieldCurveHistory() {
   try {
     const response = await apiFetch(`/api/vol/yield-curve-history`);

@@ -119,6 +119,7 @@ const NAV_ITEMS = [
       { label: "SPX VOL",   path: "/vol",       exact: true },
       { label: "MACRO VOL", path: "/vol/macro",  exact: true },
       { label: "BOND VOL",  path: "/vol/bond",   exact: true },
+      { label: "HY CREDIT", path: "/vol/hy-credit", exact: true },
     ],
   },
   {

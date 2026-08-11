@@ -1,5 +1,6 @@
 import json
 import bisect
+import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -8,6 +9,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from models.price_cache import PriceCache
+from services.fred import fetch_fred_series
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _ET = ZoneInfo("America/New_York")
@@ -383,11 +387,129 @@ def yield_curve_history(db: Session = Depends(get_db)):
             "mom_delta": sp_mom_d, "mom_pct": sp_mom_p,
         }
 
-    updated_str = updated_at.strftime("%m/%d/%y %H:%M") if updated_at else None
+    yc_updated = updated_at.strftime("%m/%d/%y %H:%M") if updated_at else None
 
     return {
         "dates":   common_dates,
         "series":  series,
         "stats":   stats,
-        "updated": updated_str,
+        "updated": yc_updated,
+    }
+
+
+# ── HY Credit ──────────────────────────────────────────────────────────────────
+
+_FRED_HY_OAS = "BAMLH0A0HYM2"
+
+
+@router.get("/api/vol/hy-credit-history")
+def hy_credit_history(db: Session = Depends(get_db)):
+    """
+    Returns HY OAS (FRED) + HYG price history for the HY Credit dashboard.
+    OAS = bps on left axis, HYG price on right axis.
+    """
+    # ── HYG from price_cache ────────────────────────────────────────────────
+    hyg_row = db.query(PriceCache).filter(PriceCache.ticker == "HYG").first()
+
+    hyg_dates, hyg_closes, hyg_cur_close = [], [], None
+    updated_at = None
+
+    if hyg_row and hyg_row.history_json and hyg_row.history_dates_json:
+        hyg_closes = json.loads(hyg_row.history_json)
+        hyg_dates  = json.loads(hyg_row.history_dates_json)
+        hyg_cur_close = hyg_row.close
+        if len(hyg_closes) != len(hyg_dates) or len(hyg_closes) < 2:
+            hyg_dates, hyg_closes = [], []
+        if hyg_row.updated_at:
+            updated_at = hyg_row.updated_at
+
+    # ── HY OAS from FRED (returned as pct points, e.g. 2.70 = 270 bps) ────
+    oas_dates, oas_raw = fetch_fred_series(_FRED_HY_OAS)
+    oas_values = [v * 100 for v in oas_raw]
+
+    if not oas_dates and not hyg_dates:
+        return {"dates": [], "series": {}, "stats": {}, "updated": None}
+
+    # ── Union dates ─────────────────────────────────────────────────────────
+    all_date_sets = []
+    if oas_dates:
+        all_date_sets.append(set(oas_dates))
+    if hyg_dates:
+        all_date_sets.append(set(hyg_dates))
+    common_dates = sorted(set().union(*all_date_sets)) if all_date_sets else []
+
+    if not common_dates:
+        return {"dates": [], "series": {}, "stats": {}, "updated": None}
+
+    # ── Build aligned series ────────────────────────────────────────────────
+    series: dict[str, list] = {}
+
+    if oas_dates:
+        oas_map = dict(zip(oas_dates, oas_values))
+        series["OAS"] = [
+            round(oas_map[d], 2) if d in oas_map else None
+            for d in common_dates
+        ]
+
+    if hyg_dates:
+        hyg_map = dict(zip(hyg_dates, hyg_closes))
+        series["HYG"] = [
+            round(hyg_map[d], 2) if d in hyg_map else None
+            for d in common_dates
+        ]
+
+    # ── Stats ───────────────────────────────────────────────────────────────
+    def _find_value_n_days_ago(d_list, v_list, n_calendar_days):
+        today = datetime.now(_ET).date()
+        target = (today - timedelta(days=n_calendar_days)).isoformat()
+        idx = bisect.bisect_right(d_list, target) - 1
+        return round(v_list[idx], 2) if idx >= 0 else None
+
+    def _build_stats(dates_list, values_list, cur_val, decimals=2):
+        last = round(cur_val, decimals) if cur_val is not None else (
+            round(values_list[-1], decimals) if values_list else None
+        )
+        last_hist = round(values_list[-1], decimals) if values_list else None
+        if last is not None and last_hist is not None and last == last_hist:
+            prev = round(values_list[-2], decimals) if len(values_list) >= 2 else None
+        else:
+            prev = last_hist
+
+        wk1 = _find_value_n_days_ago(dates_list, values_list, 7)
+        mo1 = _find_value_n_days_ago(dates_list, values_list, 30)
+        mo3 = _find_value_n_days_ago(dates_list, values_list, 91)
+
+        def _delta(ref):
+            if last is None or ref is None or ref == 0:
+                return None, None
+            d = round(last - ref, decimals)
+            p = round(d / abs(ref) * 100, 2) if ref != 0 else None
+            return d, p
+
+        dod_d, dod_p = _delta(prev)
+        wow_d, wow_p = _delta(wk1)
+        mom_d, mom_p = _delta(mo1)
+
+        return {
+            "last": last, "day1": prev, "wk1": wk1, "mo1": mo1, "mo3": mo3,
+            "dod_delta": dod_d, "dod_pct": dod_p,
+            "wow_delta": wow_d, "wow_pct": wow_p,
+            "mom_delta": mom_d, "mom_pct": mom_p,
+        }
+
+    stats: dict[str, dict] = {}
+
+    if oas_dates and oas_values:
+        stats["OAS"] = _build_stats(oas_dates, oas_values, oas_values[-1])
+
+    if hyg_dates and hyg_closes:
+        stats["HYG"] = _build_stats(hyg_dates, hyg_closes, hyg_cur_close)
+
+    hy_updated = updated_at.strftime("%m/%d/%y %H:%M") if updated_at else None
+
+    return {
+        "dates":   common_dates,
+        "series":  series,
+        "stats":   stats,
+        "updated": hy_updated,
     }
