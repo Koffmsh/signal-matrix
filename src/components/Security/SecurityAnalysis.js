@@ -75,16 +75,39 @@ function pillarDetail(name, data) {
       const idx = data.vol_index || "VIX";
       if (!volVal) return "Volatility data unavailable.";
       if (regime === "N/A") return `No vol index applies — full credit (+15).`;
-      if (regime === "Investable" || regime === "Investable+") return `${idx} at ${volVal} — low volatility supports positioning.`;
+      if (regime === "Investable" || regime === "Investable+" || regime === "Calm") return `${idx} at ${volVal} — low volatility supports positioning.`;
       if (regime === "Choppy") return `${idx} at ${volVal} — choppy conditions, proceed with caution.`;
       if (regime === "Danger") return `${idx} at ${volVal} — extreme volatility, risk is elevated.`;
       return `${idx} at ${volVal}.`;
     }
     case "QUAD": {
       const align = data.quad_alignment;
-      if (align === "Aligned") return "Macro environment is favorable for this position.";
-      if (align === "Misaligned") return "Macro environment is working against this position.";
-      return "Macro environment is neutral for this position.";
+      const score = data.quad_score;
+      const genericSectors = ["Index", "Broad Market", "Equities"];
+      const sectorLabel = data.sector && !genericSectors.includes(data.sector)
+        ? data.sector : data.asset_class || "this asset class";
+
+      if (align === "Neutral" || score == null || score === 0)
+        return `No strong historical edge for ${sectorLabel} in the current macro environment.`;
+
+      const structDir = data.trade?.direction !== "Neutral" ? data.trade?.direction
+                      : data.trend?.direction !== "Neutral" ? data.trend?.direction : null;
+      const leanBull = structDir === "Bullish";
+      const quadFavors = (align === "Aligned" && leanBull)
+                      || (align === "Misaligned" && !leanBull);
+      const envLine = quadFavors
+        ? `${sectorLabel} historically perform well in the current macro environment.`
+        : `${sectorLabel} historically perform poorly in the current macro environment.`;
+
+      let structLine = "";
+      if (align === "Aligned") {
+        structLine = " The macro environment supports current price structure.";
+      } else if (structDir) {
+        structLine = ` Currently working against ${structDir.toLowerCase()} price structure.`;
+      } else {
+        structLine = " Currently working against price structure.";
+      }
+      return envLine + structLine;
     }
     default: return "";
   }
@@ -245,7 +268,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
     ].map(p => ({
       ...p,
       score: p.raw,
-      label: p.name === "VOLATILITY" ? (data.vix_regime && data.vix_regime !== "N/A" ? data.vix_regime : "Full Credit") : pillarLabel(p.name, p.raw, data),
+      label: p.name === "VOLATILITY" ? (data.vix_regime && data.vix_regime !== "N/A" ? (data.vix_regime === "Investable" && data.viewpoint === "Bearish" ? "Calm" : data.vix_regime) : "Full Credit") : pillarLabel(p.name, p.raw, data),
       color: pillarColor(p.name, p.raw),
       detail: pillarDetail(p.name, data),
     }));

@@ -202,7 +202,7 @@ def get_vol_score(vol_close: float | None, vol_hrr: float | None,
     Bearish (asymmetric — +5 floor):
       Danger       close ≥ danger_floor                 +15
       Choppy       ceiling ≤ close < danger_floor       +10
-      Investable   close < ceiling                      + 5
+      Calm         close < ceiling                      + 5
     """
     if vol_close is None:
         return 15, "Unknown"
@@ -215,7 +215,7 @@ def get_vol_score(vol_close: float | None, vol_hrr: float | None,
         elif vol_close >= ceiling:
             return 10, "Choppy"
         else:
-            return 5, "Investable"
+            return 5, "Calm"
 
     if vol_close < ceiling:
         if vol_hrr is not None and vol_hrr < ceiling:
@@ -1228,18 +1228,18 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         structural_score = 0     # both Neutral, OR opposing directions (conflicted)
 
     # Component 2 — Quad (+20 / 0 / -15, prob-weighted)
-    # Viewpoint gate: fully Neutral (structural_score == 0, both timeframes Neutral or opposing)
+    # Gate: fully Neutral (structural_score == 0, both timeframes Neutral or opposing)
     # → quad_score = 0. Partial structure (structural_score == 25, one timeframe confirmed)
-    # → quad allowed to contribute. Macro tailwind is meaningful when at least one timeframe
-    # has directional evidence.
+    # → quad allowed to contribute. Uses _struct_bias (directional lean from Trade or Trend)
+    # instead of viewpoint so that a Leaning Bearish ticker in a Worst quad scores Aligned.
     if quad_current is not None:
         _quad_alignment = get_quad_alignment(asset_class, sector, quad_current)
-        if (structural_score == 0 and viewpoint == "Neutral") or _quad_alignment == 0.0:
+        if (structural_score == 0 and _struct_bias == "Neutral") or _quad_alignment == 0.0:
             quad_score = 0
             quad_align_label = "Neutral"
         else:
-            _bullish_best  = (viewpoint == "Bullish" and _quad_alignment > 0)
-            _bearish_worst = (viewpoint == "Bearish" and _quad_alignment < 0)
+            _bullish_best  = (_struct_bias == "Bullish" and _quad_alignment > 0)
+            _bearish_worst = (_struct_bias == "Bearish" and _quad_alignment < 0)
             _aligned = _bullish_best or _bearish_worst
             if _aligned:
                 quad_score = 20 if quad_prob >= 0.45 else 15

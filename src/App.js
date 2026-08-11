@@ -1203,8 +1203,8 @@ function Dashboard() {
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColorVP(row.conviction, row.viewpoint) : "#8899aa", false],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Regime",   row.vixRegime || "—",
-                           (() => { const r = row.vixRegime; return r === "Investable" ? "#00e5a0" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
-                           false, "Volatility regime — routed per asset (VIX/VXN/RVX/GVZ/OVX/MOVE)\nBullish/Neutral: Investable+ (HRR<threshold) +15 · Investable +10 · Choppy +0 · Danger −10\nBearish: Danger +15 · Choppy +10 · Investable +5 (floor)\nNo vol index: +15 flat"],
+                           (() => { const r = row.vixRegime; return r === "Investable" || r === "Calm" ? "#00e5a0" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
+                           false, "Volatility regime — routed per asset (VIX/VXN/RVX/GVZ/OVX/MOVE)\nBullish/Neutral: Investable+ (HRR<threshold) +15 · Investable +10 · Choppy +0 · Danger −10\nBearish: Danger +15 · Choppy +10 · Calm +5 (floor)\nNo vol index: +15 flat"],
           ...(row.quadAlignment ? [
             ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
                                row.quadAlignment === "Aligned" ? "#00e5a0" : row.quadAlignment === "Misaligned" ? "#ff4d6d" : "#8899aa",
