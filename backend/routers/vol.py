@@ -185,3 +185,75 @@ def macro_vol_history(db: Session = Depends(get_db)):
         "stats":   stats,
         "updated": updated_str,
     }
+
+
+@router.get("/api/vol/bond-history")
+def bond_vol_history(db: Session = Depends(get_db)):
+    """
+    Returns close price history + stats for the MOVE index (ICE BofA MOVE —
+    Treasury implied volatility).  Same response shape as macro-history but
+    with a single ticker so the frontend can render it on a dedicated chart.
+    """
+    row = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker == "MOVE")
+        .first()
+    )
+    if not row or not row.history_json or not row.history_dates_json:
+        return {"dates": [], "series": {}, "stats": {}, "updated": None}
+
+    closes = json.loads(row.history_json)
+    dates  = json.loads(row.history_dates_json)
+    if len(closes) != len(dates) or len(closes) < 2:
+        return {"dates": [], "series": {}, "stats": {}, "updated": None}
+
+    cur_close = row.close
+
+    series_aligned = [round(c, 2) for c in closes]
+
+    # ── Stats ────────────────────────────────────────────────────────────────
+    def _find_price_n_days_ago(d_list, c_list, n_calendar_days):
+        today = datetime.now(_ET).date()
+        target = (today - timedelta(days=n_calendar_days)).isoformat()
+        idx = bisect.bisect_right(d_list, target) - 1
+        return round(c_list[idx], 2) if idx >= 0 else None
+
+    last = round(cur_close, 2) if cur_close is not None else round(closes[-1], 2)
+    last_hist = round(closes[-1], 2)
+    if last == last_hist:
+        prev = round(closes[-2], 2) if len(closes) >= 2 else None
+    else:
+        prev = last_hist
+
+    wk1 = _find_price_n_days_ago(dates, closes, 7)
+    mo1 = _find_price_n_days_ago(dates, closes, 30)
+    mo3 = _find_price_n_days_ago(dates, closes, 91)
+
+    def _delta(ref):
+        if last is None or ref is None or ref == 0:
+            return None, None
+        d = round(last - ref, 2)
+        p = round(d / ref * 100, 2)
+        return d, p
+
+    dod_d, dod_p = _delta(prev)
+    wow_d, wow_p = _delta(wk1)
+    mom_d, mom_p = _delta(mo1)
+
+    stats = {
+        "MOVE": {
+            "last": last, "day1": prev, "wk1": wk1, "mo1": mo1, "mo3": mo3,
+            "dod_delta": dod_d, "dod_pct": dod_p,
+            "wow_delta": wow_d, "wow_pct": wow_p,
+            "mom_delta": mom_d, "mom_pct": mom_p,
+        },
+    }
+
+    updated_str = row.updated_at.strftime("%m/%d/%y %H:%M") if row.updated_at else None
+
+    return {
+        "dates":   dates,
+        "series":  {"MOVE": series_aligned},
+        "stats":   stats,
+        "updated": updated_str,
+    }

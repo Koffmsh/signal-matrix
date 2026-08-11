@@ -114,6 +114,20 @@ export async function fetchMacroVolHistory() {
 }
 
 /**
+ * Bond Volatility dashboard — MOVE index close price history + stats.
+ */
+export async function fetchBondVolHistory() {
+  try {
+    const response = await apiFetch(`/api/vol/bond-history`);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchBondVolHistory failed", err);
+    return null;
+  }
+}
+
+/**
  * Fetch single ticker quote.
  * Useful for debugging in browser console:
  *   import { fetchQuote } from './services/api';

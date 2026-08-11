@@ -38,26 +38,11 @@ function ImpactIcon({ color }) {
 function SectorIcon({ color }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      {/* Pie wedges representing sectors */}
       <circle cx="8" cy="8" r="6.5" stroke={color} strokeWidth="1.2" fill="none" opacity="0.4" />
-      {/* Top wedge */}
       <path d="M8 8 L8 1.5 A6.5 6.5 0 0 1 13.6 4.75 Z" fill={color} opacity="0.9" />
-      {/* Right wedge */}
       <path d="M8 8 L13.6 4.75 A6.5 6.5 0 0 1 13.6 11.25 Z" fill={color} opacity="0.5" />
-      {/* Bottom wedge */}
       <path d="M8 8 L13.6 11.25 A6.5 6.5 0 0 1 2.4 11.25 Z" fill={color} opacity="0.7" />
-      {/* Left wedge */}
       <path d="M8 8 L2.4 11.25 A6.5 6.5 0 0 1 8 1.5 Z" fill={color} opacity="0.35" />
-    </svg>
-  );
-}
-
-function MacroVolIcon({ color }) {
-  // Multiple rising vol lines — cross-asset feel
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <polyline points="1,13 4,9 7,11 10,6 13,8 15,5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <polyline points="1,11 4,7 7,9 10,4 13,6 15,3" stroke={color} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.5" />
     </svg>
   );
 }
@@ -68,6 +53,20 @@ function SecurityIcon({ color }) {
       <rect x="2" y="3" width="12" height="10" rx="1.5" stroke={color} strokeWidth="1.2" fill="none" />
       <polyline points="3,8 6,5 9,9 12,4 14,6" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
       <line x1="2" y1="13" x2="14" y2="13" stroke={color} strokeWidth="1" opacity="0.4" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ color, open }) {
+  return (
+    <svg
+      width="8" height="8" viewBox="0 0 8 8" fill="none"
+      style={{
+        transition: "transform 150ms ease",
+        transform: open ? "rotate(90deg)" : "rotate(0deg)",
+      }}
+    >
+      <polyline points="2,1 6,4 2,7" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
@@ -103,16 +102,15 @@ const NAV_ITEMS = [
     icon: (color) => <SecurityIcon color={color} />,
   },
   {
-    label: "SPX VOL",
+    label: "VOL",
     path: "/vol",
-    exact: true,
+    exact: false,
     icon: (color) => <VolIcon color={color} />,
-  },
-  {
-    label: "MACRO VOL",
-    path: "/vol/macro",
-    exact: true,
-    icon: (color) => <MacroVolIcon color={color} />,
+    children: [
+      { label: "SPX VOL",   path: "/vol",       exact: true },
+      { label: "MACRO VOL", path: "/vol/macro",  exact: true },
+      { label: "BOND VOL",  path: "/vol/bond",   exact: true },
+    ],
   },
   {
     label: "SPX IMPACT",
@@ -131,15 +129,38 @@ const NAV_ITEMS = [
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 export default function Sidebar({ locked = false, onToggleLock }) {
   const [hovered, setHovered] = useState(false);
+  const [volOpen, setVolOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
   const expanded = locked || hovered;
 
+  // Auto-open the vol submenu when on a vol page
+  const onVolPage = location.pathname.startsWith("/vol");
+
   function isActive(item) {
     if (item.exact) return location.pathname === item.path;
     return location.pathname.startsWith(item.path);
   }
+
+  function handleParentClick(item) {
+    if (item.children) {
+      if (!expanded) {
+        // Collapsed sidebar — navigate to default child
+        navigate(item.children[0].path);
+      } else {
+        // Expanded — toggle submenu; if not already on a vol page, also navigate
+        setVolOpen(prev => !prev);
+        if (!onVolPage) {
+          navigate(item.children[0].path);
+        }
+      }
+    } else {
+      navigate(item.path);
+    }
+  }
+
+  const showVolChildren = expanded && (volOpen || onVolPage);
 
   return (
     <div
@@ -166,42 +187,95 @@ export default function Sidebar({ locked = false, onToggleLock }) {
         {NAV_ITEMS.map((item) => {
           const active = isActive(item);
           const iconColor = active ? "#00e5a0" : "#8899aa";
+          const hasChildren = !!item.children;
           return (
-            <button
-              key={item.path}
-              onClick={() => navigate(item.path)}
-              title={expanded ? undefined : item.label}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                width: "100%",
-                padding: "10px 0 10px 14px",
-                background: active ? "rgba(0,229,160,0.07)" : "transparent",
-                border: "none",
-                borderLeft: active ? "3px solid #00e5a0" : "3px solid transparent",
-                cursor: "pointer",
-                gap: 10,
-                boxSizing: "border-box",
-              }}
-            >
-              <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
-                {item.icon(iconColor)}
-              </span>
-              <span
+            <div key={item.path}>
+              <button
+                onClick={() => handleParentClick(item)}
+                title={expanded ? undefined : item.label}
                 style={{
-                  fontSize: 9,
-                  fontWeight: 700,
-                  letterSpacing: "0.15em",
-                  color: active ? "#00e5a0" : "#8899aa",
-                  whiteSpace: "nowrap",
-                  opacity: expanded ? 1 : 0,
-                  transition: "opacity 150ms ease",
-                  pointerEvents: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  width: "100%",
+                  padding: "10px 0 10px 14px",
+                  background: active ? "rgba(0,229,160,0.07)" : "transparent",
+                  border: "none",
+                  borderLeft: active ? "3px solid #00e5a0" : "3px solid transparent",
+                  cursor: "pointer",
+                  gap: 10,
+                  boxSizing: "border-box",
                 }}
               >
-                {item.label}
-              </span>
-            </button>
+                <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+                  {item.icon(iconColor)}
+                </span>
+                <span
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    letterSpacing: "0.15em",
+                    color: active ? "#00e5a0" : "#8899aa",
+                    whiteSpace: "nowrap",
+                    opacity: expanded ? 1 : 0,
+                    transition: "opacity 150ms ease",
+                    pointerEvents: "none",
+                    flex: 1,
+                    textAlign: "left",
+                  }}
+                >
+                  {item.label}
+                </span>
+                {hasChildren && expanded && (
+                  <span style={{
+                    flexShrink: 0, display: "flex", alignItems: "center",
+                    marginRight: 12,
+                    opacity: expanded ? 1 : 0,
+                    transition: "opacity 150ms ease",
+                  }}>
+                    <ChevronIcon color={active ? "#00e5a0" : "#8899aa"} open={showVolChildren} />
+                  </span>
+                )}
+              </button>
+              {/* Children */}
+              {hasChildren && showVolChildren && (
+                <div style={{
+                  overflow: "hidden",
+                  transition: "max-height 200ms ease",
+                  maxHeight: showVolChildren ? 200 : 0,
+                }}>
+                  {item.children.map(child => {
+                    const childActive = isActive(child);
+                    return (
+                      <button
+                        key={child.path}
+                        onClick={() => navigate(child.path)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          width: "100%",
+                          padding: "7px 0 7px 41px",
+                          background: childActive ? "rgba(0,229,160,0.05)" : "transparent",
+                          border: "none",
+                          borderLeft: childActive ? "3px solid #00e5a0" : "3px solid transparent",
+                          cursor: "pointer",
+                          boxSizing: "border-box",
+                        }}
+                      >
+                        <span style={{
+                          fontSize: 8,
+                          fontWeight: 600,
+                          letterSpacing: "0.12em",
+                          color: childActive ? "#00e5a0" : "#667788",
+                          whiteSpace: "nowrap",
+                        }}>
+                          {child.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
