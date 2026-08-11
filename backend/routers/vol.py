@@ -257,3 +257,137 @@ def bond_vol_history(db: Session = Depends(get_db)):
         "stats":   stats,
         "updated": updated_str,
     }
+
+
+# ── Yield Curve ──────────────────────────────────────────────────────────────
+
+_YIELD_TICKERS = ["TWO", "TNX"]
+
+
+@router.get("/api/vol/yield-curve-history")
+def yield_curve_history(db: Session = Depends(get_db)):
+    """
+    Returns close price history + computed 2-10 spread for TWO (2Y yield) and
+    TNX (10Y yield).  Response shape matches macro-history: union dates, per-
+    ticker series, a synthetic SPREAD series, and stats.
+    """
+    rows = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker.in_(_YIELD_TICKERS))
+        .all()
+    )
+
+    ticker_data: dict[str, tuple[list, list, float | None]] = {}
+    updated_at = None
+
+    for row in rows:
+        if not row.history_json or not row.history_dates_json:
+            continue
+        closes = json.loads(row.history_json)
+        dates  = json.loads(row.history_dates_json)
+        if len(closes) != len(dates) or len(closes) < 2:
+            continue
+        ticker_data[row.ticker] = (dates, closes, row.close)
+        if row.updated_at and (updated_at is None or row.updated_at > updated_at):
+            updated_at = row.updated_at
+
+    if not ticker_data:
+        return {"dates": [], "series": {}, "stats": {}, "updated": None}
+
+    common_dates = sorted(set().union(*[set(d) for d, _, _c in ticker_data.values()]))
+    if not common_dates:
+        return {"dates": [], "series": {}, "stats": {}, "updated": None}
+
+    series: dict[str, list] = {}
+    for ticker, (dates, closes, _cur) in ticker_data.items():
+        date_to_close = dict(zip(dates, closes))
+        series[ticker] = [
+            round(date_to_close[d], 4) if d in date_to_close else None
+            for d in common_dates
+        ]
+
+    # Compute 2-10 spread = TNX - TWO (in percentage points)
+    if "TNX" in series and "TWO" in series:
+        spread = []
+        for i in range(len(common_dates)):
+            t10 = series["TNX"][i]
+            t2  = series["TWO"][i]
+            if t10 is not None and t2 is not None:
+                spread.append(round(t10 - t2, 4))
+            else:
+                spread.append(None)
+        series["SPREAD"] = spread
+
+    # ── Stats ────────────────────────────────────────────────────────────────
+    def _find_price_n_days_ago(d_list, c_list, n_calendar_days):
+        today = datetime.now(_ET).date()
+        target = (today - timedelta(days=n_calendar_days)).isoformat()
+        idx = bisect.bisect_right(d_list, target) - 1
+        return round(c_list[idx], 4) if idx >= 0 else None
+
+    stats: dict[str, dict] = {}
+    for ticker, (dates, closes, cur_close) in ticker_data.items():
+        last = round(cur_close, 4) if cur_close is not None else (round(closes[-1], 4) if closes else None)
+        last_hist = round(closes[-1], 4) if closes else None
+        if last is not None and last_hist is not None and last == last_hist:
+            prev = round(closes[-2], 4) if len(closes) >= 2 else None
+        else:
+            prev = last_hist
+        wk1 = _find_price_n_days_ago(dates, closes, 7)
+        mo1 = _find_price_n_days_ago(dates, closes, 30)
+        mo3 = _find_price_n_days_ago(dates, closes, 91)
+
+        def _delta(ref):
+            if last is None or ref is None or ref == 0:
+                return None, None
+            d = round(last - ref, 4)
+            p = round(d / ref * 100, 2)
+            return d, p
+
+        dod_d, dod_p = _delta(prev)
+        wow_d, wow_p = _delta(wk1)
+        mom_d, mom_p = _delta(mo1)
+
+        stats[ticker] = {
+            "last": last, "day1": prev, "wk1": wk1, "mo1": mo1, "mo3": mo3,
+            "dod_delta": dod_d, "dod_pct": dod_p,
+            "wow_delta": wow_d, "wow_pct": wow_p,
+            "mom_delta": mom_d, "mom_pct": mom_p,
+        }
+
+    # Spread stats (synthetic — computed from TWO + TNX stats)
+    if "TNX" in stats and "TWO" in stats:
+        s10 = stats["TNX"]
+        s2  = stats["TWO"]
+        sp_last = round(s10["last"] - s2["last"], 4) if s10["last"] is not None and s2["last"] is not None else None
+        sp_prev = round(s10["day1"] - s2["day1"], 4) if s10["day1"] is not None and s2["day1"] is not None else None
+        sp_wk1  = round(s10["wk1"]  - s2["wk1"],  4) if s10["wk1"]  is not None and s2["wk1"]  is not None else None
+        sp_mo1  = round(s10["mo1"]  - s2["mo1"],  4) if s10["mo1"]  is not None and s2["mo1"]  is not None else None
+        sp_mo3  = round(s10["mo3"]  - s2["mo3"],  4) if s10["mo3"]  is not None and s2["mo3"]  is not None else None
+
+        def _sp_delta(cur, ref):
+            if cur is None or ref is None:
+                return None, None
+            d = round(cur - ref, 4)
+            p = round(d / abs(ref) * 100, 2) if ref != 0 else None
+            return d, p
+
+        sp_dod_d, sp_dod_p = _sp_delta(sp_last, sp_prev)
+        sp_wow_d, sp_wow_p = _sp_delta(sp_last, sp_wk1)
+        sp_mom_d, sp_mom_p = _sp_delta(sp_last, sp_mo1)
+
+        stats["SPREAD"] = {
+            "last": sp_last, "day1": sp_prev, "wk1": sp_wk1, "mo1": sp_mo1, "mo3": sp_mo3,
+            "dod_delta": sp_dod_d, "dod_pct": sp_dod_p,
+            "wow_delta": sp_wow_d, "wow_pct": sp_wow_p,
+            "mom_delta": sp_mom_d, "mom_pct": sp_mom_p,
+        }
+
+    updated_str = updated_at.strftime("%m/%d/%y %H:%M") if updated_at else None
+
+    return {
+        "dates":   common_dates,
+        "series":  series,
+        "stats":   stats,
+        "updated": updated_str,
+    }

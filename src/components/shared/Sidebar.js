@@ -57,6 +57,15 @@ function SecurityIcon({ color }) {
   );
 }
 
+function MacroIcon({ color }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M2,13 L2,3 L8,8 L14,3 L14,13" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <line x1="1" y1="15" x2="15" y2="15" stroke={color} strokeWidth="1" opacity="0.4" />
+    </svg>
+  );
+}
+
 function ChevronIcon({ color, open }) {
   return (
     <svg
@@ -124,25 +133,51 @@ const NAV_ITEMS = [
     exact: true,
     icon: (color) => <SectorIcon color={color} />,
   },
+  {
+    label: "MACRO",
+    path: "/macro",
+    exact: false,
+    icon: (color) => <MacroIcon color={color} />,
+    children: [
+      { label: "YIELD CURVE", path: "/macro/yield-curve", exact: true },
+    ],
+  },
 ];
+
+// Collect all parent paths that have children for generic expand/collapse
+const _PARENTS_WITH_CHILDREN = NAV_ITEMS.filter(i => i.children).map(i => i.path);
+
+function _initOpenMenus() {
+  const p = window.location.pathname;
+  const open = {};
+  _PARENTS_WITH_CHILDREN.forEach(pp => {
+    open[pp] = p.startsWith(pp);
+  });
+  return open;
+}
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 export default function Sidebar({ locked = false, onToggleLock }) {
   const [hovered, setHovered] = useState(false);
-  const [volOpen, setVolOpen] = useState(() => window.location.pathname.startsWith("/vol"));
+  const [openMenus, setOpenMenus] = useState(_initOpenMenus);
   const location = useLocation();
   const navigate = useNavigate();
   const prevPath = useRef(location.pathname);
 
   const expanded = locked || hovered;
 
-  // Auto-open when navigating INTO a vol page (e.g. child click or direct URL)
-  const onVolPage = location.pathname.startsWith("/vol");
+  // Auto-open parent when navigating INTO one of its child routes
   useEffect(() => {
-    const wasVol = prevPath.current.startsWith("/vol");
-    if (onVolPage && !wasVol) setVolOpen(true);
+    const prev = prevPath.current;
+    _PARENTS_WITH_CHILDREN.forEach(pp => {
+      const wasIn = prev.startsWith(pp);
+      const isIn  = location.pathname.startsWith(pp);
+      if (isIn && !wasIn) {
+        setOpenMenus(m => ({ ...m, [pp]: true }));
+      }
+    });
     prevPath.current = location.pathname;
-  }, [location.pathname, onVolPage]);
+  }, [location.pathname]);
 
   function isActive(item) {
     if (item.exact) return location.pathname === item.path;
@@ -152,18 +187,14 @@ export default function Sidebar({ locked = false, onToggleLock }) {
   function handleParentClick(item) {
     if (item.children) {
       if (!expanded) {
-        // Collapsed sidebar — navigate to default child
         navigate(item.children[0].path);
       } else {
-        // Expanded — toggle submenu only, no navigation
-        setVolOpen(prev => !prev);
+        setOpenMenus(m => ({ ...m, [item.path]: !m[item.path] }));
       }
     } else {
       navigate(item.path);
     }
   }
-
-  const showVolChildren = expanded && volOpen;
 
   return (
     <div
@@ -191,6 +222,7 @@ export default function Sidebar({ locked = false, onToggleLock }) {
           const active = isActive(item);
           const iconColor = active ? "#00e5a0" : "#8899aa";
           const hasChildren = !!item.children;
+          const showChildren = hasChildren && expanded && openMenus[item.path];
           return (
             <div key={item.path}>
               <button
@@ -235,16 +267,16 @@ export default function Sidebar({ locked = false, onToggleLock }) {
                     opacity: expanded ? 1 : 0,
                     transition: "opacity 150ms ease",
                   }}>
-                    <ChevronIcon color={active ? "#00e5a0" : "#8899aa"} open={showVolChildren} />
+                    <ChevronIcon color={active ? "#00e5a0" : "#8899aa"} open={showChildren} />
                   </span>
                 )}
               </button>
               {/* Children */}
-              {hasChildren && showVolChildren && (
+              {hasChildren && showChildren && (
                 <div style={{
                   overflow: "hidden",
                   transition: "max-height 200ms ease",
-                  maxHeight: showVolChildren ? 200 : 0,
+                  maxHeight: showChildren ? 200 : 0,
                 }}>
                   {item.children.map(child => {
                     const childActive = isActive(child);

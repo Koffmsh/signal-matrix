@@ -10,6 +10,7 @@ import SecurityAnalysis from "./components/Security/SecurityAnalysis";
 import SpxVolChart from "./components/Vol/SpxVolChart";
 import MacroVolChart from "./components/Vol/MacroVolChart";
 import BondVolChart from "./components/Vol/BondVolChart";
+import YieldCurveChart from "./components/Vol/YieldCurveChart";
 import SpxImpactDashboard from "./components/SpxImpact/SpxImpactDashboard";
 import SectorPerformance from "./components/Macro/SectorPerformance";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -93,6 +94,7 @@ function AppLayout() {
             <Route path="/vol"             element={<SpxVolChart />} />
             <Route path="/vol/macro"      element={<MacroVolChart />} />
             <Route path="/vol/bond"       element={<BondVolChart />} />
+            <Route path="/macro/yield-curve" element={<YieldCurveChart />} />
             <Route path="/spx-impact"     element={<SpxImpactDashboard />} />
             <Route path="/sector"         element={<SectorPerformance />} />
             <Route path="*"               element={<Dashboard />} />

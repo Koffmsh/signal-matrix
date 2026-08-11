@@ -127,6 +127,17 @@ export async function fetchBondVolHistory() {
   }
 }
 
+export async function fetchYieldCurveHistory() {
+  try {
+    const response = await apiFetch(`/api/vol/yield-curve-history`);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchYieldCurveHistory failed", err);
+    return null;
+  }
+}
+
 /**
  * Fetch single ticker quote.
  * Useful for debugging in browser console:
