@@ -7,7 +7,7 @@ import { fetchHyCreditHistory } from "../../services/api";
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const COLORS = {
-  OAS: "#f0b429",
+  OAS: "#4e8fde",
   HYG: "#c8d8e8",
 };
 
@@ -16,7 +16,7 @@ const TEXT    = "#8899aa";
 const LABEL   = "#c8d8e8";
 const GREEN   = "#00e5a0";
 const RED     = "#ff4d6d";
-const AMBER   = "#f0b429";
+const BLUE    = "#4e8fde";
 
 const LABELS = {
   OAS: "HY OAS",
@@ -80,7 +80,7 @@ function priceDeltaColor(v) {
 function getOasRegime(oas) {
   if (oas == null) return { label: "—", color: TEXT };
   if (oas < OAS_TIGHT) return { label: "TIGHT", color: GREEN };
-  if (oas < OAS_STRESS) return { label: "NORMAL", color: AMBER };
+  if (oas < OAS_STRESS) return { label: "NORMAL", color: "#f0b429" };
   return { label: "STRESS", color: RED };
 }
 
