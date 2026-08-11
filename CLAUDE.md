@@ -44,6 +44,7 @@ indicators.
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
 - **SMS:** Telnyx (v2 REST, `services/sms.py`); credentials in `.env` (TELNYX_API_KEY, TELNYX_FROM, TELNYX_TO). **Globally disabled** via `sms.SMS_DISABLED = True` pending 10DLC carrier registration — `send_sms`/`send_sms_to` no-op until lifted. (Superseded Twilio.)
 - **Email:** Gmail SMTP (`services/email_alert.py`); env `EMAIL_FROM` / `EMAIL_TO` / `EMAIL_APP_PASSWORD`. `send_email_to(recipient, …)` for per-recipient sends. No kill switch — email is live.
+- **FRED:** `services/fred.py` — REST client for St. Louis Fed economic data API; `FRED_API_KEY` in `.env`/`.env.dev`/Fly secrets. Currently fetches `BAMLH0A0HYM2` (HY OAS) for the HY Credit dashboard. 120 req/min limit; daily data, ~1-day lag.
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
 - **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
@@ -134,12 +135,15 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Restructured ETF history check** — some ETFs (currently PALL, PPLT) were restructured and Schwab's history API returns pre-restructuring prices, creating a discontinuity vs current quotes. Add these to `SCHWAB_UNSUPPORTED` so Yahoo supplies the history. Before adding new precious metals or commodity ETFs, verify Schwab history is continuous with the current price scale. See **ADR-015**.
 
 ### UI & dashboards guardrails
-- **Sidebar** (`Sidebar.js`) — must stay `position: fixed` (sticky re-introduces Recharts `ResponsiveContainer` ResizeObserver stutter). Add dashboards by appending to `NAV_ITEMS` — no other files change. Admin is NOT in the sidebar (direct URL only). **VOL** is a collapsible parent with three children: SPX VOL (`/vol`), MACRO VOL (`/vol/macro`), BOND VOL (`/vol/bond`). Clicking VOL toggles the submenu open/closed (no navigation); only child items navigate. Collapsed sidebar: clicking VOL icon navigates to SPX VOL (default). Sub-items auto-expand when on any `/vol/*` route. See **ADR-011**.
+- **Sidebar** (`Sidebar.js`) — must stay `position: fixed` (sticky re-introduces Recharts `ResponsiveContainer` ResizeObserver stutter). Add dashboards by appending to `NAV_ITEMS` — no other files change. Admin is NOT in the sidebar (direct URL only). **VOL** is a collapsible parent with four children: SPX VOL (`/vol`), MACRO VOL (`/vol/macro`), BOND VOL (`/vol/bond`), HY CREDIT (`/vol/hy-credit`). Clicking VOL toggles the submenu open/closed (no navigation); only child items navigate. Collapsed sidebar: clicking VOL icon navigates to SPX VOL (default). Sub-items auto-expand when on any `/vol/*` route. See **ADR-011**.
 - **Macro Vol dashboard** (`/vol/macro`) — charts VIX/VXN/RVX/GVZ/OVX; MOVE is collected & stored separately. **Speedometer regime gauges** above the chart show at-a-glance Investable/Choppy/Danger for all 5 indices using per-index thresholds from `VOL_INDEX_THRESHOLDS`. Frontend polls every 15 min during market hours (matches intraday quote cadence). Gauges: `VolGauge`/`VolGauges` components in `MacroVolChart.js`. **Timestamp** top-right: contextual `LIVE` (9:30 AM–4 PM ET weekdays) or `EOD` (after hours/weekends) — derived from ET market hours check, not a flag. **OVX right-axis note** uses grey TEXT color with only the `▶` arrow in amber (avoids pulling attention).
 - **Bond Vol dashboard** (`/vol/bond`) — charts MOVE index (ICE BofA Treasury implied volatility) with Investable (85) and Danger (120) threshold reference lines. Same layout as Macro Vol (chart + stats table + context note). Data from `GET /api/vol/bond-history` (single ticker, same response shape). MOVE is Schwab-only (`$MOVE`) — no Yahoo fallback; blank in dev.
+- **HY Credit dashboard** (`/vol/hy-credit`) — dual-axis chart: HY OAS (FRED `BAMLH0A0HYM2`, amber `#f0b429`, left axis in bps) + HYG price (white `#c8d8e8`, right axis in $). Inverse relationship: spreads widen → HYG drops. Regime badge: TIGHT <300 bps (green) · NORMAL 300–500 (amber) · STRESS ≥500 (red). OAS fetched live from FRED on each page load (daily data, ~1-day lag). HYG from `price_cache`. Stats table with bps formatting (OAS) and price formatting (HYG). OAS delta colors inverted vs price (widening = red, tightening = green). Data from `GET /api/vol/hy-credit-history`.
 - **Macro Vol data source** — VIX from Yahoo (`^VIX`); VXN/RVX/GVZ/OVX/MOVE from Schwab `$`-symbols (`SCHWAB_INDEX_HISTORY_MAP`, fetched via `_schwab_fetch_index_histories`); `_yahoo_fallback` **excludes** these so token expiry keeps stale-correct Schwab data instead of Yahoo garbage. The `append` fetch uses `MONTH`/`ONE_MONTH` + daily — **never** `periodType=day` + `frequencyType=daily` (Schwab 400s: `day` only allows `minute`), and routes through the merge `_upsert` so multi-day gaps fill. RVX has no Yahoo fallback (`^RVX` delisted) — Schwab is its only source. See **ADR-010** + **ADR-022** + rule #98.
 - **Macro Vol chart uses union dates** (`vol.py` `/api/vol/macro-history`) — date axis is UNION of all ticker date arrays; each series fills `None` for missing dates (`connectNulls={false}` in chart). Previously strict intersection cut the chart back to the most stale ticker. Stats anchor `last` to `price_cache.close`; `prev` is **value-anchored** (`closes[-2]` when `close == closes[-1]`, else `closes[-1]`) — **never** gated on wall-clock `dates[-1] >= today_et`, which collapsed `prev→last` (DoD=0 for every ticker) when viewed any day after the last bar.
 - **`_schwab_fetch_index_histories` per-ticker Yahoo fallback** — if Schwab `$VXN/$RVX/$GVZ/$OVX` history call fails individually, falls back to `_yahoo_fetch_subset` for that ticker. Previously failure was silent and the data gap was unrecoverable until Schwab was fixed.
+- **MACRO sidebar parent** — collapsible parent at the bottom of sidebar navigation (below SECTOR PERF). Icon: M + baseline stroke SVG (`MacroIcon`). Children: YIELD CURVE (`/macro/yield-curve`). Houses economic regime indicators (yield curve, credit, growth/inflation/liquidity — distinct from VOL which covers direct market volatility). Sidebar now uses generic `openMenus` state for all collapsible parents (VOL, MACRO) — replaces the old hardcoded `volOpen`.
+- **Yield Curve dashboard** (`/macro/yield-curve`) — dual-axis ComposedChart: TWO (2Y, `#c8d8e8`) + TNX (10Y, `#8899aa`) yields on left axis; computed 2-10 spread (TNX−TWO, `#4e8fde`) as Area on right axis in bps. Header badge: "NORMAL · XX bps" (green) or "INVERTED · XX bps" (red). Stats table with yield formatting (2Y/10Y) and bps formatting (spread). Zero reference line on spread axis. 480px chart height, vertical+horizontal gridlines, 2Y/MAX toggle. Data from `GET /api/vol/yield-curve-history` (union-date alignment, value-anchored stats, same pattern as macro-vol). Spread delta colors inverted (green = steepening, red = flattening).
 - **Sector Performance** (`/sector`) — SPX shown without `$` prefix (index); sector ETFs with `$`.
 
 ### Signals, ops & auth guardrails
@@ -185,10 +189,12 @@ signal-matrix/
 │   │   │   └── SectorPerformance.js       ← /sector route; absolute + relative sector perf tables (1D/MTD/QTD/YTD vs SPX)
 │   │   ├── Vol/
 │   │   │   ├── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
-│   │   │   └── BondVolChart.js            ← MOVE bond vol chart (threshold lines at 85/120); stats table; 2Y/MAX toggle
+│   │   │   ├── BondVolChart.js            ← MOVE bond vol chart (threshold lines at 85/120); stats table; 2Y/MAX toggle
+│   │   │   ├── HyCreditChart.js           ← /vol/hy-credit — HY OAS (FRED) + HYG dual-axis chart; regime badge; 2Y/MAX toggle
+│   │   │   └── YieldCurveChart.js         ← /macro/yield-curve — 2Y/10Y yields + 2-10 spread dual-axis chart; 2Y/MAX toggle
 │   │   └── shared/
 │   │       ├── Header.js                  ← global top bar (48px fixed); brand left, user profile right
-│   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px; includes SECURITY nav item
+│   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed; generic collapsible parents (VOL, MACRO); MacroIcon SVG
 │   │       └── SystemStatus.js            ← ADR-020 — header CONNECTION/DATA (admin) + STATUS (user) dots; reads /api/system/status
 │   ├── data/
 │   │   └── tickers.js                     ← SEED DATA ONLY — source of truth is the Postgres tickers table
@@ -259,6 +265,7 @@ signal-matrix/
 │   │   ├── spx_constituents.py            ← SPX constituent impact — SSGA SPY XLSX weights + Schwab batch quotes ✅
 │   │   ├── sms.py                         ← Telnyx SMS wrapper (globally disabled — SMS_DISABLED, pending 10DLC) ✅
 │   │   ├── email_alert.py                 ← Gmail SMTP email wrapper (send_email / send_email_to) ✅
+│   │   ├── fred.py                        ← FRED API client (HY OAS + future macro series) ✅
 │   │   ├── alert_catalog.py               ← canonical alert list (keys/labels/tooltips) — Alert Creator ✅
 │   │   ├── system_status.py               ← ADR-020 — computes connection/data/status axes + standing integrity scan ✅
 │   │   └── ai_summary.py                 ← On-demand AI summary generation (Anthropic Haiku); called from security router, NOT scheduler (ADR-030)
