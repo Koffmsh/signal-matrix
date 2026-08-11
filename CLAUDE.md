@@ -134,8 +134,9 @@ Critical issues already resolved — do not reintroduce these bugs:
 - **Restructured ETF history check** — some ETFs (currently PALL, PPLT) were restructured and Schwab's history API returns pre-restructuring prices, creating a discontinuity vs current quotes. Add these to `SCHWAB_UNSUPPORTED` so Yahoo supplies the history. Before adding new precious metals or commodity ETFs, verify Schwab history is continuous with the current price scale. See **ADR-015**.
 
 ### UI & dashboards guardrails
-- **Sidebar** (`Sidebar.js`) — must stay `position: fixed` (sticky re-introduces Recharts `ResponsiveContainer` ResizeObserver stutter). Add dashboards by appending to `NAV_ITEMS` — no other files change. Admin is NOT in the sidebar (direct URL only). See **ADR-011**.
-- **Macro Vol dashboard** (`/vol/macro`) — charts VIX/VXN/RVX/GVZ/OVX; **MOVE is collected & stored but excluded** — reserved for the future Fixed Income dashboard.
+- **Sidebar** (`Sidebar.js`) — must stay `position: fixed` (sticky re-introduces Recharts `ResponsiveContainer` ResizeObserver stutter). Add dashboards by appending to `NAV_ITEMS` — no other files change. Admin is NOT in the sidebar (direct URL only). **VOL** is a collapsible parent with three children: SPX VOL (`/vol`), MACRO VOL (`/vol/macro`), BOND VOL (`/vol/bond`). Clicking VOL from a non-vol page navigates to SPX VOL (default). Sub-items auto-expand when on any `/vol/*` route. See **ADR-011**.
+- **Macro Vol dashboard** (`/vol/macro`) — charts VIX/VXN/RVX/GVZ/OVX; MOVE is collected & stored separately.
+- **Bond Vol dashboard** (`/vol/bond`) — charts MOVE index (ICE BofA Treasury implied volatility) with Investable (85) and Danger (120) threshold reference lines. Same layout as Macro Vol (chart + stats table + context note). Data from `GET /api/vol/bond-history` (single ticker, same response shape). MOVE is Schwab-only (`$MOVE`) — no Yahoo fallback; blank in dev.
 - **Macro Vol data source** — VIX from Yahoo (`^VIX`); VXN/RVX/GVZ/OVX/MOVE from Schwab `$`-symbols (`SCHWAB_INDEX_HISTORY_MAP`, fetched via `_schwab_fetch_index_histories`); `_yahoo_fallback` **excludes** these so token expiry keeps stale-correct Schwab data instead of Yahoo garbage. The `append` fetch uses `MONTH`/`ONE_MONTH` + daily — **never** `periodType=day` + `frequencyType=daily` (Schwab 400s: `day` only allows `minute`), and routes through the merge `_upsert` so multi-day gaps fill. RVX has no Yahoo fallback (`^RVX` delisted) — Schwab is its only source. See **ADR-010** + **ADR-022** + rule #98.
 - **Macro Vol chart uses union dates** (`vol.py` `/api/vol/macro-history`) — date axis is UNION of all ticker date arrays; each series fills `None` for missing dates (`connectNulls={false}` in chart). Previously strict intersection cut the chart back to the most stale ticker. Stats anchor `last` to `price_cache.close`; `prev` is **value-anchored** (`closes[-2]` when `close == closes[-1]`, else `closes[-1]`) — **never** gated on wall-clock `dates[-1] >= today_et`, which collapsed `prev→last` (DoD=0 for every ticker) when viewed any day after the last bar.
 - **`_schwab_fetch_index_histories` per-ticker Yahoo fallback** — if Schwab `$VXN/$RVX/$GVZ/$OVX` history call fails individually, falls back to `_yahoo_fetch_subset` for that ticker. Previously failure was silent and the data gap was unrecoverable until Schwab was fixed.
@@ -183,7 +184,8 @@ signal-matrix/
 │   │   ├── Macro/
 │   │   │   └── SectorPerformance.js       ← /sector route; absolute + relative sector perf tables (1D/MTD/QTD/YTD vs SPX)
 │   │   ├── Vol/
-│   │   │   └── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
+│   │   │   ├── SpxVolChart.js             ← SPX realized vol chart (HV30/HV90 lines + daily % change bars); 2Y/MAX toggle
+│   │   │   └── BondVolChart.js            ← MOVE bond vol chart (threshold lines at 85/120); stats table; 2Y/MAX toggle
 │   │   └── shared/
 │   │       ├── Header.js                  ← global top bar (48px fixed); brand left, user profile right
 │   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed at top: 48px; includes SECURITY nav item
