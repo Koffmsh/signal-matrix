@@ -21,6 +21,156 @@ const GREEN   = "#00e5a0";
 const RED     = "#ff4d6d";
 const AMBER   = "#f0b429";
 
+// ── Vol regime gauge thresholds (matches VOL_INDEX_THRESHOLDS in conviction_engine.py) ──
+const GAUGE_CONFIG = [
+  { ticker: "VIX", label: "VIX",    low: 9,  ceil: 19, danger: 30, high: 45 },
+  { ticker: "VXN", label: "NazVol", low: 12, ceil: 22, danger: 32, high: 45 },
+  { ticker: "RVX", label: "RVX",    low: 12, ceil: 22, danger: 32, high: 45 },
+  { ticker: "GVZ", label: "GVZ",    low: 8,  ceil: 22, danger: 32, high: 45 },
+  { ticker: "OVX", label: "OVX",    low: 15, ceil: 38, danger: 60, high: 80 },
+];
+
+function getRegime(val, ceil, danger) {
+  if (val < ceil) return { label: "INVESTABLE", color: GREEN };
+  if (val < danger) return { label: "CHOPPY", color: AMBER };
+  return { label: "DANGER", color: RED };
+}
+
+function VolGauge({ config, value }) {
+  if (value == null) return null;
+  const { label, low, ceil, danger, high } = config;
+  const W = 190, H = 115, cx = W / 2, cy = 96, R = 64, thick = 10;
+  const span = high - low;
+  const tNorm = v => (v - low) / span;
+  const tCeil = tNorm(ceil), tDanger = tNorm(danger);
+  const tVal = Math.min(Math.max(tNorm(value), 0), 1);
+  const PI = Math.PI;
+  const angForT = t => PI * (1 - t);
+  const Ro = R, Ri = R - thick, Rm = (Ro + Ri) / 2;
+
+  function arcD(r, t0, t1) {
+    const a0 = angForT(t0), a1 = angForT(t1);
+    const x0 = cx + r * Math.cos(a0), y0 = cy - r * Math.sin(a0);
+    const x1 = cx + r * Math.cos(a1), y1 = cy - r * Math.sin(a1);
+    const large = Math.abs(a0 - a1) > PI ? 1 : 0;
+    return `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
+  }
+
+  // Ticks
+  const minorCount = 20;
+  const ticks = [];
+  for (let i = 0; i <= minorCount; i++) {
+    const t = i / minorCount;
+    const ang = angForT(t);
+    const isMajor = (i === 0 || i === minorCount);
+    const isZone = (Math.abs(t - tCeil) < 0.03 || Math.abs(t - tDanger) < 0.03);
+    const len = (isMajor || isZone) ? 5 : 2.5;
+    const sw = (isMajor || isZone) ? 1.2 : 0.6;
+    const x1 = cx + (Ro + 1) * Math.cos(ang), y1 = cy - (Ro + 1) * Math.sin(ang);
+    const x2 = cx + (Ro + 1 + len) * Math.cos(ang), y2 = cy - (Ro + 1 + len) * Math.sin(ang);
+    ticks.push(<line key={`m${i}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#3a5068" strokeWidth={sw} />);
+  }
+  [tCeil, tDanger].forEach((t, j) => {
+    const ang = angForT(t);
+    const x1 = cx + Ri * Math.cos(ang), y1 = cy - Ri * Math.sin(ang);
+    const x2 = cx + (Ro + 6) * Math.cos(ang), y2 = cy - (Ro + 6) * Math.sin(ang);
+    ticks.push(<line key={`z${j}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#3a5068" strokeWidth={1.5} />);
+  });
+
+  // Scale labels
+  const lr = Ro + 14;
+  function lbl(t, text, anchor) {
+    const ang = angForT(t);
+    return <text key={text} x={cx + lr * Math.cos(ang)} y={cy - lr * Math.sin(ang) + 3} textAnchor={anchor} fontSize={8.5} fill="#8899aa" fontWeight={500}>{text}</text>;
+  }
+
+  const needleDeg = -90 + tVal * 180;
+  const needleLen = R - 6;
+  const r = getRegime(value, ceil, danger);
+  const tipY = cy - needleLen;
+  const taperMidY = cy - needleLen * 0.5;
+  const baseHW = 3.0, midHW = 1.4;
+  const uid = `gauge-${config.ticker}`;
+
+  return (
+    <div style={{
+      background: "#0c1a2e", border: "1px solid #1a2a3a", borderRadius: 10,
+      padding: "16px 14px 12px", display: "flex", flexDirection: "column", alignItems: "center",
+      minWidth: 155, flex: 1, maxWidth: 195,
+    }}>
+      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", color: TEXT, marginBottom: 2 }}>{label}</div>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${label} volatility gauge at ${value}, regime: ${r.label}`}>
+        <title>{label}: {value.toFixed(2)} — {r.label}</title>
+        <defs>
+          <filter id={`ng-${uid}`}><feGaussianBlur stdDeviation={3} result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <filter id={`pg-${uid}`}><feGaussianBlur stdDeviation={4} result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        </defs>
+
+        {/* Background track */}
+        <path d={arcD(Rm, 0, 1)} fill="none" stroke="#0f1e30" strokeWidth={thick} strokeLinecap="round" />
+
+        {/* Zone arcs (dim) */}
+        <path d={arcD(Rm, 0, tCeil)}      fill="none" stroke={GREEN} strokeWidth={thick} strokeLinecap="butt" opacity={0.25} />
+        <path d={arcD(Rm, tCeil, tDanger)} fill="none" stroke={AMBER} strokeWidth={thick} strokeLinecap="butt" opacity={0.25} />
+        <path d={arcD(Rm, tDanger, 1)}     fill="none" stroke={RED}   strokeWidth={thick} strokeLinecap="butt" opacity={0.25} />
+
+        {/* Active fill (bright) */}
+        <path d={arcD(Rm, 0, Math.min(tVal, tCeil))} fill="none" stroke={GREEN} strokeWidth={thick} strokeLinecap="butt" opacity={0.7} />
+        {tVal > tCeil && <path d={arcD(Rm, tCeil, Math.min(tVal, tDanger))} fill="none" stroke={AMBER} strokeWidth={thick} strokeLinecap="butt" opacity={0.7} />}
+        {tVal > tDanger && <path d={arcD(Rm, tDanger, tVal)} fill="none" stroke={RED} strokeWidth={thick} strokeLinecap="butt" opacity={0.7} />}
+
+        {/* Outer rim */}
+        <path d={arcD(Ro + 0.5, 0, 1)} fill="none" stroke="#1a2a3a" strokeWidth={0.5} opacity={0.6} />
+
+        {ticks}
+        {lbl(0, low, "end")}
+        {lbl(tCeil, ceil, "middle")}
+        {lbl(tDanger, danger, "middle")}
+        {lbl(1, high + "+", "start")}
+
+        {/* Needle */}
+        <g style={{ transformOrigin: `${cx}px ${cy}px`, transform: `rotate(${needleDeg}deg)` }}>
+          <polygon
+            points={`${cx - baseHW},${cy + 2} ${cx + baseHW},${cy + 2} ${cx + midHW},${taperMidY} ${cx},${tipY} ${cx - midHW},${taperMidY}`}
+            fill={r.color} opacity={0.85}
+            filter={`url(#ng-${uid})`}
+          />
+          <line x1={cx} y1={cy - 6} x2={cx} y2={taperMidY + 4} stroke="#b0c8dc" strokeWidth={0.6} opacity={0.35} />
+        </g>
+
+        {/* Pivot cap */}
+        <circle cx={cx} cy={cy} r={6} fill="#0c1a2e" stroke="#3a5068" strokeWidth={1} />
+        <circle cx={cx} cy={cy} r={3.5} fill={r.color} opacity={0.9} filter={`url(#pg-${uid})`} />
+        <circle cx={cx} cy={cy} r={1.5} fill="#fff" opacity={0.7} />
+
+        {/* Baseline */}
+        <line x1={cx - R - 6} y1={cy + 1} x2={cx + R + 6} y2={cy + 1} stroke="#1a2a3a" strokeWidth={0.5} />
+      </svg>
+      <div style={{ marginTop: -4, display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <span style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", lineHeight: 1, color: r.color }}>{value.toFixed(2)}</span>
+        <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", marginTop: 3, color: r.color }}>{r.label}</span>
+      </div>
+    </div>
+  );
+}
+
+function VolGauges({ stats }) {
+  const hasAny = GAUGE_CONFIG.some(g => stats[g.ticker]?.last != null);
+  if (!hasAny) return null;
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.15em", color: GREEN, marginBottom: 16, textTransform: "uppercase" }}>
+        Volatility Regime
+      </div>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
+        {GAUGE_CONFIG.map(g => (
+          <VolGauge key={g.ticker} config={g} value={stats[g.ticker]?.last ?? null} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Preferred order — tickers with no data are filtered out automatically at render time
 const CHART_TICKER_ORDER = ["VIX", "VXN", "RVX", "GVZ", "OVX"];
 const STAT_TICKER_ORDER  = ["VIX", "VXN", "RVX", "GVZ", "OVX"];
@@ -245,6 +395,19 @@ export default function MacroVolChart() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Poll every 15 min during market hours to pick up intraday quote updates
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const now = new Date();
+      const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const day = et.getDay(), h = et.getHours(), m = et.getMinutes();
+      if (day >= 1 && day <= 5 && (h > 9 || (h === 9 && m >= 30)) && h < 16) {
+        load();
+      }
+    }, 15 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, [load]);
+
   // Derive which tickers actually have data from the API response
   const chartTickers = useMemo(() => {
     if (!rawData?.series) return [];
@@ -316,6 +479,11 @@ export default function MacroVolChart() {
         <div style={{ color: RED, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
           No data — run REFRESH DATA on the dashboard first to fetch these tickers.
         </div>
+      )}
+
+      {/* ── Regime Gauges ── */}
+      {!loading && !error && rawData?.stats && (
+        <VolGauges stats={rawData.stats} />
       )}
 
       {/* ── Chart + Table ── */}
