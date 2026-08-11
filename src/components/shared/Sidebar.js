@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 const HEADER_HEIGHT = 48;
@@ -129,14 +129,20 @@ const NAV_ITEMS = [
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 export default function Sidebar({ locked = false, onToggleLock }) {
   const [hovered, setHovered] = useState(false);
-  const [volOpen, setVolOpen] = useState(false);
+  const [volOpen, setVolOpen] = useState(() => window.location.pathname.startsWith("/vol"));
   const location = useLocation();
   const navigate = useNavigate();
+  const prevPath = useRef(location.pathname);
 
   const expanded = locked || hovered;
 
-  // Auto-open the vol submenu when on a vol page
+  // Auto-open when navigating INTO a vol page (e.g. child click or direct URL)
   const onVolPage = location.pathname.startsWith("/vol");
+  useEffect(() => {
+    const wasVol = prevPath.current.startsWith("/vol");
+    if (onVolPage && !wasVol) setVolOpen(true);
+    prevPath.current = location.pathname;
+  }, [location.pathname, onVolPage]);
 
   function isActive(item) {
     if (item.exact) return location.pathname === item.path;
@@ -149,18 +155,15 @@ export default function Sidebar({ locked = false, onToggleLock }) {
         // Collapsed sidebar — navigate to default child
         navigate(item.children[0].path);
       } else {
-        // Expanded — toggle submenu; if not already on a vol page, also navigate
+        // Expanded — toggle submenu only, no navigation
         setVolOpen(prev => !prev);
-        if (!onVolPage) {
-          navigate(item.children[0].path);
-        }
       }
     } else {
       navigate(item.path);
     }
   }
 
-  const showVolChildren = expanded && (volOpen || onVolPage);
+  const showVolChildren = expanded && volOpen;
 
   return (
     <div
