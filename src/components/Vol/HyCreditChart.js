@@ -444,7 +444,7 @@ export default function HyCreditChart() {
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive={false}
-                    connectNulls={false}
+                    connectNulls={true}
                   />
                 )}
 
@@ -457,7 +457,7 @@ export default function HyCreditChart() {
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive={false}
-                    connectNulls={false}
+                    connectNulls={true}
                   />
                 )}
               </ComposedChart>
