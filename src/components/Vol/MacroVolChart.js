@@ -147,7 +147,7 @@ function VolGauge({ config, value }) {
         <line x1={cx - R - 6} y1={cy + 1} x2={cx + R + 6} y2={cy + 1} stroke="#1a2a3a" strokeWidth={0.5} />
       </svg>
       <div style={{ marginTop: -4, display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <span style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", lineHeight: 1, color: r.color }}>{value.toFixed(2)}</span>
+        <span style={{ fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums", lineHeight: 1, color: r.color }}>{value.toFixed(2)}</span>
         <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", marginTop: 3, color: r.color }}>{r.label}</span>
       </div>
     </div>
@@ -158,10 +158,7 @@ function VolGauges({ stats }) {
   const hasAny = GAUGE_CONFIG.some(g => stats[g.ticker]?.last != null);
   if (!hasAny) return null;
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.15em", color: GREEN, marginBottom: 16, textTransform: "uppercase" }}>
-        Volatility Regime
-      </div>
+    <div style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
         {GAUGE_CONFIG.map(g => (
           <VolGauge key={g.ticker} config={g} value={stats[g.ticker]?.last ?? null} />
@@ -461,11 +458,18 @@ export default function MacroVolChart() {
           <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
             CROSS-ASSET IMPLIED VOLATILITY
           </span>
-          {rawData?.updated && (
-            <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
-              EOD · {rawData.updated}
-            </span>
-          )}
+          {rawData?.updated && (() => {
+            const now = new Date();
+            const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+            const day = et.getDay(), h = et.getHours(), m = et.getMinutes();
+            const isMarketHours = day >= 1 && day <= 5 && (h > 9 || (h === 9 && m >= 30)) && h < 16;
+            const tag = isMarketHours ? "LIVE" : "EOD";
+            return (
+              <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
+                {tag} · {rawData.updated}
+              </span>
+            );
+          })()}
         </div>
       </div>
 
