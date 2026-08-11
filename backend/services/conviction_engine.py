@@ -202,7 +202,7 @@ def get_vol_score(vol_close: float | None, vol_hrr: float | None,
     Bearish (asymmetric — +5 floor):
       Danger       close ≥ danger_floor                 +15
       Choppy       ceiling ≤ close < danger_floor       +10
-      Calm         close < ceiling                      + 5
+      Tradable     close < ceiling                      + 5
     """
     if vol_close is None:
         return 15, "Unknown"
@@ -215,7 +215,7 @@ def get_vol_score(vol_close: float | None, vol_hrr: float | None,
         elif vol_close >= ceiling:
             return 10, "Choppy"
         else:
-            return 5, "Calm"
+            return 5, "Tradable"
 
     if vol_close < ceiling:
         if vol_hrr is not None and vol_hrr < ceiling:
@@ -1271,7 +1271,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
 
     # Component 4 — Volatility (max 15, routed per vol index)
     vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
-                                        viewpoint=viewpoint, vol_index=_vol_index)
+                                        viewpoint=_struct_bias, vol_index=_vol_index)
 
     # Assembly: sum → floor(0) → dampener → cap(100)
     conviction_sum = structural_score + quad_score + volume_score + vix_score

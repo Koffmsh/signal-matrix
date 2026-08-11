@@ -65,8 +65,8 @@ function pillarDetail(name, data) {
     }
     case "VOLUME": {
       const dir = data.obv_direction || "Neutral";
-      if (dir === "Bullish" || dir === "Bearish") return `Volume is ${dir.toLowerCase()} — both OBV layers aligned.`;
-      if (dir === "Leaning Bullish" || dir === "Leaning Bearish") return `Volume is ${dir.toLowerCase()} — one OBV layer directional.`;
+      if (dir === "Bullish" || dir === "Bearish") return `Volume is ${dir.toLowerCase()} — both volume signals aligned.`;
+      if (dir === "Leaning Bullish" || dir === "Leaning Bearish") return `Volume is ${dir.toLowerCase()} — one volume signal directional.`;
       return "Volume is neutral — no directional bias.";
     }
     case "VOLATILITY": {
@@ -75,7 +75,7 @@ function pillarDetail(name, data) {
       const idx = data.vol_index || "VIX";
       if (!volVal) return "Volatility data unavailable.";
       if (regime === "N/A") return `No vol index applies — full credit (+15).`;
-      if (regime === "Investable" || regime === "Investable+" || regime === "Calm") return `${idx} at ${volVal} — low volatility supports positioning.`;
+      if (["Investable", "Investable+", "Tradable", "Calm"].includes(regime)) return `${idx} at ${volVal} — low volatility supports positioning.`;
       if (regime === "Choppy") return `${idx} at ${volVal} — choppy conditions, proceed with caution.`;
       if (regime === "Danger") return `${idx} at ${volVal} — extreme volatility, risk is elevated.`;
       return `${idx} at ${volVal}.`;
@@ -235,7 +235,9 @@ export default function SecurityAnalysis({ defaultTicker }) {
   const handleNav = (e) => {
     e.preventDefault();
     const s = navInput.trim().toUpperCase();
-    if (s) { navigate(`/security/${encodeURIComponent(s)}`); setNavInput(""); }
+    if (s && tickerList.some(t => t.ticker === s)) {
+      navigate(`/security/${encodeURIComponent(s)}`); setNavInput(""); setShowDropdown(false);
+    }
   };
 
   const chartData = useMemo(() => {
@@ -268,7 +270,15 @@ export default function SecurityAnalysis({ defaultTicker }) {
     ].map(p => ({
       ...p,
       score: p.raw,
-      label: p.name === "VOLATILITY" ? (data.vix_regime && data.vix_regime !== "N/A" ? (data.vix_regime === "Investable" && data.viewpoint === "Bearish" ? "Calm" : data.vix_regime) : "Full Credit") : pillarLabel(p.name, p.raw, data),
+      label: p.name === "VOLATILITY" ? (() => {
+        if (!data.vix_regime || data.vix_regime === "N/A") return "Full Credit";
+        if (["Investable", "Tradable", "Calm"].includes(data.vix_regime)) {
+          const lean = data.trade?.direction !== "Neutral" ? data.trade?.direction
+                     : data.trend?.direction !== "Neutral" ? data.trend?.direction : "Neutral";
+          return lean === "Bearish" ? "Tradable" : data.vix_regime === "Tradable" ? "Tradable" : "Investable";
+        }
+        return data.vix_regime;
+      })() : pillarLabel(p.name, p.raw, data),
       color: pillarColor(p.name, p.raw),
       detail: pillarDetail(p.name, data),
     }));
