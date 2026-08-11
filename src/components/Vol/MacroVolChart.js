@@ -528,8 +528,8 @@ export default function MacroVolChart() {
           </div>
 
           {/* OVX right-axis note */}
-          <div style={{ fontSize: 9, color: AMBER, marginBottom: 8, paddingLeft: 4, letterSpacing: "0.06em" }}>
-            ▶ OVX plotted on right axis (crude oil vol — higher scale)
+          <div style={{ fontSize: 9, color: TEXT, marginBottom: 8, paddingLeft: 4, letterSpacing: "0.06em" }}>
+            <span style={{ color: AMBER }}>▶</span> OVX plotted on right axis (crude oil vol — higher scale)
           </div>
 
           {/* Chart */}
