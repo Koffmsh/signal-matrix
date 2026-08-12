@@ -44,7 +44,7 @@ indicators.
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
 - **SMS:** Telnyx (v2 REST, `services/sms.py`); credentials in `.env` (TELNYX_API_KEY, TELNYX_FROM, TELNYX_TO). **Globally disabled** via `sms.SMS_DISABLED = True` pending 10DLC carrier registration — `send_sms`/`send_sms_to` no-op until lifted. (Superseded Twilio.)
 - **Email:** Gmail SMTP (`services/email_alert.py`); env `EMAIL_FROM` / `EMAIL_TO` / `EMAIL_APP_PASSWORD`. `send_email_to(recipient, …)` for per-recipient sends. No kill switch — email is live.
-- **FRED:** `services/fred.py` — REST client for St. Louis Fed economic data API; `FRED_API_KEY` in `.env`/`.env.dev`/Fly secrets. Currently fetches `BAMLH0A0HYM2` (HY OAS) for the HY Credit dashboard. 120 req/min limit; daily data, ~1-day lag.
+- **FRED:** `services/fred.py` — REST client for St. Louis Fed economic data API; `FRED_API_KEY` in `.env`/`.env.dev`/Fly secrets. Currently fetches `BAMLH0A0HYM2` (HY OAS) for the HY Credit dashboard and `DGS2` (2-Year Treasury yield) for the Yield Curve dashboard (replaces degraded Yahoo `2YY=F`). 120 req/min limit; daily data, ~1-day lag.
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
 - **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
