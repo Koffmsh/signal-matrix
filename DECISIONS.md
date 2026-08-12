@@ -48,6 +48,44 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-033 — EOD idempotency bypass + price source alignment
+Date: 2026-08-12
+Status: Active
+Component: `schwab_market_data.py`, `scheduler.py`, `conviction_engine.py`, `intraday_monitor.py`
+
+Context:
+  XLRE displayed Trade State = UPTREND_VALID + Trade Dir = Neutral — an impossible
+  combination. Root cause: `schwab_fetch_all`'s idempotency check (`cache_date == today`
+  for all Schwab tickers) blocked the 4 PM scheduled EOD run when REFRESH DATA had been
+  clicked earlier that day. The actual closing price was never captured. Two stale values
+  resulted: `price_cache.close` held the intraday monitor's last 3:45 PM quote ($44.12),
+  while `history_json[-1]` held the mid-day value from the manual REFRESH ($44.38).
+  Neither matched the true EOD close ($44.08). The pivot engine used `history_json[-1]`
+  for structural_state; the conviction engine used `price_cache.close` for direction —
+  different prices produced contradictory results. False BREAK_OF_TRADE intraday alerts
+  also fired for XLRE and META based on these phantom structural states.
+
+Decision:
+  1. `schwab_fetch_all(db, force=True)` — new parameter; scheduler passes `force=True`
+     to bypass idempotency. Manual REFRESH DATA uses default `force=False` (double-click
+     safe).
+  2. `compute_output` uses `prices[-1]` (from `history_json`) instead of
+     `price_cache.close` — same price source as the pivot engine.
+  3. Break-of-trade alert arrows: `🔻` for uptrend breaking down (support), `🔺` for
+     downtrend breaking up (resistance). Message body labels "support C" / "resistance B".
+
+Why (regression guard):
+  - Do NOT remove the `force` parameter or revert the scheduler to `force=False` — a
+    manual REFRESH earlier in the day will block the 4 PM EOD fetch and every signal
+    computed that evening will be wrong.
+  - Do NOT revert `compute_output` to `price_cache.close` — the intraday monitor updates
+    `close` without touching `history_json`, so the two fields can diverge at any time
+    between REFRESH DATA runs.
+  - The idempotency check itself is still needed (prevents redundant API calls on
+    double-clicks) — only the scheduled path bypasses it.
+
+Linked rule: CLAUDE.md rules #74, #120, #121, #122
+
 ## ADR-032 — Conviction v2.1: NATH/warn into structural pillar, cap 105, color fix
 Date: 2026-08-11
 Status: Active
