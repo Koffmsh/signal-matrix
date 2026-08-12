@@ -1291,10 +1291,10 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
                                         viewpoint=_struct_bias, vol_index=_vol_index)
 
-    # Assembly: sum → floor(0) → cap(100)
+    # Assembly: sum → floor(0) → cap(105)
     conviction_sum = structural_score + quad_score + volume_score + vix_score
     conviction_sum = max(0.0, conviction_sum)   # floor — quad misalignment can push negative
-    conviction_final = min(conviction_sum, 100.0)
+    conviction_final = min(conviction_sum, 105.0)
 
     # Display threshold: blank below 45
     conviction = round(conviction_final, 2) if conviction_final >= 45.0 else None

@@ -667,7 +667,7 @@ H is still calculated and stored for regime classification display only:
   H > 0.55 → trending regime (use trend-following: MA, momentum)
 
 conviction_final = structural_score + quad_score + volume_score + vix_score
-                 → floor(0) → cap(100)
+                 → floor(0) → cap(105)
 
 Structural (−5 to 55, base 0/25/50 ±5 adjustments):
   Both aligned (Bullish+Bullish or Bearish+Bearish) → 50
@@ -723,8 +723,8 @@ Vol (−10 to +15 — routed per vol index; flat +15 when no index applies):
   Vol HRR sourced from signal_output where ticker=vol_index, timeframe='trade'
   Missing vol index row → +15 (default full credit)
 
-Range: 0–100 (v2.1 additive formula; NATH/warn baked into structural pillar)
-  Base max:  Structural 55 (50+5 NATH) + Quad 20 + Volume 15 + VIX 15 = 105 → cap 100
+Range: 0–105 (v2.1 additive formula; NATH/warn baked into structural pillar)
+  Base max:  Structural 55 (50+5 NATH) + Quad 20 + Volume 15 + VIX 15 = 105
   Floor: 0 (quad misalignment absorbed by floor)
 
 Alert threshold: conviction >= 80 (v2.0 — requires full structural + aligned quad + some VIX)
@@ -1393,7 +1393,7 @@ git checkout -- .   # roll back if needed
 118. **Equities asset class quad mapping: Best Q1/Q2, Neutral Q3, Worst Q4** — `Domestic Equities` and `International Equities` are in `QUAD_ALIGNMENT` best asset_class for Q1 (Goldilocks) and Q2 (Reflation), worst for Q4 (Deflation), and **NOT listed** in Q3 (Stagflation) — making them Neutral at the asset_class level. Hedgeye backtest data shows SPY EV is +6.6% (Q1), +4.6% (Q2), −0.1% (Q3), −0.8% (Q4); Q3 is essentially flat because sector winners (Utilities, Energy, Tech, Health Care) and losers (Financials, Comm Services, Consumer Disc, Industrials) cancel out for broad indices. Individual equity sectors still score Best/Worst in Q3 via sector-level matching — this only affects tickers that fall through to asset_class (e.g. SPY/QQQ/IWM with sector="Broad Market"). Do not re-add equities to Q3 worst asset_class.
 71. **International Equities route to country quarterly quads** — `signals.py` `run_output()` routes tickers with `asset_class = "International Equities"` to their country's current-quarter quad (e.g. EWJ sector="Japan" → "JP" → `YYYY-QN` quarterly row) instead of the US monthly quad. `_SECTOR_TO_CODE` dict in `signals.py` maps sector labels to ISO country codes. If no country quarterly quad is set, falls back to no quad (multiplier = 1.00). Dashboard columns for international rows show the country quarterly quad (no probability — quarterly rows always store 1.0); US monthly quad + probability shown for all other rows. Quarterly data fetched in `App.js` from `/api/quad/settings?country=ALL&type=quarterly` on page load, mapped via `CODE_TO_SECTOR` to build `countryQuads` state `{sector: {cur, next}}`.
 72. **Quad UI colors (dashboard + QuadSetup)** — Q1: `#007a55` (dark green, white text) · Q2: `#00e5a0` (system green) · Q3: `#f0b429` (system amber) · Q4: `#ff4d6d` (system red). Box style: `background: color + "55"` (33% opacity) + `border: 1px solid color` + white text — matches QuadBtn active style. Do not introduce new quad color values.
-73. **Conviction tooltip — 2-line format (v2.1)** — Line 1: formula `Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100`. Line 2: display rules `Show ≥ 45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥ 80`. Security page: when conviction is blank, tooltip reads "No score — conviction below 45%". Conviction color always follows viewpoint (green/red/grey), never score-based. Do not revert to proximity/multiplier descriptions.
+73. **Conviction tooltip — 2-line format (v2.1)** — Line 1: formula `Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 105`. Line 2: display rules `Show ≥ 45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥ 80`. Security page: when conviction is blank, tooltip reads "No score — conviction below 45%". Conviction color always follows viewpoint (green/red/grey), never score-based. Do not revert to proximity/multiplier descriptions.
 69. **Slope boost changed to × 1.20 in v1.9** (was × 1.17 in v1.8). Do not revert to 1.17.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
