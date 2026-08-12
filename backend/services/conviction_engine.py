@@ -986,13 +986,17 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     hurst_row = db.query(SignalHurst).filter(SignalHurst.ticker == ticker).first()
     cache_row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
 
-    price  = float(cache_row.close  or 0.0) if cache_row else 0.0
     prices = []
     volumes = []
     if cache_row and cache_row.history_json:
         prices = json.loads(cache_row.history_json)
     if cache_row and cache_row.volume_history_json:
         volumes = json.loads(cache_row.volume_history_json)
+
+    # Use history_json[-1] — same price the pivot engine used for structural_state.
+    # price_cache.close can diverge when the intraday monitor updates it between
+    # REFRESH DATA runs; using it here would make direction disagree with state.
+    price = float(prices[-1]) if prices else (float(cache_row.close or 0.0) if cache_row else 0.0)
 
     # MA200 from price_cache — only consumer is compute_tail_level().
     # MA20, MA100, STD20, MA20 regime, ATR are populated on price_cache for legacy

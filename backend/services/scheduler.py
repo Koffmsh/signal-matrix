@@ -210,7 +210,7 @@ def schwab_data_job() -> None:
 
     try:
         # 1. Prices
-        result     = schwab_fetch_all(db)
+        result     = schwab_fetch_all(db, force=True)
         refresh_ok = result.get("errors", 0) == 0
         logger.info(
             f"Schwab data job: prices complete — "
