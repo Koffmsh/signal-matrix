@@ -106,7 +106,7 @@ _GAP_SCAN_EXEMPT = {
     "USD", "JPY", "/CL", "/ZN", "/GC", "/HG",
     "TWO", "HY_OAS",
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
-    "VVIX",
+    "VVIX", "CPER",
 }
 
 
