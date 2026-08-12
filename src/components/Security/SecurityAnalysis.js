@@ -412,9 +412,9 @@ export default function SecurityAnalysis({ defaultTicker }) {
                 </span>
               </div>
               <div style={{ textAlign: "center" }}
-                title={data.conviction != null
-                  ? "Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 105"
-                  : "No score — conviction below 45%"}>
+                title={data.conviction == null
+                  ? "No score — conviction below 45%"
+                  : undefined}>
                 <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 8 }}>CONVICTION</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: data.conviction != null ? vpColor(data.viewpoint) : GREY }}>
                   {data.conviction != null ? `${data.conviction}%` : "—"}
