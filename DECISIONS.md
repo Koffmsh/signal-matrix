@@ -48,6 +48,39 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-032 — Conviction v2.1: NATH/warn into structural pillar, cap 105, color fix
+Date: 2026-08-11
+Status: Active
+Component: `conviction_engine.py`, `App.js`, `SecurityAnalysis.js`
+
+Context:
+  Three changes shipped together: (1) NATH boost (×1.05) and target-side warn dampener
+  (×0.92) were post-processing multipliers on the final score — opaque and structurally
+  misplaced. (2) Conviction cap was 100 but theoretical max is 105. (3) Bearish tickers
+  with high conviction showed GREEN bars — `convColorVP` delegated to score-based
+  `convColor` (green ≥ 70) instead of viewpoint color.
+
+Decision:
+  - Move NATH/warn into the Structural pillar as +5/−5 additive adjustments (range −5 to 55).
+    Introduced `structural_base` (raw 0/25/50) so quad gate still checks the unadjusted value.
+  - Raise cap from 100 to 105 for full theoretical range.
+  - Fix conviction color: `convColorVP` now returns `vpColor(vp)` — green (Bullish),
+    red (Bearish), grey (Neutral). Score-based `convColor` function removed.
+  - Security page conviction tooltip: no tooltip when score present (pillar boxes explain);
+    "No score — conviction below 45%" when blank.
+
+Why (regression guard):
+  - Do NOT revert to post-processing multipliers — they were opaque (user couldn't add up
+    the four pillars to get the score) and structurally misplaced (NATH and warn are
+    structural concepts, not conviction-level adjustments).
+  - Do NOT use `structural_score == 0` for quad gate — must use `structural_base == 0`
+    because warn (−5) can make structural_score = −5 when base is 0.
+  - Do NOT revert conviction color to score-based — Bearish tickers will show green again.
+  - Cap 105 matches the theoretical max (55+20+15+15); do not lower without adjusting
+    component ranges.
+
+Linked rule: CLAUDE.md rules #25, #61, #66, #73
+
 ## ADR-031 — OBV volume pillar: 21-bar lookback + MA20 slope + consensus direction
 Date: 2026-08-04
 Status: Active
