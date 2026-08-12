@@ -44,7 +44,7 @@ indicators.
 - **yfinance:** v1.2.0 — do not downgrade (v0.2.x has persistent 429 block)
 - **SMS:** Telnyx (v2 REST, `services/sms.py`); credentials in `.env` (TELNYX_API_KEY, TELNYX_FROM, TELNYX_TO). **Globally disabled** via `sms.SMS_DISABLED = True` pending 10DLC carrier registration — `send_sms`/`send_sms_to` no-op until lifted. (Superseded Twilio.)
 - **Email:** Gmail SMTP (`services/email_alert.py`); env `EMAIL_FROM` / `EMAIL_TO` / `EMAIL_APP_PASSWORD`. `send_email_to(recipient, …)` for per-recipient sends. No kill switch — email is live.
-- **FRED:** `services/fred.py` — REST client for St. Louis Fed economic data API; `FRED_API_KEY` in `.env`/`.env.dev`/Fly secrets. Currently fetches `BAMLH0A0HYM2` (HY OAS) for the HY Credit dashboard and `DGS2` (2-Year Treasury yield) for the Yield Curve dashboard (replaces degraded Yahoo `2YY=F`). 120 req/min limit; daily data, ~1-day lag.
+- **FRED:** `services/fred.py` — REST client for St. Louis Fed economic data API; `FRED_API_KEY` in `.env`/`.env.dev`/Fly secrets. Series: `DGS2` → `TWO` (2-Year Treasury yield, replaces degraded Yahoo `2YY=F`), `BAMLH0A0HYM2` → `HY_OAS` (HY credit spread in bps). **Persisted in `price_cache`** via `fred_fetch_and_store()` in `schwab_market_data.py` — same fetch→store→serve pattern as Schwab/Yahoo. Runs in EOD scheduler (after prices, before IV) and manual REFRESH DATA. Endpoints read from `price_cache` with FRED live as fallback. `FRED_SERIES_MAP` in `schwab_market_data.py` maps tickers to FRED series IDs. 120 req/min limit; daily data, ~1-day lag.
 - **Dev environment:** Windows PC, Docker Desktop, VS Code, localhost:3000
 - **Hot reload:** `WATCHPACK_POLLING=true` in docker-compose.yml
 - **Claude Code:** `autoVerify: true` — verifies at localhost:3000 after every change
@@ -326,6 +326,7 @@ Per-task build detail lives in git history. Phase 4.4 (Fly.io deploy) was absorb
 ```
 APScheduler (schwab_data_job)
     → schwab_fetch_all()                writes → price_cache (Schwab primary, Yahoo fallback)
+    → fred_fetch_and_store()            writes → price_cache (FRED: DGS2→TWO, BAMLH0A0HYM2→HY_OAS) — non-fatal
     → schwab_fetch_iv()                 writes → price_cache.rel_iv + vol_history (IV-eligible tickers)
     → accumulate_hv_only()              writes → vol_history hv30/hv90 (Yahoo-only: SPX, NDX, RUT, VIX, $DJI, USD, JPY, futures, VVIX)
     → calculate_signals()               writes → signal_hurst / signal_pivots / signal_output / signal_history
@@ -612,6 +613,7 @@ or split into separate per-viewpoint alerts; the builder supports either. Implie
 ```
 4:00 PM ET — single chained job (prices → IV → signals)
     schwab_fetch_all()       Schwab primary / Yahoo fallback — writes price_cache
+    fred_fetch_and_store()   FRED economic series (DGS2→TWO, HY OAS) — writes price_cache (non-fatal)
     schwab_fetch_iv()        ~65 requests (options-eligible only) — writes vol_history
     calculate_signals()      full pipeline — writes signal_output + signal_history
     scheduler_log            success/failure entry
