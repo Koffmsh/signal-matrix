@@ -13,7 +13,7 @@ from routers.market_data import refresh_data
 from routers.signals import calculate_signals
 from models.scheduler_log import SchedulerLog
 import services.schwab_client as schwab_client
-from services.schwab_market_data import schwab_fetch_all
+from services.schwab_market_data import schwab_fetch_all, fred_fetch_and_store
 from services.schwab_options import schwab_fetch_iv, accumulate_hv_only
 from services.intraday_monitor import run_intraday_check
 from services.spx_constituents import compute_and_cache_spx_impact, compute_and_cache_spx_impact_intraday
@@ -217,6 +217,16 @@ def schwab_data_job() -> None:
             f"fetched={result.get('fetched', 0)}, errors={result.get('errors', 0)}, "
             f"source={result.get('data_source', 'unknown')}"
         )
+
+        # 1b. FRED economic series (DGS2, HY OAS) → price_cache
+        try:
+            fred_result = fred_fetch_and_store(db)
+            logger.info(
+                f"Schwab data job: FRED complete — "
+                f"fetched={fred_result.get('fetched', 0)}, errors={fred_result.get('errors', 0)}"
+            )
+        except Exception as _e:
+            logger.warning(f"Schwab data job: FRED fetch failed (non-fatal) — {_e}")
 
         # 2. IV — Schwab options chain for IV-eligible tickers
         iv_result = schwab_fetch_iv(db)

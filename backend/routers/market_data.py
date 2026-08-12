@@ -183,7 +183,7 @@ def refresh_data(db: Session) -> dict:
     Also refreshes IV (force=True so intraday manual refreshes get fresh IV).
     After fetch, reads all tickers from cache and returns serialized data.
     """
-    from services.schwab_market_data import schwab_fetch_all
+    from services.schwab_market_data import schwab_fetch_all, fred_fetch_and_store
     from services.schwab_options import schwab_fetch_iv
 
     today = datetime.now(_ET).strftime("%Y-%m-%d")
@@ -192,6 +192,12 @@ def refresh_data(db: Session) -> dict:
     fetch_result = schwab_fetch_all(db)
     data_source  = fetch_result.get("data_source", "yahoo")
     rate_limited = fetch_result.get("rate_limited", False)
+
+    # FRED economic series (DGS2 → TWO, HY OAS) — non-fatal
+    try:
+        fred_fetch_and_store(db)
+    except Exception as e:
+        logger.warning(f"FRED fetch skipped during refresh: {e}")
 
     # Refresh IV — idempotent (force=False): skips if already fetched today.
     # Scheduler always fetches fresh at 4 PM; manual REFRESH DATA skips IV if current.

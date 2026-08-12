@@ -352,6 +352,93 @@ def _upsert(db: Session, data: dict, data_source: str) -> None:
         ))
 
 
+# ── FRED economic series → price_cache ────────────────────────────────────────
+
+# Map: price_cache ticker → FRED series ID.
+# TWO replaces degraded Yahoo 2YY=F; HY_OAS is a new synthetic ticker (no Yahoo).
+FRED_SERIES_MAP = {
+    "TWO":    "DGS2",          # 2-Year Treasury Constant Maturity Rate
+    "HY_OAS": "BAMLH0A0HYM2", # ICE BofA US High Yield OAS (percentage points)
+}
+
+# HY OAS is stored in bps (×100) — FRED returns percentage points (e.g. 2.70 → 270 bps)
+_FRED_BPS_SERIES = {"BAMLH0A0HYM2"}
+
+
+def fred_fetch_and_store(db: Session) -> dict:
+    """
+    Fetch FRED economic series and write to price_cache.
+
+    Builds a _upsert-compatible data dict from FRED time series data.
+    Economic series have no volume/OHLC — those fields are zeroed/null.
+    Called after schwab_fetch_all in both the EOD scheduler and REFRESH DATA.
+
+    Returns {"fetched": N, "errors": N}.
+    """
+    from services.fred import fetch_fred_series
+
+    fetched = 0
+    errors = 0
+
+    for ticker, series_id in FRED_SERIES_MAP.items():
+        try:
+            dates, values = fetch_fred_series(series_id)
+            if not dates or len(dates) < 2:
+                logger.warning("FRED %s: insufficient data for %s", series_id, ticker)
+                errors += 1
+                continue
+
+            # Convert to bps if needed
+            if series_id in _FRED_BPS_SERIES:
+                values = [round(v * 100, 2) for v in values]
+
+            close = values[-1]
+            history_prices = [round(v, 4) for v in values]
+            history_dates = dates
+
+            # MAs from FRED series
+            ma20  = round(float(np.mean(values[-20:])),  4) if len(values) >= 20  else None
+            ma50  = round(float(np.mean(values[-50:])),  4) if len(values) >= 50  else None
+            ma100 = round(float(np.mean(values[-100:])), 4) if len(values) >= 100 else None
+
+            # Sparkline — last 60 values
+            spark = [round(v, 4) for v in values[-60:]]
+
+            data = {
+                "ticker":         ticker,
+                "close":          round(close, 4),
+                "volume":         0,
+                "daily_high":     round(close, 4),
+                "daily_low":      round(close, 4),
+                "ma20":           ma20,
+                "ma50":           ma50,
+                "ma100":          ma100,
+                "ma200":          None,
+                "std20":          None,
+                "rel_iv":         None,
+                "spark_prices":   spark,
+                "history_prices": history_prices,
+                "history_dates":  history_dates,
+                "history_highs":  [],
+                "history_lows":   [],
+                "volume_history": [0] * len(history_prices),
+            }
+
+            _upsert(db, data, data_source="fred")
+            fetched += 1
+            logger.info("FRED %s → %s: stored %d points, close=%.4f",
+                        series_id, ticker, len(dates), close)
+
+        except Exception as e:
+            logger.error("FRED %s → %s: fetch/store failed — %s", series_id, ticker, e)
+            errors += 1
+
+    if fetched > 0:
+        db.commit()
+
+    return {"fetched": fetched, "errors": errors}
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def schwab_fetch_all(db: Session) -> dict:

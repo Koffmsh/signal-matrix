@@ -282,27 +282,31 @@ def yield_curve_history(db: Session = Depends(get_db)):
     ticker_data: dict[str, tuple[list, list, float | None]] = {}
     updated_at = None
 
-    # ── TWO from FRED DGS2 (authoritative daily 2Y yield) ───────────────
-    try:
-        two_dates, two_values = fetch_fred_series(_FRED_DGS2)
-        if two_dates and two_values and len(two_dates) >= 2:
-            ticker_data["TWO"] = (two_dates, two_values, two_values[-1])
-    except Exception:
-        logger.warning("FRED DGS2 fetch failed for yield curve TWO")
-
-    # ── TNX from price_cache (Yahoo ^TNX is clean) ──────────────────────
-    tnx_row = (
+    # ── TWO + TNX from price_cache (TWO is FRED-sourced, TNX is Yahoo) ──
+    rows = (
         db.query(PriceCache)
-        .filter(PriceCache.ticker == "TNX")
-        .first()
+        .filter(PriceCache.ticker.in_(_YIELD_TICKERS))
+        .all()
     )
-    if tnx_row and tnx_row.history_json and tnx_row.history_dates_json:
-        closes = json.loads(tnx_row.history_json)
-        dates  = json.loads(tnx_row.history_dates_json)
-        if len(closes) == len(dates) and len(closes) >= 2:
-            ticker_data["TNX"] = (dates, closes, tnx_row.close)
-            if tnx_row.updated_at:
-                updated_at = tnx_row.updated_at
+    for row in rows:
+        if not row.history_json or not row.history_dates_json:
+            continue
+        closes = json.loads(row.history_json)
+        dates  = json.loads(row.history_dates_json)
+        if len(closes) != len(dates) or len(closes) < 2:
+            continue
+        ticker_data[row.ticker] = (dates, closes, row.close)
+        if row.updated_at and (updated_at is None or row.updated_at > updated_at):
+            updated_at = row.updated_at
+
+    # ── Fallback: if TWO not in price_cache (first run), fetch FRED live ─
+    if "TWO" not in ticker_data:
+        try:
+            two_dates, two_values = fetch_fred_series(_FRED_DGS2)
+            if two_dates and two_values and len(two_dates) >= 2:
+                ticker_data["TWO"] = (two_dates, two_values, two_values[-1])
+        except Exception:
+            logger.warning("FRED DGS2 live fallback failed for yield curve TWO")
 
     if not ticker_data:
         return {"dates": [], "series": {}, "stats": {}, "updated": None}
@@ -432,9 +436,24 @@ def hy_credit_history(db: Session = Depends(get_db)):
         if hyg_row.updated_at:
             updated_at = hyg_row.updated_at
 
-    # ── HY OAS from FRED (returned as pct points, e.g. 2.70 = 270 bps) ────
-    oas_dates, oas_raw = fetch_fred_series(_FRED_HY_OAS)
-    oas_values = [v * 100 for v in oas_raw]
+    # ── HY OAS from price_cache (FRED-sourced, already in bps) ──────────
+    oas_dates, oas_values = [], []
+    oas_row = db.query(PriceCache).filter(PriceCache.ticker == "HY_OAS").first()
+    if oas_row and oas_row.history_json and oas_row.history_dates_json:
+        oas_values = json.loads(oas_row.history_json)
+        oas_dates  = json.loads(oas_row.history_dates_json)
+        if len(oas_values) != len(oas_dates) or len(oas_values) < 2:
+            oas_dates, oas_values = [], []
+        if oas_row.updated_at and (updated_at is None or oas_row.updated_at > updated_at):
+            updated_at = oas_row.updated_at
+
+    # Fallback: if HY_OAS not in price_cache (first run), fetch FRED live
+    if not oas_dates:
+        try:
+            oas_dates, oas_raw = fetch_fred_series(_FRED_HY_OAS)
+            oas_values = [v * 100 for v in oas_raw]
+        except Exception:
+            logger.warning("FRED HY OAS live fallback failed")
 
     if not oas_dates and not hyg_dates:
         return {"dates": [], "series": {}, "stats": {}, "updated": None}
