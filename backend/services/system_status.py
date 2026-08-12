@@ -99,8 +99,15 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
     return False, head + extra
 
 
-# Non-NYSE tickers exempt from gap scan (trade on different calendars)
-_GAP_SCAN_EXEMPT = {"USD", "JPY", "/CL", "/ZN", "/GC", "/HG"}
+# Tickers exempt from gap scan: non-NYSE calendars (FX, futures) + tickers
+# whose data source inherently lags (FRED ~1-day delay, Schwab $-index history
+# via MONTH endpoint may not include today's bar).
+_GAP_SCAN_EXEMPT = {
+    "USD", "JPY", "/CL", "/ZN", "/GC", "/HG",
+    "TWO", "HY_OAS",
+    "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    "VVIX",
+}
 
 
 def scan_history_gaps(db: Session) -> tuple[bool, str]:
