@@ -266,6 +266,7 @@ def bond_vol_history(db: Session = Depends(get_db)):
 # ── Yield Curve ──────────────────────────────────────────────────────────────
 
 _YIELD_TICKERS = ["TWO", "TNX"]
+_FRED_DGS2 = "DGS2"
 
 
 @router.get("/api/vol/yield-curve-history")
@@ -274,26 +275,34 @@ def yield_curve_history(db: Session = Depends(get_db)):
     Returns close price history + computed 2-10 spread for TWO (2Y yield) and
     TNX (10Y yield).  Response shape matches macro-history: union dates, per-
     ticker series, a synthetic SPREAD series, and stats.
-    """
-    rows = (
-        db.query(PriceCache)
-        .filter(PriceCache.ticker.in_(_YIELD_TICKERS))
-        .all()
-    )
 
+    TWO sourced from FRED DGS2 (Yahoo 2YY=F delivers degraded stale data).
+    TNX sourced from price_cache (Yahoo ^TNX is clean daily data).
+    """
     ticker_data: dict[str, tuple[list, list, float | None]] = {}
     updated_at = None
 
-    for row in rows:
-        if not row.history_json or not row.history_dates_json:
-            continue
-        closes = json.loads(row.history_json)
-        dates  = json.loads(row.history_dates_json)
-        if len(closes) != len(dates) or len(closes) < 2:
-            continue
-        ticker_data[row.ticker] = (dates, closes, row.close)
-        if row.updated_at and (updated_at is None or row.updated_at > updated_at):
-            updated_at = row.updated_at
+    # ── TWO from FRED DGS2 (authoritative daily 2Y yield) ───────────────
+    try:
+        two_dates, two_values = fetch_fred_series(_FRED_DGS2)
+        if two_dates and two_values and len(two_dates) >= 2:
+            ticker_data["TWO"] = (two_dates, two_values, two_values[-1])
+    except Exception:
+        logger.warning("FRED DGS2 fetch failed for yield curve TWO")
+
+    # ── TNX from price_cache (Yahoo ^TNX is clean) ──────────────────────
+    tnx_row = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker == "TNX")
+        .first()
+    )
+    if tnx_row and tnx_row.history_json and tnx_row.history_dates_json:
+        closes = json.loads(tnx_row.history_json)
+        dates  = json.loads(tnx_row.history_dates_json)
+        if len(closes) == len(dates) and len(closes) >= 2:
+            ticker_data["TNX"] = (dates, closes, tnx_row.close)
+            if tnx_row.updated_at:
+                updated_at = tnx_row.updated_at
 
     if not ticker_data:
         return {"dates": [], "series": {}, "stats": {}, "updated": None}

@@ -425,7 +425,7 @@ export default function YieldCurveChart() {
                     strokeWidth={2}
                     dot={false}
                     isAnimationActive={false}
-                    connectNulls={false}
+                    connectNulls={true}
                   />
                 ))}
 
@@ -440,7 +440,7 @@ export default function YieldCurveChart() {
                     fillOpacity={0.08}
                     dot={false}
                     isAnimationActive={false}
-                    connectNulls={false}
+                    connectNulls={true}
                   />
                 )}
               </ComposedChart>
