@@ -337,9 +337,8 @@ function defaultSort(a, b) {
 const dirIcon    = (d)  => d === "Bullish" ? "▲" : d === "Bearish" ? "▼" : "—";
 const dirColor   = (d)  => (d === "Bullish" || d === "Leaning Bullish") ? "#00e5a0" : (d === "Bearish" || d === "Leaning Bearish") ? "#ff4d6d" : "#8899aa";
 const vpColor    = (v)  => v === "Bullish" ? "#00e5a0" : v === "Bearish" ? "#ff4d6d" : "#8899aa";
-const convColor  = (c)        => c >= 70 ? "#00e5a0" : c >= 50 ? "#f0b429" : "#8899aa";
-// v2.0: Neutral viewpoint → always grey regardless of score; Bullish/Bearish → score-based color
-const convColorVP = (c, vp) => vp === "Neutral" ? "#8899aa" : convColor(c);
+// v2.1: conviction color = viewpoint color (green Bullish, red Bearish, grey Neutral)
+const convColorVP = (c, vp) => vpColor(vp);
 const volColor   = (v)  => v === "Confirming" ? "#00e5a0" : v === "Diverging" ? "#ff4d6d" : "#8899aa";
 const hurstColor = (h)  => h == null ? "#8899aa" : h >= 0.6 ? "#00e5a0" : h >= 0.5 ? "#f0b429" : "#ff4d6d";
 const ivColor    = (iv) => iv <= 30 ? "#00e5a0" : iv <= 60 ? "#f0b429" : "#ff4d6d";
@@ -1128,7 +1127,7 @@ function Dashboard() {
               <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Structural (50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → dampener → cap 105&#10;Show ≥45 · Green/Red ≥45 (Bullish/Bearish) · Grey ≥45 (Neutral) · ⚡ ≥80" />
+                title="Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100&#10;Show ≥45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥80" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -1206,7 +1205,10 @@ function Dashboard() {
           ...(row.viewpoint !== "Neutral" && row.viewpointSince ? [
             ["Aligned since", fmtSince(row.viewpointSince),                                               vpColor(row.viewpoint),                 false],
           ] : []),
-          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColorVP(row.conviction, row.viewpoint) : "#8899aa", false],
+          ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColorVP(row.conviction, row.viewpoint) : "#8899aa",
+                           false, row.conviction != null
+                             ? "Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15)"
+                             : "No score — conviction below 45%"],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Regime",   row.vixRegime || "—",
                            (() => { const r = row.vixRegime; return ["Investable", "Tradable", "Calm"].includes(r) ? "#00e5a0" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),

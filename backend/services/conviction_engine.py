@@ -1214,25 +1214,45 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     # Display when conviction_final >= 45 (else None/blank).
     # Neutral viewpoint: calculates same way; UI renders in grey (#8899aa) when >= 45.
 
-    # Component 1 — Structural (max 50)
+    # Component 1 — Structural (base 0/25/50, adjusted ±5 for NATH/warn → range -5 to 55)
     # Trade=Bullish + Trend=Bearish (opposing) = 0 — conflicted structure = no conviction.
     if trade_dir == trend_dir and trade_dir != "Neutral":
-        structural_score = 50    # both Bullish or both Bearish — full alignment
+        structural_base = 50     # both Bullish or both Bearish — full alignment
     elif trade_dir != "Neutral" and trend_dir == "Neutral":
-        structural_score = 25    # trade only
+        structural_base = 25     # trade only
     elif trade_dir == "Neutral" and trend_dir != "Neutral":
-        structural_score = 25    # trend only (unusual but valid)
+        structural_base = 25     # trend only (unusual but valid)
     else:
-        structural_score = 0     # both Neutral, OR opposing directions (conflicted)
+        structural_base = 0      # both Neutral, OR opposing directions (conflicted)
+
+    structural_score = structural_base
+
+    # Structural adjustment: NATH boost (+5) and target-side warn dampener (-5)
+    # Applied to the structural pillar directly instead of post-processing the final score.
+    _tr_for_adj  = timeframe_results["trade"]
+    _trade_dir_adj = _tr_for_adj["direction"]
+    _hrr_warn_adj  = _tr_for_adj["hrr_warn"]
+    _lrr_warn_adj  = _tr_for_adj["lrr_warn"]
+    if ((_trade_dir_adj == "Bullish" and _hrr_warn_adj) or
+            (_trade_dir_adj == "Bearish" and _lrr_warn_adj)):
+        structural_score -= 5
+
+    ath = float(cache_row.ath) if (cache_row and cache_row.ath is not None) else None
+    _trade_hrr_adj = timeframe_results["trade"]["hrr"]
+    if (viewpoint == "Bullish" and
+            _trade_hrr_adj is not None and
+            ath is not None and
+            _trade_hrr_adj > ath):
+        structural_score += 5
 
     # Component 2 — Quad (+20 / 0 / -15, prob-weighted)
-    # Gate: fully Neutral (structural_score == 0, both timeframes Neutral or opposing)
-    # → quad_score = 0. Partial structure (structural_score == 25, one timeframe confirmed)
+    # Gate: fully Neutral (structural_base == 0, both timeframes Neutral or opposing)
+    # → quad_score = 0. Partial structure (structural_base >= 25, one timeframe confirmed)
     # → quad allowed to contribute. Uses _struct_bias (directional lean from Trade or Trend)
     # instead of viewpoint so that a Leaning Bearish ticker in a Worst quad scores Aligned.
     if quad_current is not None:
         _quad_alignment = get_quad_alignment(asset_class, sector, quad_current)
-        if (structural_score == 0 and _struct_bias == "Neutral") or _quad_alignment == 0.0:
+        if (structural_base == 0 and _struct_bias == "Neutral") or _quad_alignment == 0.0:
             quad_score = 0
             quad_align_label = "Neutral"
         else:
@@ -1271,32 +1291,10 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     vix_score, vix_zone = get_vix_score(vix_close, asset_class, vix_hrr=vix_hrr,
                                         viewpoint=_struct_bias, vol_index=_vol_index)
 
-    # Assembly: sum → floor(0) → dampener → cap(100)
+    # Assembly: sum → floor(0) → cap(100)
     conviction_sum = structural_score + quad_score + volume_score + vix_score
     conviction_sum = max(0.0, conviction_sum)   # floor — quad misalignment can push negative
-
-    # Dampener ×0.92: target-side warn = "BB target can't reach the structural reference"
-    #   Uptrend:   hrr_warn fires (HRR < D when d_extended, HRR < B normally)
-    #   Downtrend: lrr_warn fires (LRR > D when d_extended, LRR > B normally)
-    _tr          = timeframe_results["trade"]
-    _trade_dir   = _tr["direction"]
-    _hrr_warn    = _tr["hrr_warn"]
-    _lrr_warn    = _tr["lrr_warn"]
-    if ((_trade_dir == "Bullish" and _hrr_warn) or
-            (_trade_dir == "Bearish" and _lrr_warn)):
-        conviction_sum = conviction_sum * 0.92
-
-    # NATH boost ×1.05: Viewpoint=Bullish AND trade HRR projects above all-time high
-    # Mirrors the ×0.92 dampener — "buy every dip" when structure + target both point to new highs
-    ath = float(cache_row.ath) if (cache_row and cache_row.ath is not None) else None
-    _trade_hrr = timeframe_results["trade"]["hrr"]
-    if (viewpoint == "Bullish" and
-            _trade_hrr is not None and
-            ath is not None and
-            _trade_hrr > ath):
-        conviction_sum *= 1.05
-
-    conviction_final = min(conviction_sum, 105.0)   # cap — 105 allows NATH boost (×1.05) to be fully visible
+    conviction_final = min(conviction_sum, 100.0)
 
     # Display threshold: blank below 45
     conviction = round(conviction_final, 2) if conviction_final >= 45.0 else None
