@@ -234,10 +234,18 @@ def _break_of_trade_message(
 ) -> str:
     conv_str = f" | Conv {int(conviction)}%" if conviction else ""
     level_label = "B (extended)" if d_extended else "C"
-    direction = "below" if viewpoint == "Bullish" else "above"
+    # Bullish uptrend breaking down through support; Bearish downtrend breaking up through resistance
+    if viewpoint == "Bullish":
+        arrow = "🔻"
+        direction = "below"
+        ref_label = "support"
+    else:
+        arrow = "🔺"
+        direction = "above"
+        ref_label = "resistance"
     return (
-        f"🔻 {ticker} — BREAK OF TRADE ({viewpoint})\n"
-        f"{_fmt_price(close)} trading {direction} {level_label} at {_fmt_price(break_level)}{conv_str}\n"
+        f"{arrow} {ticker} — BREAK OF TRADE ({viewpoint})\n"
+        f"{_fmt_price(close)} trading {direction} {ref_label} {level_label} at {_fmt_price(break_level)}{conv_str}\n"
         f"[Trade tf — intraday, requires EOD confirmation]"
     )
 
@@ -382,11 +390,12 @@ def run_intraday_check(db: Session) -> dict:
                         (state == "DOWNTREND_VALID" and close > break_level)
                     )
                     if crossed and not _already_fired(db, today, ticker, "BREAK_OF_TRADE", None):
+                        bot_arrow = "🔻" if state == "UPTREND_VALID" else "🔺"
                         msg = _break_of_trade_message(
                             ticker, viewpoint, close,
                             break_level, bool(piv.d_extended), sig.conviction,
                         )
-                        _dispatch(bot_bucket, f"🔻 {ticker} — BREAK OF TRADE", msg)
+                        _dispatch(bot_bucket, f"{bot_arrow} {ticker} — BREAK OF TRADE", msg)
                         _log_alert(db, today, now_str, ticker, "BREAK_OF_TRADE",
                                    close, None, sig.conviction, None)
                         alerts_sent += 1
