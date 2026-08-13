@@ -453,11 +453,11 @@ export default function SecurityAnalysis({ defaultTicker }) {
           {/* Vol metrics row */}
           <div style={{ display: "flex", gap: 24, marginBottom: 24, flexWrap: "wrap", fontSize: 12 }}>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>IMPLIED VOL 30D</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>IV30</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.iv30 != null ? `${(data.iv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>HISTORICAL VOL (HV30)</div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>HV30</div>
               <div style={{ fontWeight: 700, color: LABEL }}>{data.hv30 != null ? `${(data.hv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
@@ -484,7 +484,16 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   else if (ivr < 20 && vrpPct > -2 && vrpPct < 5) { regime = "Quiet Accumulation"; regimeColor = "#66eebb"; }
                   else                                 { regime = "Neutral"; regimeColor = GREY; }
                 }
-                return <div style={{ fontWeight: 700, color: regimeColor }}>{regime}</div>;
+                const regimeTooltips = {
+                  "Falling Knife": "IV is historically elevated and realized vol exceeds implied — options are cheap relative to actual moves. Avoid selling premium; consider long vol or protective puts.",
+                  "Gamma Trap": "Elevated IV with realized vol running hot — hedging demand is high and dealers are short gamma. Expect amplified moves; tread carefully with directional bets.",
+                  "Yield Harvest": "High IV but realized vol is contained — options are overpriced. Favorable for selling premium (covered calls, credit spreads).",
+                  "Upside Panic": "Low IV but realized vol is elevated — the market is moving more than options imply. Cheap options relative to actual movement; consider long vol strategies.",
+                  "Quiet Accumulation": "Low IV and low realized vol — calm conditions. Good environment for building positions; options are fairly priced. Breakout setups may be forming.",
+                  "Neutral": "No strong IV/HV skew — options are fairly priced relative to realized movement.",
+                };
+                const tip = regimeTooltips[regime] || "";
+                return <div style={{ fontWeight: 700, color: regimeColor, cursor: tip ? "help" : "default" }} title={tip}>{regime}</div>;
               })()}
             </div>
           </div>
