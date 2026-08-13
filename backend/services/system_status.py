@@ -103,7 +103,7 @@ def scan_integrity(db: Session) -> tuple[bool, str]:
 # whose data source inherently lags (FRED ~1-day delay, Schwab $-index history
 # via MONTH endpoint may not include today's bar).
 _GAP_SCAN_EXEMPT = {
-    "USD", "JPY", "/CL", "/ZN", "/GC", "/HG",
+    "DXY", "JPY", "/CL", "/ZN", "/GC", "/HG",
     "TWO", "HY_OAS",
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
     "VVIX", "CPER",
