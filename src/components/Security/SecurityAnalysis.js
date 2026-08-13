@@ -443,6 +443,12 @@ export default function SecurityAnalysis({ defaultTicker }) {
               <div style={{ fontSize: 18, fontWeight: 600 }}>{data.close?.toFixed(2)}</div>
             </div>
             <div>
+              <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE</div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: changeColor }}>
+                {data.close != null && data.prev_close != null ? `${(data.close - data.prev_close) >= 0 ? "+" : ""}${(data.close - data.prev_close).toFixed(2)}` : "—"}
+              </div>
+            </div>
+            <div>
               <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE %</div>
               <div style={{ fontSize: 18, fontWeight: 600, color: changeColor }}>
                 {changePct != null ? `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%` : "—"}
