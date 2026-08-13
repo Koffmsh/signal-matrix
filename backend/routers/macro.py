@@ -14,10 +14,10 @@ router = APIRouter()
 _CORRELATION_BASE = "DXY"
 
 _CORRELATION_TICKERS = [
-    {"ticker": "SPY",  "label": "S&P 500"},
-    {"ticker": "BNO",  "label": "Brent Oil"},
-    {"ticker": "GSG",  "label": "Commodities"},
-    {"ticker": "GLD",  "label": "Gold"},
+    {"ticker": "SPX",  "label": "S&P 500"},
+    {"ticker": "/CL",  "label": "Crude Oil"},
+    {"ticker": "DBC",  "label": "Commodities"},
+    {"ticker": "/GC",  "label": "Gold"},
     {"ticker": "IBIT", "label": "Bitcoin"},
 ]
 
@@ -32,10 +32,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-def _log_returns(closes: np.ndarray) -> np.ndarray:
-    return np.log(closes[1:] / closes[:-1])
 
 
 def _pearson_corr(x: np.ndarray, y: np.ndarray) -> float | None:
@@ -58,16 +54,12 @@ def _compute_correlations(base_dates, base_closes, tk_dates, tk_closes):
     b_arr = np.array([base_map[d] for d in common], dtype=float)
     t_arr = np.array([tk_map[d] for d in common], dtype=float)
 
-    b_rets = _log_returns(b_arr)
-    t_rets = _log_returns(t_arr)
-    dates = common[1:]
-
-    n = len(b_rets)
+    n = len(b_arr)
 
     window_corrs = {}
     for w in _WINDOWS:
         if n >= w:
-            window_corrs[f"{w}D"] = round(_pearson_corr(b_rets[-w:], t_rets[-w:]), 2)
+            window_corrs[f"{w}D"] = round(_pearson_corr(b_arr[-w:], t_arr[-w:]), 2)
         else:
             window_corrs[f"{w}D"] = None
 
@@ -88,7 +80,7 @@ def _compute_correlations(base_dates, base_closes, tk_dates, tk_closes):
             end = i + _ROLLING_WINDOW
             if end > n:
                 break
-            c = _pearson_corr(b_rets[i:end], t_rets[i:end])
+            c = _pearson_corr(b_arr[i:end], t_arr[i:end])
             if c is not None:
                 rolling_vals.append(c)
 

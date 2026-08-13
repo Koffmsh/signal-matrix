@@ -208,7 +208,7 @@ export default function KeyCorrelations() {
             lineHeight: 1.6, letterSpacing: "0.03em",
           }}>
             <span style={{ color: LABEL, fontWeight: 600 }}>Key $USD Correlations</span> show
-            rolling Pearson correlations of log returns vs the US Dollar Index across multiple timeframes.
+            rolling Pearson price-level correlations vs the US Dollar Index across multiple timeframes.
             {" "}
             <span style={{ color: GREEN }}>Green</span> = strong positive correlation (moves with DXY);
             {" "}<span style={{ color: RED }}>Red</span> = strong negative correlation (moves inversely to DXY).
