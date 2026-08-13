@@ -48,6 +48,38 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-034 — Quad alignment label: show raw macro stance when structural gate fires
+Date: 2026-08-12
+Status: Active
+Component: `conviction_engine.py`, `App.js`, `SecurityAnalysis.js`
+
+Context:
+  When the structural gate fires (structural_base == 0 AND _struct_bias == "Neutral"),
+  quad_score is correctly zeroed out. But the quad_align_label was also blanked to
+  "Neutral", hiding the actual macro stance. QTUM (sector="Secular Growth") is a "Best"
+  equity style factor in Q3 Stagflation per Hedgeye's framework, yet the popup and
+  Security Analysis pillar both showed "Neutral" — misleading the user into thinking the
+  macro environment had no opinion on the security.
+
+Decision:
+  Separate the quad alignment label from the score gate. When the structural gate fires
+  (no directional structure to align with), the label shows the raw macro stance from
+  `get_quad_alignment`: "Best" (+1.0), "Worst" (−1.0), or "Neutral" (0.0). When structure
+  exists, the label continues to show "Aligned" or "Misaligned" as before.
+
+  Frontend updated: popup shows "Best ▲" (green) / "Worst ▼" (red) alongside existing
+  "Aligned ✓" / "Misaligned ✗". Security Analysis pillar tile colors green for Best,
+  red for Worst (even with score=0), and detail text explains the raw macro stance.
+
+Why (regression guard):
+  The quad score being zero (gated) is correct — no structure means no directional
+  alignment bonus. But the *label* must still communicate whether the macro environment
+  favors or opposes the security. "Neutral" label for a Best-quad sector is a data lie.
+  Never re-merge label and score — they serve different purposes: score drives conviction
+  math; label drives user understanding.
+
+Linked rule: CLAUDE.md rules #66, #109
+
 ## ADR-033 — EOD idempotency bypass + price source alignment
 Date: 2026-08-12
 Status: Active
