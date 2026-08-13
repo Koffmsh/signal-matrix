@@ -17,11 +17,23 @@ function corrColor(v) {
   return LABEL;
 }
 
+function corrCellColor(v) {
+  if (v == null) return LABEL;
+  const abs = Math.abs(v);
+  if (abs >= 0.50) return "#0a1628";
+  return LABEL;
+}
+
+function corrCellWeight(v) {
+  if (v == null) return 400;
+  return Math.abs(v) >= 0.50 ? 700 : 400;
+}
+
 function corrBg(v) {
   if (v == null) return "transparent";
   const abs = Math.abs(v);
-  if (abs >= 0.70) return v > 0 ? "rgba(0,229,160,0.14)" : "rgba(255,77,109,0.14)";
-  if (abs >= 0.50) return v > 0 ? "rgba(0,229,160,0.07)" : "rgba(255,77,109,0.07)";
+  if (abs >= 0.70) return v > 0 ? GREEN : RED;
+  if (abs >= 0.50) return v > 0 ? "#66eebb" : "#ff8da6";
   return "transparent";
 }
 
@@ -155,9 +167,9 @@ export default function KeyCorrelations() {
                         return (
                           <td key={w} style={{
                             ...tdStyle,
-                            color: corrColor(v),
+                            color: corrCellColor(v),
                             background: corrBg(v),
-                            fontWeight: Math.abs(v ?? 0) >= 0.60 ? 700 : 400,
+                            fontWeight: corrCellWeight(v),
                           }}>
                             {fmtCorr(v)}
                           </td>
