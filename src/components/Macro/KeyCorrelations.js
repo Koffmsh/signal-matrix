@@ -93,7 +93,7 @@ export default function KeyCorrelations() {
             margin: 0, fontSize: 18, fontWeight: 700,
             letterSpacing: "0.06em", color: "#e8f4ff",
           }}>
-            KEY CORRELATIONS
+            KEY $USD CORRELATIONS
           </h1>
           <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
             ROLLING CORRELATIONS vs {data?.base ?? "DXY"}
@@ -207,7 +207,7 @@ export default function KeyCorrelations() {
             background: "#07111f", fontSize: 10, color: TEXT,
             lineHeight: 1.6, letterSpacing: "0.03em",
           }}>
-            <span style={{ color: LABEL, fontWeight: 600 }}>Key $DXY Correlations</span> show
+            <span style={{ color: LABEL, fontWeight: 600 }}>Key $USD Correlations</span> show
             rolling Pearson correlations of log returns vs the US Dollar Index across multiple timeframes.
             {" "}
             <span style={{ color: GREEN }}>Green</span> = strong positive correlation (moves with DXY);
