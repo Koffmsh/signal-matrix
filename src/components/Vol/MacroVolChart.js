@@ -25,7 +25,7 @@ const AMBER   = "#f0b429";
 const GAUGE_CONFIG = [
   { ticker: "VIX", label: "VIX",    low: 9,  ceil: 19, danger: 30, high: 45 },
   { ticker: "VXN", label: "NazVol", low: 12, ceil: 22, danger: 32, high: 45 },
-  { ticker: "RVX", label: "RVX",    low: 12, ceil: 22, danger: 32, high: 45 },
+  { ticker: "RVX", label: "RVX",    low: 12, ceil: 21, danger: 31, high: 45 },
   { ticker: "GVZ", label: "GVZ",    low: 8,  ceil: 22, danger: 32, high: 45 },
   { ticker: "OVX", label: "OVX",    low: 15, ceil: 38, danger: 60, high: 80 },
 ];

@@ -169,7 +169,7 @@ VOL_INDEX_TICKER_MAP = {
 VOL_INDEX_THRESHOLDS = {
     "VIX":  (19, 30),
     "VXN":  (22, 32),
-    "RVX":  (22, 32),
+    "RVX":  (21, 31),
     "GVZ":  (22, 32),
     "OVX":  (38, 60),
     "MOVE": (85, 120),
