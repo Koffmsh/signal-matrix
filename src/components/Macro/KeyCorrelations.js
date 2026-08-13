@@ -12,16 +12,16 @@ const WINDOWS = ["15D", "30D", "90D", "120D", "180D"];
 function corrColor(v) {
   if (v == null) return TEXT;
   const abs = Math.abs(v);
-  if (abs >= 0.60) return v > 0 ? GREEN : RED;
-  if (abs >= 0.40) return v > 0 ? "#66eebb" : "#ff8da6";
+  if (abs >= 0.70) return v > 0 ? GREEN : RED;
+  if (abs >= 0.50) return v > 0 ? "#66eebb" : "#ff8da6";
   return LABEL;
 }
 
 function corrBg(v) {
   if (v == null) return "transparent";
   const abs = Math.abs(v);
-  if (abs >= 0.60) return v > 0 ? "rgba(0,229,160,0.14)" : "rgba(255,77,109,0.14)";
-  if (abs >= 0.40) return v > 0 ? "rgba(0,229,160,0.07)" : "rgba(255,77,109,0.07)";
+  if (abs >= 0.70) return v > 0 ? "rgba(0,229,160,0.14)" : "rgba(255,77,109,0.14)";
+  if (abs >= 0.50) return v > 0 ? "rgba(0,229,160,0.07)" : "rgba(255,77,109,0.07)";
   return "transparent";
 }
 
@@ -120,22 +120,22 @@ export default function KeyCorrelations() {
                   {WINDOWS.map(w => (
                     <th key={w} style={thStyle}>{w}</th>
                   ))}
-                  <th style={{ ...thStyle, borderLeft: `2px solid ${GRID}` }}>High</th>
-                  <th style={thStyle}>Low</th>
-                  <th style={thStyle}>% Time Pos</th>
-                  <th style={thStyle}>% Time Neg</th>
+                  <th style={{ ...thStyle, borderLeft: `2px solid ${GRID}`, width: "10%" }}>High</th>
+                  <th style={{ ...thStyle, width: "10%" }}>Low</th>
+                  <th style={{ ...thStyle, width: "10%" }}>% Time Pos</th>
+                  <th style={{ ...thStyle, width: "10%" }}>% Time Neg</th>
                 </tr>
                 <tr>
-                  <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 8 }} />
+                  <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 9 }} />
                   <th colSpan={WINDOWS.length} style={{
-                    ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 8,
+                    ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 9,
                     textAlign: "center", fontStyle: "italic",
                   }}>
                     *Days = Trading Days
                   </th>
                   <th colSpan={4} style={{
                     ...thStyle, borderBottom: `2px solid ${GRID}`, borderLeft: `2px solid ${GRID}`,
-                    color: "#8899aa", fontSize: 8, textAlign: "center",
+                    color: "#8899aa", fontSize: 9, textAlign: "center",
                   }}>
                     52-Wk Rolling 30D Correlation
                   </th>
