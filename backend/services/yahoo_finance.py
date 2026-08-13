@@ -23,7 +23,7 @@ YAHOO_SYMBOL_MAP = {
     "VIX":  "^VIX",
     "VVIX": "^VVIX",  # CBOE VIX of VIX Index
     "RUT":  "^RUT",    # Russell 2000 Index
-    "USD":  "DX-Y.NYB",
+    "DXY":  "DX-Y.NYB",
     "JPY":  "JPY=X",
     "/CL":  "CL=F",    # WTI Crude Oil front-month futures
     "/ZN":  "ZN=F",    # 10-Year Treasury Note futures

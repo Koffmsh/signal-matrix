@@ -158,7 +158,7 @@ VOL_INDEX_TICKER_MAP = {
     # GVZ — Gold
     "GLD": "GVZ", "SGOL": "GVZ", "/GC": "GVZ",
     # OVX — Oil / Energy
-    "USO": "OVX", "/CL": "OVX", "XOP": "OVX", "OIH": "OVX",
+    "USO": "OVX", "BNO": "OVX", "/CL": "OVX", "XOP": "OVX", "OIH": "OVX",
     # MOVE — Fixed Income
     "TLT": "MOVE", "/ZN": "MOVE", "SHY": "MOVE", "IEF": "MOVE",
     "VGIT": "MOVE", "LQD": "MOVE", "MBB": "MOVE", "PFF": "MOVE", "TIP": "MOVE",

@@ -47,7 +47,7 @@ const tickers = [
   { ticker: "IBIT",  description: "iShares Bitcoin Trust ETF",            assetClass: "Digital Assets",    sector: "Cryptocurrency",          tier: 1, active: true, displayOrder: 35 },
   // FOREIGN EXCHANGE
   { ticker: "GLD",   description: "SPDR Gold Shares",                     assetClass: "Foreign Exchange",  sector: "Gold",                    tier: 1, active: true, displayOrder: 36 },
-  { ticker: "USD",   description: "US Dollar Index",                      assetClass: "Foreign Exchange",  sector: "Currency",                tier: 1, active: true, displayOrder: 37 },
+  { ticker: "DXY",   description: "US Dollar Index",                      assetClass: "Foreign Exchange",  sector: "USD",                     tier: 1, active: true, displayOrder: 37 },
   { ticker: "JPY",   description: "Japanese Yen / USD",                   assetClass: "Foreign Exchange",  sector: "Currency",                tier: 1, active: true, displayOrder: 38 },
   // INTERNATIONAL EQUITIES
   { ticker: "KWEB",  description: "KraneShares CSI China Internet ETF",   assetClass: "International Equities", sector: "China",             tier: 1, active: true, displayOrder: 39 },

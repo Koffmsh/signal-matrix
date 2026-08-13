@@ -141,6 +141,7 @@ const NAV_ITEMS = [
     icon: (color) => <MacroIcon color={color} />,
     children: [
       { label: "YIELD CURVE", path: "/macro/yield-curve", exact: true },
+      { label: "KEY CORRELATIONS", path: "/macro/correlations", exact: true },
     ],
   },
 ];

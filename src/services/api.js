@@ -149,6 +149,17 @@ export async function fetchYieldCurveHistory() {
   }
 }
 
+export async function fetchCorrelations() {
+  try {
+    const response = await apiFetch(`/api/macro/correlations`);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchCorrelations failed", err);
+    return null;
+  }
+}
+
 /**
  * Fetch single ticker quote.
  * Useful for debugging in browser console:

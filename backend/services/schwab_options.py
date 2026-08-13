@@ -567,7 +567,7 @@ def schwab_fetch_iv(db: Session, force: bool = False) -> dict:
 
 # Tickers that route through Yahoo (no Schwab price quote) — HV accumulated daily from price history
 _HV_ONLY_TICKERS = {
-    "SPX", "NDX", "RUT", "VIX", "$DJI", "USD", "JPY", "/CL", "/ZN", "/GC", "/HG", "VVIX",
+    "SPX", "NDX", "RUT", "VIX", "$DJI", "DXY", "JPY", "/CL", "/ZN", "/GC", "/HG", "VVIX",
     # Macro vol indices
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
     # Treasury yield indices

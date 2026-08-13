@@ -41,7 +41,7 @@ import pandas_market_calendars as mcal
 _NYSE_CAL = mcal.get_calendar("NYSE")
 # Tickers on non-NYSE calendars (FX trades 24/5; futures use the CME calendar) —
 # exclude from the NYSE trading-day guard so legitimate bars aren't suppressed.
-_NON_NYSE_CALENDAR = {"USD", "JPY", "/CL", "/ZN", "/GC", "/HG"}
+_NON_NYSE_CALENDAR = {"DXY", "JPY", "/CL", "/ZN", "/GC", "/HG"}
 
 
 def _is_nyse_trading_day(d: date_cls) -> bool:
@@ -62,11 +62,11 @@ SCHWAB_SYMBOL_MAP = {
 
 # Tickers always routed through Yahoo Finance — Schwab cannot quote these:
 #   Indices (SPX, NDX, $DJI, VIX): Schwab batch quotes API returns no data for these
-#   FX (USD, JPY): non-equity instruments not available in Schwab equity quotes
+#   FX (DXY, JPY): non-equity instruments not available in Schwab equity quotes
 #   Futures (/CL, /ZN, /GC, /HG): continuous front-month symbols Schwab doesn't serve
 # Without this routing, Schwab errors leave updated_at stale → REFRESH DATA stays amber
 SCHWAB_UNSUPPORTED = {
-    "USD", "JPY", "/CL", "/ZN", "/GC", "/HG", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX",
+    "DXY", "JPY", "/CL", "/ZN", "/GC", "/HG", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX",
     # Macro vol indices — batch quotes don't work; history API with $ prefix does
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
     # Precious metals ETFs — Schwab history returns pre-restructuring prices creating

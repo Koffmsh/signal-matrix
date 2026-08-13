@@ -58,7 +58,7 @@ SEED_TICKERS = [
     {"ticker": "IBIT",  "description": "iShares Bitcoin Trust ETF",            "asset_class": "Digital Assets",         "sector": "Cryptocurrency",           "tier": 1, "parent_ticker": None, "active": True, "display_order": 35},
     # FOREIGN EXCHANGE
     {"ticker": "GLD",   "description": "SPDR Gold Shares",                     "asset_class": "Foreign Exchange",       "sector": "Gold",                     "tier": 1, "parent_ticker": None, "active": True, "display_order": 36},
-    {"ticker": "USD",   "description": "US Dollar Index",                      "asset_class": "Foreign Exchange",       "sector": "Currency",                 "tier": 1, "parent_ticker": None, "active": True, "display_order": 37},
+    {"ticker": "DXY",   "description": "US Dollar Index",                      "asset_class": "Foreign Exchange",       "sector": "USD",                      "tier": 1, "parent_ticker": None, "active": True, "display_order": 37},
     {"ticker": "JPY",   "description": "Japanese Yen / USD",                   "asset_class": "Foreign Exchange",       "sector": "Currency",                 "tier": 1, "parent_ticker": None, "active": True, "display_order": 38},
     # INTERNATIONAL EQUITIES
     {"ticker": "KWEB",  "description": "KraneShares CSI China Internet ETF",   "asset_class": "International Equities", "sector": "China",                    "tier": 1, "parent_ticker": None, "active": True, "display_order": 39},
@@ -333,12 +333,12 @@ def lookup_ticker(symbol: str, db: Session = Depends(get_db)):
 
 YAHOO_SYMBOL_MAP = {
     "/CL": "CL=F", "/ZN": "ZN=F", "/GC": "GC=F", "/HG": "HG=F",
-    "USD": "DX-Y.NYB", "JPY": "JPY=X",
+    "DXY": "DX-Y.NYB", "JPY": "JPY=X",
 }
 
 SCHWAB_UNSUPPORTED_PROFILES = {
     "SPX", "NDX", "VIX", "VVIX", "$DJI", "RUT", "VXN", "RVX", "GVZ", "OVX", "MOVE",
-    "USD", "JPY", "/CL", "/ZN", "/GC", "/HG",
+    "DXY", "JPY", "/CL", "/ZN", "/GC", "/HG",
 }
 
 

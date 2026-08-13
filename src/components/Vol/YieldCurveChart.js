@@ -117,11 +117,11 @@ function StatsTable({ stats, tickers }) {
 
   const thStyle = {
     padding: "6px 10px", fontSize: 9, fontWeight: 700,
-    letterSpacing: "0.1em", color: TEXT, textAlign: "right",
+    letterSpacing: "0.1em", color: TEXT, textAlign: "center",
     borderBottom: `1px solid ${GRID}`, whiteSpace: "nowrap",
   };
   const tdStyle = {
-    padding: "5px 10px", fontSize: 11, textAlign: "right",
+    padding: "5px 10px", fontSize: 11, textAlign: "center",
     fontVariantNumeric: "tabular-nums", color: LABEL,
     borderBottom: `1px solid ${GRID}`,
   };
@@ -143,14 +143,14 @@ function StatsTable({ stats, tickers }) {
           <tr>
             <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}` }} />
             {cols.map(c => (
-              <th key={c.key} style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#445566", fontSize: 8 }}>
+              <th key={c.key} style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 8 }}>
                 yield
               </th>
             ))}
             {changeCols.map(c => (
               <React.Fragment key={c.dKey}>
-                <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#445566", fontSize: 8 }}>{"Δ"} bps</th>
-                <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#445566", fontSize: 8 }}>%{"Δ"}</th>
+                <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 8 }}>{"Δ"} bps</th>
+                <th style={{ ...thStyle, borderBottom: `2px solid ${GRID}`, color: "#8899aa", fontSize: 8 }}>%{"Δ"}</th>
               </React.Fragment>
             ))}
           </tr>
