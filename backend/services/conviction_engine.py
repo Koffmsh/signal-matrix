@@ -1258,7 +1258,13 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         _quad_alignment = get_quad_alignment(asset_class, sector, quad_current)
         if (structural_base == 0 and _struct_bias == "Neutral") or _quad_alignment == 0.0:
             quad_score = 0
-            quad_align_label = "Neutral"
+            # No structure to align with — show raw macro stance (Best/Worst/Neutral)
+            if _quad_alignment > 0:
+                quad_align_label = "Best"
+            elif _quad_alignment < 0:
+                quad_align_label = "Worst"
+            else:
+                quad_align_label = "Neutral"
         else:
             _bullish_best  = (_struct_bias == "Bullish" and _quad_alignment > 0)
             _bearish_worst = (_struct_bias == "Bearish" and _quad_alignment < 0)

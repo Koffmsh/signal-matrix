@@ -35,18 +35,30 @@ function pillarLabel(name, raw, data) {
     }
     case "VOLUME":     return data.obv_direction || "Neutral";
     case "VOLATILITY": return null;
-    case "QUAD":       return raw > 0 ? "Aligned" : raw < 0 ? "Misaligned" : "Neutral";
+    case "QUAD": {
+      const align = data?.quad_alignment;
+      if (align === "Best") return "Best";
+      if (align === "Worst") return "Worst";
+      return raw > 0 ? "Aligned" : raw < 0 ? "Misaligned" : "Neutral";
+    }
     default:           return "—";
   }
 }
 
-function pillarColor(name, raw) {
+function pillarColor(name, raw, data) {
   if (raw == null) return GREY;
   switch (name) {
     case "STRUCTURE":      return raw >= 50 ? GREEN : raw >= 25 ? AMBER : GREY;
     case "VOLUME":     return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "VOLATILITY": return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
-    case "QUAD":       return raw > 0 ? GREEN : raw < 0 ? RED : GREY;
+    case "QUAD": {
+      if (raw > 0) return GREEN;
+      if (raw < 0) return RED;
+      const align = data?.quad_alignment;
+      if (align === "Best") return GREEN;
+      if (align === "Worst") return RED;
+      return GREY;
+    }
     default:           return GREY;
   }
 }
@@ -87,25 +99,26 @@ function pillarDetail(name, data) {
       const sectorLabel = data.sector && !genericSectors.includes(data.sector)
         ? data.sector : data.asset_class || "this asset class";
 
-      if (align === "Neutral" || score == null || score === 0)
+      if (align === "Neutral")
         return `No strong historical edge for ${sectorLabel} in the current macro environment.`;
 
-      const structDir = data.trade?.direction !== "Neutral" ? data.trade?.direction
-                      : data.trend?.direction !== "Neutral" ? data.trend?.direction : null;
-      const leanBull = structDir === "Bullish";
-      const quadFavors = (align === "Aligned" && leanBull)
-                      || (align === "Misaligned" && !leanBull);
-      const envLine = quadFavors
+      const isBest = align === "Best" || align === "Aligned";
+      const envLine = isBest
         ? `${sectorLabel} historically perform well in the current macro environment.`
         : `${sectorLabel} historically perform poorly in the current macro environment.`;
 
+      const structDir = data.trade?.direction !== "Neutral" ? data.trade?.direction
+                      : data.trend?.direction !== "Neutral" ? data.trend?.direction : null;
+
       let structLine = "";
-      if (align === "Aligned") {
+      if (score > 0) {
         structLine = " The macro environment supports current price structure.";
-      } else if (structDir) {
+      } else if (score < 0 && structDir) {
         structLine = ` Currently working against ${structDir.toLowerCase()} price structure.`;
-      } else {
-        structLine = " Currently working against price structure.";
+      } else if (score === 0 && !structDir) {
+        structLine = " No directional structure to align with yet.";
+      } else if (score === 0 && structDir) {
+        structLine = ` Currently working against ${structDir.toLowerCase()} price structure.`;
       }
       return envLine + structLine;
     }
@@ -279,7 +292,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
         }
         return data.vix_regime;
       })() : pillarLabel(p.name, p.raw, data),
-      color: pillarColor(p.name, p.raw),
+      color: pillarColor(p.name, p.raw, data),
       detail: pillarDetail(p.name, data),
     }));
   }, [data]);

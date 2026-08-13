@@ -1216,9 +1216,9 @@ function Dashboard() {
                            (() => { const r = row.vixRegime; return ["Investable", "Tradable", "Calm"].includes(r) ? "#00e5a0" : r === "Choppy" ? "#f0b429" : r === "Danger" ? "#ff4d6d" : "#8899aa"; })(),
                            false, "Volatility regime — routed per asset (VIX/VXN/RVX/GVZ/OVX/MOVE)\nBullish/Neutral: Investable+ (HRR<threshold) +15 · Investable +10 · Choppy +0 · Danger −10\nBearish: Danger +15 · Choppy +10 · Tradable +5 (floor)\nNo vol index: +15 flat"],
           ...(row.quadAlignment ? [
-            ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : "Neutral —",
-                               row.quadAlignment === "Aligned" ? "#00e5a0" : row.quadAlignment === "Misaligned" ? "#ff4d6d" : "#8899aa",
-                               false, "Quad framework alignment\nAligned = macro tailwind for viewpoint direction\nMisaligned = macro headwind\nNeutral = no quad mapping for this asset/sector"],
+            ["Quad Alignment", row.quadAlignment === "Aligned" ? "Aligned ✓" : row.quadAlignment === "Misaligned" ? "Misaligned ✗" : row.quadAlignment === "Best" ? "Best ▲" : row.quadAlignment === "Worst" ? "Worst ▼" : "Neutral —",
+                               ["Aligned", "Best"].includes(row.quadAlignment) ? "#00e5a0" : ["Misaligned", "Worst"].includes(row.quadAlignment) ? "#ff4d6d" : "#8899aa",
+                               false, "Quad framework alignment\nBest = macro tailwind for this sector\nWorst = macro headwind\nAligned/Misaligned = directional alignment with price structure\nNeutral = no quad mapping for this asset/sector"],
             ["Quad Score",     row.quadScore != null ? (row.quadScore > 0 ? `+${row.quadScore}` : `${row.quadScore}`) : "—",
                                row.quadScore == null ? "#8899aa" : row.quadScore > 0 ? "#00e5a0" : row.quadScore < 0 ? "#ff4d6d" : "#8899aa",
                                false, "Quad conviction contribution (v2.0 additive formula)\n+20 = Aligned, high-confidence quad (prob ≥ 0.45)\n+15 = Aligned, lower-confidence quad (prob < 0.45)\n  0 = Neutral alignment or Neutral viewpoint\n−11 = Misaligned, lower-confidence (prob < 0.45)\n−15 = Misaligned, high-confidence (prob ≥ 0.45)"],
