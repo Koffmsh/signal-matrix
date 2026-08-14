@@ -5,7 +5,15 @@ import numpy as np
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, load_only
 from database import SessionLocal
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from models.price_cache import PriceCache
+from models.signal_output import SignalOutput
+from models.quad_settings import QuadSettings
+from models.ticker import Ticker
+
+_ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -146,4 +154,70 @@ def macro_correlations(db: Session = Depends(get_db)):
         corrs = _compute_correlations(base_dates, base_closes, tk_dates, tk_closes)
         result_rows.append({"ticker": tk, "label": t["label"], "data": corrs})
 
-    return {"base": _CORRELATION_BASE, "rows": result_rows, "updated": updated}
+    # DXY context: chart data + signal summary
+    dxy_ctx = None
+    dxy_price = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker == _CORRELATION_BASE)
+        .options(load_only(
+            PriceCache.ticker, PriceCache.close,
+            PriceCache.history_json, PriceCache.history_dates_json,
+            PriceCache.spark_json,
+        ))
+        .first()
+    )
+    if dxy_price and dxy_price.history_json and dxy_price.history_dates_json:
+        dxy_dates = json.loads(dxy_price.history_dates_json)
+        dxy_closes = json.loads(dxy_price.history_json)
+        # last 1 year (~252 trading days)
+        n = min(252, len(dxy_dates))
+        dxy_ctx = {
+            "close": dxy_price.close,
+            "chart_dates": dxy_dates[-n:],
+            "chart_closes": dxy_closes[-n:],
+        }
+        # Signal data
+        sigs = (
+            db.query(SignalOutput)
+            .filter(SignalOutput.ticker == _CORRELATION_BASE)
+            .options(load_only(
+                SignalOutput.timeframe, SignalOutput.viewpoint,
+                SignalOutput.conviction, SignalOutput.trade_direction,
+                SignalOutput.quad_alignment, SignalOutput.quad_score,
+                SignalOutput.lrr, SignalOutput.hrr,
+            ))
+            .all()
+        )
+        sig_map = {s.timeframe: s for s in sigs}
+        trade = sig_map.get("trade")
+        trend = sig_map.get("trend")
+        if trade:
+            dxy_ctx["viewpoint"] = trade.viewpoint
+            dxy_ctx["conviction"] = trade.conviction
+            dxy_ctx["trade_dir"] = trade.trade_direction
+            dxy_ctx["quad_alignment"] = trade.quad_alignment
+            dxy_ctx["quad_score"] = trade.quad_score
+            dxy_ctx["lrr"] = trade.lrr
+            dxy_ctx["hrr"] = trade.hrr
+        if trend:
+            dxy_ctx["trend_dir"] = trend.trade_direction
+
+        # Ticker metadata for quad text
+        tk_row = db.query(Ticker).filter(Ticker.ticker == _CORRELATION_BASE).first()
+        if tk_row:
+            dxy_ctx["sector"] = tk_row.sector
+            dxy_ctx["asset_class"] = tk_row.asset_class
+
+        # Current US monthly quad
+        now_et = datetime.now(_ET)
+        cur_month = now_et.strftime("%Y-%m")
+        quad_row = db.query(QuadSettings).filter(
+            QuadSettings.country == "US",
+            QuadSettings.forecast_month == cur_month,
+            QuadSettings.quad_type == "monthly",
+        ).first()
+        if quad_row:
+            dxy_ctx["quad"] = quad_row.quad
+            dxy_ctx["quad_prob"] = quad_row.probability
+
+    return {"base": _CORRELATION_BASE, "rows": result_rows, "updated": updated, "dxy": dxy_ctx}

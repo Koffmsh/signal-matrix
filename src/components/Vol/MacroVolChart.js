@@ -36,7 +36,7 @@ function getRegime(val, ceil, danger) {
   return { label: "DANGER", color: RED };
 }
 
-function VolGauge({ config, value }) {
+function VolGauge({ config, value, animate }) {
   if (value == null) return null;
   const { label, low, ceil, danger, high } = config;
   const W = 190, H = 115, cx = W / 2, cy = 96, R = 64, thick = 10;
@@ -129,7 +129,7 @@ function VolGauge({ config, value }) {
         {lbl(1, high + "+", "start")}
 
         {/* Needle */}
-        <g style={{ transformOrigin: `${cx}px ${cy}px`, transform: `rotate(${needleDeg}deg)` }}>
+        <g style={{ transformOrigin: `${cx}px ${cy}px`, transform: `rotate(${animate ? needleDeg : -90}deg)`, transition: animate ? 'transform 1.2s cubic-bezier(0.34, 1.56, 0.64, 1)' : 'none' }}>
           <polygon
             points={`${cx - baseHW},${cy + 2} ${cx + baseHW},${cy + 2} ${cx + midHW},${taperMidY} ${cx},${tipY} ${cx - midHW},${taperMidY}`}
             fill={r.color} opacity={0.85}
@@ -155,13 +155,18 @@ function VolGauge({ config, value }) {
 }
 
 function VolGauges({ stats }) {
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setAnimate(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
   const hasAny = GAUGE_CONFIG.some(g => stats[g.ticker]?.last != null);
   if (!hasAny) return null;
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
         {GAUGE_CONFIG.map(g => (
-          <VolGauge key={g.ticker} config={g} value={stats[g.ticker]?.last ?? null} />
+          <VolGauge key={g.ticker} config={g} value={stats[g.ticker]?.last ?? null} animate={animate} />
         ))}
       </div>
     </div>
