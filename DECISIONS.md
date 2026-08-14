@@ -48,6 +48,35 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-037 — Yahoo fallback for SCHWAB_UNSUPPORTED tickers in LIVE mode
+Date: 2026-08-14
+Status: Active
+Component: `backend/routers/sector_performance.py`, `backend/routers/macro.py`
+
+Context:
+  LIVE mode on Sector Performance and Key Correlations pages fetches fresh Schwab
+  quotes via `get_quotes()`. However, Schwab batch quotes silently drops indices
+  (SPX, NDX), FX (DXY, JPY), and futures (/CL, /ZN, /GC, /HG) — they are in
+  `SCHWAB_UNSUPPORTED`. On Sector Performance, SPX (the benchmark) showed stale
+  cached price while sector ETFs updated. On Correlations, 4 of 6 tickers (DXY,
+  SPX, /CL, /GC) got no live update — only DBC and IBIT received fresh quotes.
+
+Decision:
+  After the Schwab batch quote call, check for missing tickers and fall back to
+  Yahoo `fast_info.last_price` (delayed ~15 min) for each. Uses `YAHOO_SYMBOL_MAP`
+  from `yahoo_finance.py` via `get_yahoo_symbol()` for correct symbol mapping
+  (SPX→^GSPC, DXY→DX-Y.NYB, /CL→CL=F, /GC→GC=F). Per-ticker try/except so one
+  failure doesn't block others.
+
+Why (regression guard):
+  Schwab's batch quotes endpoint provides no error for unsupported symbols — it
+  silently omits them from the response. SPY cannot proxy SPX (different price
+  scale: ~$555 vs ~$5,550). Yahoo delayed quotes (~15 min) are acceptable for
+  LIVE mode since the platform is not a real-time trading system. Never remove the
+  Yahoo fallback — the unsupported set is permanent (Schwab API is equity/ETF-only).
+
+Linked rule: CLAUDE.md "Infra & data-source guardrails" (SCHWAB_UNSUPPORTED), rule #107
+
 ## ADR-036 — Quad detail text direction-aware + Trade break level in RR table
 Date: 2026-08-14
 Status: Active
