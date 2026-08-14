@@ -238,8 +238,11 @@ function viewpointColor(vp) {
 
 export default function KeyCorrelations() {
   const navigate = useNavigate();
-  const [data, setData] = useState(null);
+  const cachedLive = sessionStorage.getItem("correlationsLive");
+  const [snapshots, setSnapshots] = useState({ eod: null, live: cachedLive ? JSON.parse(cachedLive) : null });
+  const [active, setActive] = useState(cachedLive ? "live" : "eod");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
 
   const load = useCallback(async () => {
@@ -251,11 +254,36 @@ export default function KeyCorrelations() {
       setLoading(false);
       return;
     }
-    setData(res);
+    setSnapshots(prev => ({ ...prev, eod: res }));
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleLive = async () => {
+    setRefreshing(true);
+    try {
+      const res = await fetchCorrelations(true);
+      if (res && res.rows?.length) {
+        setSnapshots(prev => ({ ...prev, live: res }));
+        setActive("live");
+        sessionStorage.setItem("correlationsLive", JSON.stringify(res));
+      }
+    } catch (e) {
+      console.warn("Live fetch failed", e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const data = snapshots[active] || snapshots.eod;
+
+  const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const dayOfWeek = nowET.getDay();
+  const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+  const pastEOD = isWeekday && nowET.getHours() >= 16;
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const liveDisabled = pastEOD || isWeekend;
 
   const thStyle = {
     padding: "6px 10px", fontSize: 9, fontWeight: 700,
@@ -288,11 +316,59 @@ export default function KeyCorrelations() {
           <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
             ROLLING CORRELATIONS vs {data?.base ?? "DXY"}
           </span>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, flexWrap: "wrap", gap: 12 }}>
           {data?.updated && (
-            <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
-              EOD &middot; {data.updated}
+            <span style={{ fontSize: 10, color: TEXT }}>
+              {active === "live" && data.refreshed_at ? `Live · ${data.refreshed_at}` : `EOD · ${data.updated}`}
             </span>
           )}
+          {!data?.updated && <div />}
+
+          <div style={{ display: "flex", gap: 6 }}>
+            {[
+              { key: "eod",  label: "EOD" },
+              { key: "live", label: "LIVE" },
+            ].map(({ key, label }) => {
+              const available = !!snapshots[key];
+              const isActive = active === key;
+              const disabled = key === "live" && (refreshing || liveDisabled);
+              const eodDateTag = key === "eod" && snapshots.eod?.updated
+                ? (() => { const parts = snapshots.eod.updated.split(" ")[0].split("/"); return ` ${parseInt(parts[0])}/${parseInt(parts[1])}`; })()
+                : "";
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (disabled) return;
+                    if (key === "live") {
+                      handleLive();
+                    } else {
+                      setActive(key);
+                    }
+                  }}
+                  disabled={disabled}
+                  style={{
+                    padding: "4px 12px",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: "0.1em",
+                    borderRadius: 4,
+                    border: `1px solid ${isActive ? GREEN : GRID}`,
+                    background: isActive ? "rgba(0, 229, 160, 0.1)" : "transparent",
+                    color: isActive ? GREEN : available ? TEXT : "#556677",
+                    cursor: disabled ? "default" : (key === "live" && refreshing) ? "wait" : "pointer",
+                    transition: "all 150ms ease",
+                  }}
+                >
+                  {key === "live" && refreshing ? "⟳ FETCHING..." : label}
+                  {key === "eod" && available && <span style={{ opacity: 0.7, marginLeft: 4 }}>{eodDateTag}</span>}
+                  {key === "live" && snapshots.live?.refreshed_at && <span style={{ opacity: 0.7, marginLeft: 4 }}>{snapshots.live.refreshed_at}</span>}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

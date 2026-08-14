@@ -157,9 +157,12 @@ export default function SpxImpactDashboard() {
       {/* ── Page header ─────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "0.12em", color: HEADER }}>
-            SPX CONSTITUENTS — RELATIVE IMPACT BY MARKET CAP
+          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: "0.06em", color: "#e8f4ff" }}>
+            SPX IMPACT
           </h1>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
+            RELATIVE CONSTITUENT IMPACT BY MARKET CAP
+          </span>
           {data?.spx_return_pct != null && (
             <span style={{ fontSize: 13, fontWeight: 600, color: spxColor }}>
               SPX {fmtSigned(data.spx_return_pct, 3)}
@@ -200,7 +203,7 @@ export default function SpxImpactDashboard() {
                     borderRadius: 4,
                     border: `1px solid ${isActive ? GREEN : available ? BORDER : BORDER}`,
                     background: isActive ? "rgba(0,229,160,0.1)" : "transparent",
-                    color: isActive ? GREEN : available ? GREY : "#2a3a4a",
+                    color: isActive ? GREEN : available ? GREY : "#556677",
                     cursor: available ? "pointer" : "default",
                     transition: "all 150ms ease",
                   }}

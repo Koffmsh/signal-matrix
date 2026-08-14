@@ -288,50 +288,76 @@ export default function SectorPerformance() {
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
   const liveDisabled = pastEOD || isWeekend;
 
+  function fmtShortDate(dateStr) {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d)) return "";
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  }
+
+  const eodDate = snapshots.eod?.as_of;
+
   return (
     <div style={containerStyle}>
-      {/* Snapshot toggle */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
-        {[
-          { key: "eod",  label: "EOD" },
-          { key: "live", label: "LIVE" },
-        ].map(({ key, label }) => {
-          const available = !!snapshots[key];
-          const isActive = active === key;
-          const timestamp = key === "live" && snapshots.live?.refreshed_at
-            ? snapshots.live.refreshed_at : null;
-          const disabled = key === "live" && (refreshing || liveDisabled);
-          return (
-            <button
-              key={key}
-              onClick={() => {
-                if (disabled) return;
-                if (key === "live") {
-                  handleLive();
-                } else {
-                  setActive(key);
-                }
-              }}
-              disabled={disabled}
-              style={{
-                padding: "6px 14px",
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: "0.1em",
-                fontFamily: "monospace",
-                cursor: (key === "live" && refreshing) ? "wait" : "pointer",
-                border: `1px solid ${isActive ? GREEN : BORDER}`,
-                borderRadius: 4,
-                background: isActive ? "rgba(0, 229, 160, 0.12)" : "transparent",
-                color: isActive ? GREEN : available ? HEADER : GREY,
-                opacity: (!available && key !== "live") ? 0.4 : 1,
-              }}
-            >
-              {key === "live" && refreshing ? "⟳ FETCHING..." : label}
-              {timestamp && <span style={{ fontWeight: 400, marginLeft: 6, opacity: 0.7 }}>{timestamp}</span>}
-            </button>
-          );
-        })}
+      {/* ── Page header ─────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
+          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700, letterSpacing: "0.06em", color: WHITE }}>
+            SECTOR PERFORMANCE
+          </h1>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
+            ABSOLUTE & RELATIVE RETURNS VS S&P 500
+          </span>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, flexWrap: "wrap", gap: 12 }}>
+          <div />
+
+          {/* Snapshot toggle */}
+          <div style={{ display: "flex", gap: 6 }}>
+            {[
+              { key: "eod",  label: "EOD" },
+              { key: "live", label: "LIVE" },
+            ].map(({ key, label }) => {
+              const available = !!snapshots[key];
+              const isActive = active === key;
+              const disabled = key === "live" && (refreshing || liveDisabled);
+              const dateTag = key === "eod" && eodDate ? ` ${fmtShortDate(eodDate)}` : "";
+              const timestamp = key === "live" && snapshots.live?.refreshed_at
+                ? snapshots.live.refreshed_at : null;
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (disabled) return;
+                    if (key === "live") {
+                      handleLive();
+                    } else {
+                      setActive(key);
+                    }
+                  }}
+                  disabled={disabled}
+                  style={{
+                    padding: "4px 12px",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: "0.1em",
+                    borderRadius: 4,
+                    border: `1px solid ${isActive ? GREEN : BORDER}`,
+                    background: isActive ? "rgba(0, 229, 160, 0.1)" : "transparent",
+                    color: isActive ? GREEN : available ? GREY : "#556677",
+                    cursor: disabled ? "default" : (key === "live" && refreshing) ? "wait" : "pointer",
+                    transition: "all 150ms ease",
+                  }}
+                >
+                  {key === "live" && refreshing ? "⟳ FETCHING..." : label}
+                  {key === "eod" && available && <span style={{ opacity: 0.7, marginLeft: 4 }}>{dateTag}</span>}
+                  {timestamp && <span style={{ opacity: 0.7, marginLeft: 4 }}>{timestamp}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <PerfTable

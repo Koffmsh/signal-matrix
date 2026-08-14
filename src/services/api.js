@@ -149,9 +149,10 @@ export async function fetchYieldCurveHistory() {
   }
 }
 
-export async function fetchCorrelations() {
+export async function fetchCorrelations(live = false) {
   try {
-    const response = await apiFetch(`/api/macro/correlations`);
+    const url = live ? `/api/macro/correlations?live=true` : `/api/macro/correlations`;
+    const response = await apiFetch(url);
     if (!response || !response.ok) return null;
     return await response.json();
   } catch (err) {

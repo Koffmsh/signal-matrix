@@ -2,7 +2,7 @@ import json
 import logging
 
 import numpy as np
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session, load_only
 from database import SessionLocal
 from datetime import datetime
@@ -110,7 +110,7 @@ def _compute_correlations(base_dates, base_closes, tk_dates, tk_closes):
 
 
 @router.get("/api/macro/correlations")
-def macro_correlations(db: Session = Depends(get_db)):
+def macro_correlations(live: bool = Query(False), db: Session = Depends(get_db)):
     all_tickers = [_CORRELATION_BASE] + [t["ticker"] for t in _CORRELATION_TICKERS]
 
     rows = (
@@ -121,9 +121,32 @@ def macro_correlations(db: Session = Depends(get_db)):
             PriceCache.history_json,
             PriceCache.history_dates_json,
             PriceCache.updated_at,
+            PriceCache.close,
         ))
         .all()
     )
+
+    live_prices = {}
+    if live:
+        try:
+            from services.schwab_client import get_schwab_client
+            from services.schwab_market_data import get_schwab_symbol
+            client = get_schwab_client(db)
+            schwab_syms = [get_schwab_symbol(t) for t in all_tickers]
+            resp = client.get_quotes(schwab_syms)
+            assert resp.status_code == 200
+            quotes = resp.json()
+            for tk in all_tickers:
+                ss = get_schwab_symbol(tk)
+                q = quotes.get(ss, {}).get("quote", {})
+                price = q.get("lastPrice")
+                if price:
+                    live_prices[tk] = price
+        except Exception as e:
+            logger.warning(f"Correlation live quotes failed: {e} — falling back to cached")
+
+    now_et = datetime.now(_ET)
+    today_str = now_et.strftime("%Y-%m-%d")
 
     cache = {}
     updated = None
@@ -134,6 +157,12 @@ def macro_correlations(db: Session = Depends(get_db)):
         dates = json.loads(row.history_dates_json)
         if len(closes) != len(dates) or len(closes) < 20:
             continue
+        if live and row.ticker in live_prices:
+            if dates and dates[-1] == today_str:
+                closes[-1] = live_prices[row.ticker]
+            else:
+                dates.append(today_str)
+                closes.append(live_prices[row.ticker])
         cache[row.ticker] = (dates, np.array(closes, dtype=float))
         if row.ticker == _CORRELATION_BASE and row.updated_at:
             updated = row.updated_at.strftime("%m/%d/%y %H:%M")
@@ -220,4 +249,11 @@ def macro_correlations(db: Session = Depends(get_db)):
             dxy_ctx["quad"] = quad_row.quad
             dxy_ctx["quad_prob"] = quad_row.probability
 
-    return {"base": _CORRELATION_BASE, "rows": result_rows, "updated": updated, "dxy": dxy_ctx}
+    result = {"base": _CORRELATION_BASE, "rows": result_rows, "updated": updated, "dxy": dxy_ctx}
+    if live:
+        result["mode"] = "live"
+        result["refreshed_at"] = now_et.strftime("%I:%M %p ET").lstrip("0")
+    else:
+        result["mode"] = "eod"
+        result["refreshed_at"] = None
+    return result
