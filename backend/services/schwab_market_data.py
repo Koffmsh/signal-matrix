@@ -186,9 +186,31 @@ def _history_fetch_mode(existing_row, today_str: str) -> str:
 def _update_quote_only(existing: PriceCache, close: float, volume: int,
                        today: str, data_source: str,
                        high: float = None, low: float = None) -> None:
-    """Update close/volume/timestamp only — history unchanged (today already stored)."""
+    """Update close/volume/timestamp and sync today's history bar to EOD values."""
     import pandas as pd
-    prices   = json.loads(existing.history_json)       if existing.history_json       else []
+    prices = json.loads(existing.history_json)       if existing.history_json       else []
+    dates  = json.loads(existing.history_dates_json) if existing.history_dates_json else []
+    vols   = json.loads(existing.volume_history_json) if existing.volume_history_json else []
+    highs  = json.loads(existing.history_high_json)  if existing.history_high_json  else []
+    lows   = json.loads(existing.history_low_json)   if existing.history_low_json   else []
+
+    # Sync today's history bar to the EOD close — the bar may have been appended
+    # earlier with an intraday price (e.g. from a manual REFRESH before market close).
+    if dates and dates[-1] == today:
+        prices[-1] = close
+        vols[-1]   = volume
+        if highs: highs[-1] = high if high is not None else close
+        if lows:  lows[-1]  = low  if low  is not None else close
+        existing.history_json        = json.dumps(prices)
+        existing.volume_history_json = json.dumps(vols)
+        if highs: existing.history_high_json = json.dumps(highs)
+        if lows:  existing.history_low_json  = json.dumps(lows)
+        spark_raw = prices[-60:] if len(prices) >= 60 else prices
+        spark_prices = [round(p, 2) for p in spark_raw]
+        if spark_prices:
+            spark_prices[-1] = close
+        existing.spark_json = json.dumps(spark_prices)
+
     closes_s = pd.Series(prices)
     existing.close       = close
     existing.volume      = volume
