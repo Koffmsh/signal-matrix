@@ -48,6 +48,36 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-036 — Quad detail text direction-aware + Trade break level in RR table
+Date: 2026-08-14
+Status: Active
+Component: src/components/Security/SecurityAnalysis.js
+
+Context:
+  Two issues on the Security Analysis page:
+  1. Quad pillar detail text treated "Aligned" as "Best" regardless of direction.
+     TSLA (Bearish+Aligned, score +20) showed "Consumer Discretionary historically
+     perform well" — opposite of reality. Aligned+Bearish means the quad is Worst for
+     the sector, which supports the short thesis.
+  2. Trade row in the Risk Range tab showed "—" for the Level column. Trend and Tail
+     showed their levels, but Trade had no break level displayed — despite the popup
+     showing Trade B/C with the active invalidation pivot.
+
+Decision:
+  1. `isBestForSector` now checks structural direction: Aligned+Bullish or Best →
+     "perform well"; Aligned+Bearish or Misaligned+Bullish or Worst → "perform poorly".
+  2. Trade Level column shows `pivot_b` when `d_extended=True`, `pivot_c` otherwise —
+     matching the break level logic used everywhere else (warn flags, popup, alerts).
+
+Why (regression guard):
+  "Aligned" is relative to the structural lean, not an absolute macro stance. For
+  Bearish tickers, Aligned means the quad is Worst for the sector (favorable for
+  shorts). Treating Aligned=Best hardcodes a long-only mental model. The break level
+  (B or C) is already in the API response — hiding it from the RR table forced users
+  to open the popup to see the invalidation level.
+
+Linked rule: CLAUDE.md rules #117, #124
+
 ## ADR-034 — Quad alignment label: show raw macro stance when structural gate fires
 Date: 2026-08-12
 Status: Active
