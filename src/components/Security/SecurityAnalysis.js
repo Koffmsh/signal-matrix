@@ -102,13 +102,17 @@ function pillarDetail(name, data) {
       if (align === "Neutral")
         return `No strong historical edge for ${sectorLabel} in the current macro environment.`;
 
-      const isBest = align === "Best" || align === "Aligned";
-      const envLine = isBest
-        ? `${sectorLabel} historically perform well in the current macro environment.`
-        : `${sectorLabel} historically perform poorly in the current macro environment.`;
-
       const structDir = data.trade?.direction !== "Neutral" ? data.trade?.direction
                       : data.trend?.direction !== "Neutral" ? data.trend?.direction : null;
+      // "Best"/"Worst" = raw macro stance (no structure). "Aligned"/"Misaligned" = relative to structure.
+      // Aligned+Bullish or Misaligned+Bearish → quad is Best for sector → "perform well"
+      // Aligned+Bearish or Misaligned+Bullish → quad is Worst for sector → "perform poorly"
+      const isBestForSector = align === "Best"
+        || (align === "Aligned" && structDir === "Bullish")
+        || (align === "Misaligned" && structDir === "Bearish");
+      const envLine = isBestForSector
+        ? `${sectorLabel} historically perform well in the current macro environment.`
+        : `${sectorLabel} historically perform poorly in the current macro environment.`;
 
       let structLine = "";
       if (score > 0) {
@@ -569,7 +573,10 @@ export default function SecurityAnalysis({ defaultTicker }) {
                         <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>{d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}</td>
                         <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>{d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}</td>
                         <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>
-                          {tf === "Trade" ? "—" : d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
+                          {tf === "Trade"
+                            ? (d?.d_extended && d?.pivot_b != null ? `$${d.pivot_b.toFixed(2)}`
+                              : d?.pivot_c != null ? `$${d.pivot_c.toFixed(2)}` : "—")
+                            : d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
                         </td>
                       </tr>
                     ))}
