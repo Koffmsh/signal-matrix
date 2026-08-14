@@ -1151,3 +1151,34 @@ Why (regression guard):
   trading-day/cache-key date — they return UTC and silently break after 8 PM ET.
 
 Linked rule: CLAUDE.md rule #34
+
+---
+
+## ADR-035 — `_update_quote_only` must sync `history_json[-1]` to EOD close
+
+**Date:** 2026-08-13
+
+**Context:**
+When a manual REFRESH DATA runs during market hours, `_append_bar` appends today's bar to
+`history_json` with the current intraday price. The 15-min intraday monitor then updates
+`price_cache.close` with fresher quotes but never touches `history_json`. When the 4 PM EOD
+run fires, `_history_fetch_mode` sees `dates[-1] == today` → returns `skip` → calls
+`_update_quote_only`, which updated `close` but left `history_json[-1]` at the stale intraday
+value. The conviction engine reads `history_json[-1]` (rule #121), so OBV and direction
+computed with the wrong price.
+
+**Incident (2026-08-13):**
+WOOD's `history_json[-1]` was 72.36 (intraday) while `close` was 72.98 (EOD). The EOD close
+was an up day (72.98 > 72.52 prior), but OBV saw a down day (72.36 < 72.52) and subtracted
+140K volume instead of adding it — flipping Volume from Bullish (score 10) to Bearish
+(score 0). Affected 67 tickers on prod.
+
+**Decision:**
+`_update_quote_only` now syncs `history_json[-1]`, `volume_history_json[-1]`, H/L, and spark
+to the EOD quote values whenever `dates[-1] == today`. This ensures the signal engine always
+sees the same price the dashboard displays.
+
+**What NOT to revert to:**
+Never skip the history sync in `_update_quote_only` — the divergence between `close` and
+`history_json[-1]` is silent and corrupts OBV, direction, MAs, and conviction without any
+visible error.
