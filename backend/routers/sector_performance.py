@@ -200,6 +200,19 @@ def get_sector_performance(live: bool = Query(False), db: Session = Depends(get_
     except Exception as e:
         logger.warning(f"Sector live quotes failed: {e} — falling back to cached")
 
+    # SPX is in SCHWAB_UNSUPPORTED — batch quotes silently drops indices.
+    # Fall back to Yahoo delayed quote for SPX if Schwab didn't return it.
+    if "SPX" not in live_prices:
+        try:
+            import yfinance as yf
+            tk = yf.Ticker("^GSPC")
+            info = tk.fast_info
+            price = getattr(info, "last_price", None)
+            if price:
+                live_prices["SPX"] = price
+        except Exception as e:
+            logger.warning(f"Yahoo SPX fallback failed: {e}")
+
     now_et = datetime.now(_ET)
     result = _compute_sector_perf(db, live_prices if live_prices else None)
     result["mode"] = "live"

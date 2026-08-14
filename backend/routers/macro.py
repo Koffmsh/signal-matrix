@@ -145,6 +145,24 @@ def macro_correlations(live: bool = Query(False), db: Session = Depends(get_db))
         except Exception as e:
             logger.warning(f"Correlation live quotes failed: {e} — falling back to cached")
 
+        # Yahoo fallback for SCHWAB_UNSUPPORTED tickers (DXY, SPX, /CL, /GC, etc.)
+        missing = [t for t in all_tickers if t not in live_prices]
+        if missing:
+            try:
+                import yfinance as yf
+                from services.yahoo_finance import get_yahoo_symbol
+                for tk in missing:
+                    try:
+                        ysym = get_yahoo_symbol(tk)
+                        info = yf.Ticker(ysym).fast_info
+                        price = getattr(info, "last_price", None)
+                        if price:
+                            live_prices[tk] = price
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Yahoo correlation fallback failed: {e}")
+
     now_et = datetime.now(_ET)
     today_str = now_et.strftime("%Y-%m-%d")
 
