@@ -1,10 +1,10 @@
-﻿"""
-Pivot Engine â€” Task 3.2
+"""
+Pivot Engine — Task 3.2
 ABC Pivot Detector: finds A, B, C, D price levels and structural state
 for three timeframes (trade, trend, long-term).
 
 Price history is read from the SQLite price_cache table (populated by REFRESH DATA).
-Never calls yfinance directly â€” CALCULATE SIGNALS always runs after REFRESH DATA.
+Never calls yfinance directly — CALCULATE SIGNALS always runs after REFRESH DATA.
 """
 import json
 import logging
@@ -52,31 +52,31 @@ TIMEFRAMES = {
 # Prevents the engine from anchoring to a pivot that is too old to be relevant.
 # None = no limit (LT structures are inherently long-dated).
 _MAX_A_LOOKBACK = {
-    "trade":  60,
-    "trend": 150,
+    "trade":  90,
+    "trend": 200,
     "lt":    None,
 }
 
 
-# â”€â”€ Price fetch from cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# —— Price fetch from cache ————————————————————————————————————————————
 
 def get_prices_and_dates_from_cache(ticker: str, db):
     """
     Read full price history and dates from the SQLite price_cache table.
-    Returns (prices: list[float], dates: list[str]) oldest â†’ newest,
+    Returns (prices: list[float], dates: list[str]) oldest → newest,
     or (None, None) if not cached.
     REFRESH DATA must be run first to populate the cache.
     """
     row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
     if row is None or not row.history_json or not row.history_dates_json:
-        logger.warning(f"No cached price history for {ticker} â€” run REFRESH DATA first")
+        logger.warning(f"No cached price history for {ticker} — run REFRESH DATA first")
         return None, None
     prices = json.loads(row.history_json)
     dates  = json.loads(row.history_dates_json)
     return prices, dates
 
 
-# â”€â”€ Pivot detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# —— Pivot detection ———————————————————————————————————————————————————
 
 def find_pivot_highs_lows(prices: list, bar_window: int):
     """
@@ -86,8 +86,8 @@ def find_pivot_highs_lows(prices: list, bar_window: int):
     Pivot low  at index i: prices[i] == min(prices[i - bar_window : i + bar_window + 1])
 
     Returns:
-        pivot_highs: list of (index, price)  â€” oldest to newest
-        pivot_lows:  list of (index, price)  â€” oldest to newest
+        pivot_highs: list of (index, price)  — oldest to newest
+        pivot_lows:  list of (index, price)  — oldest to newest
     """
     n = len(prices)
     pivot_highs = []
@@ -103,7 +103,7 @@ def find_pivot_highs_lows(prices: list, bar_window: int):
     return pivot_highs, pivot_lows
 
 
-# â”€â”€ ABC structure builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# —— ABC structure builder —————————————————————————————————————————————
 
 def _find_uptrend_abc(pivot_highs: list, pivot_lows: list):
     """
@@ -176,65 +176,44 @@ def _find_downtrend_abc(pivot_highs: list, pivot_lows: list):
     return None
 
 
-def _has_prior_break_confirmed(abc: dict, pivot_highs: list, pivot_lows: list,
-                               prices: list) -> bool:
-    """
-    Check whether a BREAK_CONFIRMED of a prior same-direction structure occurred
-    anywhere between A and C in the candidate ABC.
-
-    For an uptrend ABC (A=low, B=high, C=low):
-      - Scan every intermediate pivot LOW between A and C as a historical C level.
-      - For each, find the most recent pivot HIGH before it as the historical B.
-      - If _check_break_confirmed fires for any of those (historical C, B) pairs,
-        the ABC spans a structural break â€” its A is too old to be valid.
-
-    For a downtrend ABC the mirror applies (intermediate pivot HIGHs as prior Cs).
-
-    Returns True if a prior BREAK_CONFIRMED is found, False otherwise.
-    """
+def _compute_d_extended(abc: dict, prices: list) -> bool:
+    """Quick check: has D extended beyond B + 0.5*|B-A|?"""
     direction = abc["direction"]
-    a_idx     = abc["a_idx"]
-    c_idx     = abc["c_idx"]
+    b_idx = abc["b_idx"]
+    b_price = abc["b"]
+    a_price = abc["a"]
 
     if direction == "uptrend":
-        intermediate = [(i, p) for i, p in pivot_lows if a_idx < i < c_idx]
-        for lc_idx, lc_price in intermediate:
-            prior_highs = [(i, p) for i, p in pivot_highs if i < lc_idx]
-            if not prior_highs:
-                continue
-            lb_idx, lb_price = prior_highs[-1]
-            if _check_break_confirmed(prices, lc_idx, lc_price, lb_price, "uptrend"):
-                return True
-    else:  # downtrend
-        intermediate = [(i, p) for i, p in pivot_highs if a_idx < i < c_idx]
-        for hc_idx, hc_price in intermediate:
-            prior_lows = [(i, p) for i, p in pivot_lows if i < hc_idx]
-            if not prior_lows:
-                continue
-            hb_idx, hb_price = prior_lows[-1]
-            if _check_break_confirmed(prices, hc_idx, hc_price, hb_price, "downtrend"):
-                return True
-
+        d_prices = [p for p in prices[b_idx + 1:] if p > b_price]
+        if d_prices:
+            return max(d_prices) > b_price + 0.5 * abs(b_price - a_price)
+    else:
+        d_prices = [p for p in prices[b_idx + 1:] if p < b_price]
+        if d_prices:
+            return min(d_prices) < b_price - 0.5 * abs(b_price - a_price)
     return False
 
 
-def _price_on_correct_side(abc: dict, current_price: float) -> bool:
+def _price_on_correct_side(abc: dict, current_price: float, prices: list) -> bool:
     """
-    Returns True if current_price is on the valid side of C for this structure:
-      uptrend:   price > C  (structure intact)
-      downtrend: price < C  (structure intact)
-    A structure where price has already crossed through C should not be
-    preferred over one that is still intact.
+    Returns True if current_price is on the valid side of the break level:
+      uptrend:   price > break_level  (structure intact)
+      downtrend: price < break_level  (structure intact)
+
+    Break level = C normally; B when d_extended (D > B + 0.5*|B-A|).
     """
+    d_extended = _compute_d_extended(abc, prices)
+    break_level = abc["b"] if d_extended else abc["c"]
+
     if abc["direction"] == "uptrend":
-        return current_price > abc["c"]
+        return current_price > break_level
     else:
-        return current_price < abc["c"]
+        return current_price < break_level
 
 
 def _d_has_established(abc: dict, prices: list) -> bool:
     """
-    Returns True if D has established â€” price has at some point closed through B.
+    Returns True if D has established — price has at some point closed through B.
       uptrend:   any close above B
       downtrend: any close below B
 
@@ -257,13 +236,11 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
 
     Selection priority (highest to lowest):
     1. Prefer the structure where current price is still on the correct side
-       of C (structure intact) over one where price has already blown through C.
-    2. When both or neither are intact: prefer the one with the more recent C â€”
+       of the break level (C normally, B when d_extended).
+    2. When both or neither are intact: prefer the one with the more recent C —
        UNLESS the newer structure has never established D (price never closed
        through B). Without D, a geometric ABC is not a confirmed trend reversal
        and the older unbroken structure governs.
-    3. If the most-recent-C winner spans a BREAK_CONFIRMED of a prior
-       same-direction structure, prefer the other.
 
     Returns dict or None.
     """
@@ -279,31 +256,23 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     if downtrend and not uptrend:
         return downtrend
 
-    # Both found â€” check which structures still have price on the correct side
+    # Both found — check which structures still have price on the correct side
     current_price = prices[-1]
-    up_intact     = _price_on_correct_side(uptrend,   current_price)
-    down_intact   = _price_on_correct_side(downtrend, current_price)
+    up_intact     = _price_on_correct_side(uptrend,   current_price, prices)
+    down_intact   = _price_on_correct_side(downtrend, current_price, prices)
 
     if up_intact and not down_intact:
-        if _has_prior_break_confirmed(uptrend, pivot_highs, pivot_lows, prices):
-            return downtrend
         return uptrend
     if down_intact and not up_intact:
-        if _has_prior_break_confirmed(downtrend, pivot_highs, pivot_lows, prices):
-            return uptrend
         return downtrend
 
-    # Both intact or both broken â€” use most recent C as tiebreak
+    # Both intact or both broken — use most recent C as tiebreak
     winner = uptrend if uptrend["c_idx"] >= downtrend["c_idx"] else downtrend
     other  = downtrend if winner is uptrend else uptrend
 
     # A newer ABC without D established cannot override the older structure.
-    # D is the confirmation event â€” without it the newer ABC is geometric only.
+    # D is the confirmation event — without it the newer ABC is geometric only.
     if not _d_has_established(winner, prices):
-        return other
-
-    # If the winner's history contains a prior BREAK_CONFIRMED, prefer the other
-    if _has_prior_break_confirmed(winner, pivot_highs, pivot_lows, prices):
         return other
 
     return winner
@@ -315,9 +284,9 @@ def update_c_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict
     dynamic C update:
 
     Uptrend:   any pivot low AFTER current C that is HIGHER than current C
-               â†’ update C upward (higher low = structural improvement)
+               → update C upward (higher low = structural improvement)
     Downtrend: any pivot high AFTER current C that is LOWER than current C
-               â†’ update C downward (lower high = structural deterioration)
+               → update C downward (lower high = structural deterioration)
 
     C only moves in the direction that strengthens the trend.
     C never moves against the trend (that would be a break, not an update).
@@ -329,14 +298,14 @@ def update_c_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict
     c_price   = abc["c"]
 
     if direction == "uptrend":
-        # Scan all pivot lows after initial C â€” take every higher low found
+        # Scan all pivot lows after initial C — take every higher low found
         for i, p in pivot_lows:
             if i > c_idx and p > c_price:
                 c_idx   = i
                 c_price = p
 
     else:  # downtrend
-        # Scan all pivot highs after initial C â€” take every lower high found
+        # Scan all pivot highs after initial C — take every lower high found
         for i, p in pivot_highs:
             if i > c_idx and p < c_price:
                 c_idx   = i
@@ -353,7 +322,7 @@ def update_b_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict
     Uptrend:   most recent confirmed pivot HIGH with a_idx < idx < c_idx
     Downtrend: most recent confirmed pivot LOW  with a_idx < idx < c_idx
 
-    B can advance to a higher OR lower price than the initial B â€” it always
+    B can advance to a higher OR lower price than the initial B — it always
     reflects the most recent structural reference point before the current C.
     This keeps the BC range and d_extended threshold current rather than
     anchored to the first pivot found after A.
@@ -372,68 +341,34 @@ def update_b_dynamically(abc: dict, pivot_highs: list, pivot_lows: list) -> dict
     if not candidates:
         return abc
 
-    # Pivots are ordered oldestâ†’newest; last entry is most recent
+    # Pivots are ordered oldest→newest; last entry is most recent
     new_b_idx, new_b_price = candidates[-1]
     return {**abc, "b": new_b_price, "b_idx": new_b_idx}
 
 
-# â”€â”€ Confirmed break detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# —— D + structural state ——————————————————————————————————————————————
 
-def _check_break_confirmed(prices: list, c_idx: int, c_price: float,
-                           b_price: float, direction: str,
-                           threshold: int = 2) -> bool:
+def _count_wrong_side_streak(prices: list, break_level: float, direction: str) -> int:
     """
-    Returns True if a BREAK_CONFIRMED condition exists:
-      - A streak of >= threshold consecutive closes on the wrong side of C
-        has occurred since C was established (prices after c_idx)
-      - Price has NOT since recovered above B (uptrend) / below B (downtrend)
-
-    Catches both active breaks (current price still on wrong side) and
-    post-break price recoveries above C that have not yet cleared B.
+    Count consecutive closes on the wrong side of break_level, ending at the
+    last bar. Returns the streak length (0 if current bar is on the correct side).
     """
-    prices_since_c = prices[c_idx + 1:]
-    if len(prices_since_c) < threshold:
-        return False
+    if not prices:
+        return 0
 
     if direction == "uptrend":
-        on_wrong_side = lambda p: p < c_price
-        recovered_b   = lambda p: p > b_price
+        on_wrong = lambda p: p < break_level
     else:
-        on_wrong_side = lambda p: p > c_price
-        recovered_b   = lambda p: p < b_price
+        on_wrong = lambda p: p > break_level
 
-    n = len(prices_since_c)
-
-    # Find the last close on the wrong side of C since C was established
-    last_wrong_idx = None
-    for j in range(n - 1, -1, -1):
-        if on_wrong_side(prices_since_c[j]):
-            last_wrong_idx = j
-            break
-
-    if last_wrong_idx is None:
-        return False  # C was never broken since it was established
-
-    # Count consecutive wrong-side closes ending at last_wrong_idx
     streak = 0
-    for j in range(last_wrong_idx, -1, -1):
-        if on_wrong_side(prices_since_c[j]):
+    for i in range(len(prices) - 1, -1, -1):
+        if on_wrong(prices[i]):
             streak += 1
         else:
             break
+    return streak
 
-    if streak < threshold:
-        return False  # single-day break â€” forgiveness still allowed
-
-    # Check if price recovered above B since the streak ended
-    for j in range(last_wrong_idx + 1, n):
-        if recovered_b(prices_since_c[j]):
-            return False  # recovery above B clears the confirmed break
-
-    return True  # confirmed break with no B recovery â†’ BREAK_CONFIRMED
-
-
-# â”€â”€ D + structural state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     """
@@ -443,14 +378,12 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
       - Structural state string
       - d_extended boolean (True when D has pushed > one BC range beyond B)
 
-    Break state naming: BREAK_OF_TRADE for 'trade' timeframe,
-                        BREAK_OF_TREND for 'trend' and 'lt'.
-
-    EXTENDED is never returned as a structural_state â€” it is communicated
-    exclusively via the d_extended boolean. Structural state remains
-    UPTREND_VALID / DOWNTREND_VALID when extended and unbroken.
-    When the extension threshold is crossed AND price breaks B, the normal
-    break state machine fires using B (not C) as the threshold.
+    Break logic (heal-at-break-level):
+      - Price on correct side of break level → VALID immediately (no persistent breaks)
+      - Price on wrong side: count consecutive wrong-side closes ending at current bar
+        - 1 close → BREAK_OF_TRADE (trade tf) or BREAK_OF_TREND (trend/lt tf)
+        - 2+ closes → BREAK_CONFIRMED
+      - Break level = C normally; B when d_extended
     """
     direction     = abc["direction"]
     c_idx         = abc["c_idx"]
@@ -460,11 +393,7 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
     current_price = prices[-1]
     break_state   = "BREAK_OF_TRADE" if timeframe == "trade" else "BREAK_OF_TREND"
 
-    # Scan for D establishment BEFORE any early returns.
-    # d_extended shifts the break level from C to B, so we must compute it
-    # before checking current_price against any threshold.  The old code did
-    # the D scan after an early-return on current_price vs C, which caused
-    # d_extended to always be False when price had already crossed C.
+    # Scan for D establishment
     b_idx        = abc["b_idx"]
     first_breach = None
     if direction == "uptrend":
@@ -493,71 +422,40 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
             d_extended  = d_price < b_price - 0.5 * abs(b_price - a_price)
         d_idx = first_breach + d_local_idx
 
+    # Determine break level and valid state label
+    break_level = b_price if d_extended else c_price
+    valid_state = "UPTREND_VALID" if direction == "uptrend" else "DOWNTREND_VALID"
+
+    # Check current price vs break level
     if direction == "uptrend":
-        if d_extended:
-            # Break level is B (not C) â€” price below B triggers break.
-            # Recovery requires closing above D (not just B): once a d_extended
-            # BREAK_CONFIRMED fires, the structure is only restored when price
-            # re-establishes D (proves the extension can be reclaimed).
-            # D is defined as max(prices[first_breach:]), so current_price >= d_price
-            # means today IS D re-establishing â€” return valid immediately.
-            if current_price >= d_price:
-                return round(d_price, 4), d_idx, "UPTREND_VALID", True
-            if current_price < b_price:
-                if _check_break_confirmed(prices, d_idx, b_price, d_price, "uptrend"):
-                    return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
-                return round(d_price, 4), d_idx, break_state, True
-            # Price between B and D â€” check for unresolved confirmed break below B
-            # Scan from d_idx (not b_idx): C pullback before D is structural, not a break
-            if _check_break_confirmed(prices, d_idx, b_price, d_price, "uptrend"):
-                return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
-        else:
-            # Break level is C
-            if current_price < c_price:
-                if _check_break_confirmed(prices, c_idx, c_price, b_price, "uptrend"):
-                    return None, None, "BREAK_CONFIRMED", False
-                return None, None, break_state, False
-            # Price above C â€” check for unresolved confirmed break below C
-            if _check_break_confirmed(prices, c_idx, c_price, b_price, "uptrend"):
-                return None, None, "BREAK_CONFIRMED", False
+        on_wrong_side = current_price < break_level
+    else:
+        on_wrong_side = current_price > break_level
 
+    if not on_wrong_side:
+        # Price is on the correct side (or equal) — structure is valid
         if first_breach is None:
-            return None, None, "UPTREND_VALID", False
-        return round(d_price, 4), d_idx, "UPTREND_VALID", d_extended
+            return None, None, valid_state, False
+        return round(d_price, 4), d_idx, valid_state, d_extended
 
-    else:  # downtrend
-        if d_extended:
-            # Break level is B (not C) â€” price above B triggers break.
-            # Recovery requires closing below D (not just B): mirror of uptrend rule.
-            # current_price <= d_price means today IS D re-establishing â€” valid immediately.
-            if current_price <= d_price:
-                return round(d_price, 4), d_idx, "DOWNTREND_VALID", True
-            if current_price > b_price:
-                if _check_break_confirmed(prices, d_idx, b_price, d_price, "downtrend"):
-                    return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
-                return round(d_price, 4), d_idx, break_state, True
-            # Price between D and B â€” check for unresolved confirmed break above B
-            # Scan from d_idx (not b_idx): C bounce before D is structural, not a break
-            if _check_break_confirmed(prices, d_idx, b_price, d_price, "downtrend"):
-                return round(d_price, 4), d_idx, "BREAK_CONFIRMED", True
-        else:
-            # Break level is C
-            if current_price > c_price:
-                if _check_break_confirmed(prices, c_idx, c_price, b_price, "downtrend"):
-                    return None, None, "BREAK_CONFIRMED", False
-                return None, None, break_state, False
-            # Price below C â€” check for unresolved confirmed break above C
-            if _check_break_confirmed(prices, c_idx, c_price, b_price, "downtrend"):
-                return None, None, "BREAK_CONFIRMED", False
+    # Price on wrong side — count consecutive streak ending at current bar
+    streak = _count_wrong_side_streak(prices, break_level, direction)
 
-        if first_breach is None:
-            return None, None, "DOWNTREND_VALID", False
-        return round(d_price, 4), d_idx, "DOWNTREND_VALID", d_extended
+    if streak >= 2:
+        state = "BREAK_CONFIRMED"
+    else:
+        state = break_state
+
+    if d_extended:
+        return round(d_price, 4), d_idx, state, True
+    if first_breach is not None:
+        return round(d_price, 4), d_idx, state, False
+    return None, None, state, False
 
 
-# â”€â”€ Per-timeframe computation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# —— Per-timeframe computation —————————————————————————————————————————
 
-def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_window: int) -> dict:
+def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_window: int, max_a_lookback_override: int = None) -> dict:
     """
     Compute ABC pivot structure for a single timeframe.
     Returns a result dict with pivot levels, dates, and structural state.
@@ -575,9 +473,7 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
     # Limit pivot candidates for A selection to the lookback window.
-    # Prevents the engine from anchoring to a pivot that is too old to be
-    # relevant while still using the full price history for D and break detection.
-    max_a_lookback = _MAX_A_LOOKBACK.get(timeframe)
+    max_a_lookback = max_a_lookback_override if max_a_lookback_override is not None else _MAX_A_LOOKBACK.get(timeframe)
     if max_a_lookback is not None and len(prices) > max_a_lookback:
         cutoff_idx = len(prices) - max_a_lookback
         pivot_highs_abc = [(i, p) for i, p in pivot_highs if i >= cutoff_idx]
@@ -598,13 +494,30 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
 
     d_price, d_idx, state, d_extended = compute_d_and_state(abc, prices, timeframe)
 
-    # Stale C check â€” if pivot_c exceeds the timeframe cutoff, treat as NO_STRUCTURE
+    # On BREAK_CONFIRMED, try the opposite direction for a valid structure
+    if state == "BREAK_CONFIRMED":
+        if abc["direction"] == "uptrend":
+            opp_abc = _find_downtrend_abc(pivot_highs_abc, pivot_lows_abc)
+        else:
+            opp_abc = _find_uptrend_abc(pivot_highs_abc, pivot_lows_abc)
+
+        if opp_abc is not None:
+            opp_abc = update_c_dynamically(opp_abc, pivot_highs, pivot_lows)
+            opp_abc = update_b_dynamically(opp_abc, pivot_highs, pivot_lows)
+            opp_d, opp_d_idx, opp_state, opp_d_ext = compute_d_and_state(
+                opp_abc, prices, timeframe
+            )
+            if opp_state in ("UPTREND_VALID", "DOWNTREND_VALID"):
+                abc = opp_abc
+                d_price, d_idx, state, d_extended = opp_d, opp_d_idx, opp_state, opp_d_ext
+
+    # Stale C check — if pivot_c exceeds the timeframe cutoff, treat as NO_STRUCTURE
     max_c_age = _STALE_C_DAYS.get(timeframe)
     c_date_str = dates[abc["c_idx"]] if dates else None
     if max_c_age is not None and c_date_str and _trading_days_since(c_date_str) > max_c_age:
         logger.info(
             f"[{timeframe}] pivot_c_date {c_date_str} is stale "
-            f"(>{max_c_age} trading days) â€” overriding to NO_STRUCTURE"
+            f"(>{max_c_age} trading days) — overriding to NO_STRUCTURE"
         )
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
@@ -631,7 +544,7 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
 # in routers/signals.py. Uses MA50 momentum + 22-day high/low breakout
 # (hit within last 3 bars). Entirely independent of this pivot engine.
 
-# â”€â”€ Main entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# —— Main entry point ——————————————————————————————————————————————————
 
 def compute_pivots(ticker: str, db) -> dict:
     """
@@ -669,4 +582,3 @@ def compute_pivots(ticker: str, db) -> dict:
         )
 
     return results
-
