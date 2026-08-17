@@ -266,7 +266,11 @@ def find_abc_structure(pivot_highs: list, pivot_lows: list, prices: list):
     if down_intact and not up_intact:
         return downtrend
 
-    # Both intact or both broken — use most recent C as tiebreak
+    # Both broken — no actionable structure exists
+    if not up_intact and not down_intact:
+        return None
+
+    # Both intact — use most recent C as tiebreak
     winner = uptrend if uptrend["c_idx"] >= downtrend["c_idx"] else downtrend
     other  = downtrend if winner is uptrend else uptrend
 

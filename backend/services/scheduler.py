@@ -16,6 +16,7 @@ import services.schwab_client as schwab_client
 from services.schwab_market_data import schwab_fetch_all, fred_fetch_and_store
 from services.schwab_options import schwab_fetch_iv, accumulate_hv_only
 from services.intraday_monitor import run_intraday_check
+from services.eod_alerts import check_trend_direction_changes
 from services.spx_constituents import compute_and_cache_spx_impact, compute_and_cache_spx_impact_intraday
 
 logger = logging.getLogger(__name__)
@@ -247,13 +248,19 @@ def schwab_data_job() -> None:
         signals_ok = sig["output"]["errors"] == 0
         logger.info(f"Schwab data job: signals complete — {sig['output']['calculated']} tickers")
 
+        # 3b. EOD alerts — trend direction changes (non-fatal)
+        try:
+            eod_alert_result = check_trend_direction_changes(db)
+            logger.info(f"Schwab data job: EOD alerts complete — {eod_alert_result}")
+        except Exception as _e:
+            logger.warning(f"Schwab data job: EOD alerts failed (non-fatal) — {_e}")
+
         # 4. SPX constituent impact — one Schwab batch call, ~2s, non-fatal
         try:
             spx_result = compute_and_cache_spx_impact(db)
             logger.info(f"Schwab data job: SPX impact complete — {spx_result}")
         except Exception as _e:
             logger.warning(f"Schwab data job: SPX impact failed (non-fatal) — {_e}")
-
 
         status = "success"
 

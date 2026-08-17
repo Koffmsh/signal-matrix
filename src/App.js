@@ -15,6 +15,7 @@ import YieldCurveChart from "./components/Vol/YieldCurveChart";
 import SpxImpactDashboard from "./components/SpxImpact/SpxImpactDashboard";
 import SectorPerformance from "./components/Macro/SectorPerformance";
 import KeyCorrelations from "./components/Macro/KeyCorrelations";
+import PivotDebug from "./components/Debug/PivotDebug";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import ProtectedRoute from "./components/shared/ProtectedRoute";
 import LoginPage from "./pages/LoginPage";
@@ -101,6 +102,7 @@ function AppLayout() {
             <Route path="/macro/correlations" element={<KeyCorrelations />} />
             <Route path="/spx-impact"     element={<SpxImpactDashboard />} />
             <Route path="/sector"         element={<SectorPerformance />} />
+            <Route path="/debug/pivots"   element={<PivotDebug />} />
             <Route path="*"               element={<Dashboard />} />
           </Routes>
         </div>
@@ -828,7 +830,12 @@ function Dashboard() {
           )}
         </td>
         {/* Trend Dir */}
-        <td style={{ padding: "9px 8px", color: dirColor(row.trendDir), fontWeight: "600" }}>{dirIcon(row.trendDir)} {row.trendDir}</td>
+        <td style={{ padding: "9px 8px", color: row.trendState === "BREAK_OF_TREND" ? "#f0b429" : dirColor(row.trendDir), fontWeight: "600" }}>
+          {dirIcon(row.trendDir)} {row.trendDir}
+          {row.trendState === "BREAK_OF_TREND" && (
+            <span title={row.trendDir === "Bullish" ? "Break of Trend Support — watching for confirmation" : "Break of Trend Resistance — watching for confirmation"} style={{ cursor: "help" }}> ⚠</span>
+          )}
+        </td>
         {/* Trend Level — MA100 floor (Bullish) or ceiling (Bearish); blank when Neutral */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.trendDir, row.trendLrrWarn), fontVariantNumeric: "tabular-nums" }}>
           {row.trendLRR != null ? `$${row.trendLRR.toFixed(2)}` : "—"}
@@ -1239,7 +1246,9 @@ function Dashboard() {
 
           // ── TREND ────────────────────────────────────────────────────────
           SECTION("TREND"),
-          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}`,                                    dirColor(row.trendDir),                                    false],
+          ["Trend Dir",    `${dirIcon(row.trendDir)} ${row.trendDir}${row.trendState === "BREAK_OF_TREND" ? " ⚠" : ""}`,
+            row.trendState === "BREAK_OF_TREND" ? "#f0b429" : dirColor(row.trendDir), false,
+            row.trendState === "BREAK_OF_TREND" ? (row.trendDir === "Bullish" ? "Break of Trend Support — watching for confirmation" : "Break of Trend Resistance — watching for confirmation") : null],
           ...(row.trendDir !== "Neutral" && row.trendLRR != null ? [
             ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB, trendBreakIsB) : null],
           ] : []),

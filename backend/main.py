@@ -20,6 +20,7 @@ from routers.system import router as system_router
 from routers.alerts import router as alerts_router
 from routers.security import router as security_router
 from routers.macro import router as macro_router
+from routers.debug import router as debug_router
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import models.signal_hurst    # ensure tables are registered before create_all
@@ -207,6 +208,7 @@ app.include_router(system_router)
 app.include_router(alerts_router)
 app.include_router(security_router)
 app.include_router(macro_router)
+app.include_router(debug_router)
 
 
 @app.get("/health")

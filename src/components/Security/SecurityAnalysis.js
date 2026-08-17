@@ -428,6 +428,18 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   {data.viewpoint?.toUpperCase() || "NEUTRAL"}
                 </span>
               </div>
+              {data.trend?.structural_state === "BREAK_OF_TREND" && (
+                <div style={{ textAlign: "center" }}
+                  title={data.trend?.direction === "Bullish"
+                    ? "Break of Trend Support — watching for confirmation"
+                    : "Break of Trend Resistance — watching for confirmation"}>
+                  <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 8 }}>TREND</div>
+                  <span style={{
+                    display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
+                    letterSpacing: "0.1em", color: "#fff", background: "#f0b429", cursor: "help",
+                  }}>⚠ BREAK</span>
+                </div>
+              )}
               <div style={{ textAlign: "center" }}
                 title={data.conviction == null
                   ? "No score — conviction below 45%"
@@ -565,21 +577,31 @@ export default function SecurityAnalysis({ defaultTicker }) {
                       { tf: "Trade", d: data.trade },
                       { tf: "Trend", d: data.trend },
                       { tf: "Tail",  d: data.lt },
-                    ].map(({ tf, d }) => (
+                    ].map(({ tf, d }) => {
+                      const isTrendBreak = tf === "Trend" && d?.structural_state === "BREAK_OF_TREND";
+                      const dirClr = isTrendBreak ? "#f0b429" : (d ? vpColor(d.direction) : GREY);
+                      const breakTip = isTrendBreak
+                        ? (d.direction === "Bullish" ? "Break of Trend Support — watching for confirmation" : "Break of Trend Resistance — watching for confirmation")
+                        : null;
+                      return (
                       <tr key={tf}>
                         <td style={{ padding: "8px 8px", color: LABEL }}>{tf}</td>
-                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY, fontWeight: 600 }}>{d?.direction || "—"}</td>
-                        <td style={{ padding: "8px 8px", color: GREY, fontSize: 10 }}>{d?.structural_state?.replace(/_/g, " ") || "—"}</td>
-                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>{d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}</td>
-                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>{d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}</td>
-                        <td style={{ padding: "8px 8px", color: d ? vpColor(d.direction) : GREY }}>
+                        <td style={{ padding: "8px 8px", color: dirClr, fontWeight: 600 }}>
+                          {d?.direction || "—"}
+                          {isTrendBreak && <span title={breakTip} style={{ cursor: "help" }}> ⚠</span>}
+                        </td>
+                        <td style={{ padding: "8px 8px", color: isTrendBreak ? "#f0b429" : GREY, fontSize: 10 }}>{d?.structural_state?.replace(/_/g, " ") || "—"}</td>
+                        <td style={{ padding: "8px 8px", color: dirClr }}>{d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}</td>
+                        <td style={{ padding: "8px 8px", color: dirClr }}>{d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}</td>
+                        <td style={{ padding: "8px 8px", color: dirClr }}>
                           {tf === "Trade"
                             ? (d?.d_extended && d?.pivot_b != null ? `$${d.pivot_b.toFixed(2)}`
                               : d?.pivot_c != null ? `$${d.pivot_c.toFixed(2)}` : "—")
                             : d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

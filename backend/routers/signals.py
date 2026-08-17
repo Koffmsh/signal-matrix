@@ -180,6 +180,44 @@ def run_pivots(db: Session) -> dict:
 
                 existing = pivot_map.get((ticker, tf))
 
+                # Trend confirmation buffer: when a VALID trend structure is
+                # replaced by NO_STRUCTURE or an opposite-direction structure,
+                # hold the prior state as BREAK_OF_TREND for 1 bar. This
+                # filters single-day noise from structure replacement.
+                # Engine-produced breaks (BREAK_OF_TRADE/BREAK_OF_TREND) are
+                # left untouched — the engine already handles those.
+                if tf == "trend" and existing is not None:
+                    prior_state = existing.structural_state
+                    new_state = tf_data.get("structural_state")
+
+                    prior_is_valid = prior_state in ("UPTREND_VALID", "DOWNTREND_VALID")
+                    engine_break = new_state in ("BREAK_OF_TRADE", "BREAK_OF_TREND")
+                    same_valid = (
+                        (prior_state == "UPTREND_VALID" and new_state == "UPTREND_VALID") or
+                        (prior_state == "DOWNTREND_VALID" and new_state == "DOWNTREND_VALID")
+                    )
+
+                    if prior_is_valid and not same_valid and not engine_break:
+                        # Day 1: buffer — keep prior pivots, set BREAK_OF_TREND
+                        logger.info(
+                            f"{ticker} [trend]: structure replacement buffered — "
+                            f"{prior_state} → {new_state}, holding as BREAK_OF_TREND"
+                        )
+                        tf_data = {
+                            "bar_window":       existing.bar_window,
+                            "pivot_a":          existing.pivot_a,
+                            "pivot_b":          existing.pivot_b,
+                            "pivot_c":          existing.pivot_c,
+                            "pivot_d":          existing.pivot_d,
+                            "pivot_a_date":     existing.pivot_a_date,
+                            "pivot_b_date":     existing.pivot_b_date,
+                            "pivot_c_date":     existing.pivot_c_date,
+                            "pivot_d_date":     existing.pivot_d_date,
+                            "structural_state": "BREAK_OF_TREND",
+                            "d_extended":       existing.d_extended,
+                            "direction":        "uptrend" if prior_state == "UPTREND_VALID" else "downtrend",
+                        }
+
                 fields = dict(
                     bar_window       = tf_data.get("bar_window"),
                     pivot_a          = tf_data.get("pivot_a"),

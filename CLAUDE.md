@@ -92,7 +92,7 @@ Critical issues already resolved — do not reintroduce these bugs:
 ### Pivot engine guardrails (`pivot_engine.py`)
 - **`structural_state` has exactly 6 values** — UPTREND_VALID, DOWNTREND_VALID, BREAK_OF_TRADE, BREAK_OF_TREND, BREAK_CONFIRMED, NO_STRUCTURE. FORMING was eliminated (a pullback from D is just `*_VALID`); EXTENDED → boolean `d_extended`; WARNING → boolean `warning`. BREAK_OF_TRADE/TREND hold direction (provisional, first-day forgiveness); only BREAK_CONFIRMED (2+ closes) → Neutral. Amber state cell for BREAK_OF_*, red for BREAK_CONFIRMED. See **ADR-002** + rules #53–#60.
 - **`d_extended`** = `D > B + 0.5·abs(B−A)` (50%-of-AB threshold; resets when a new C forms). B becomes the break level while True. Drives B-vs-C selection in warn flags, the popup `*`, and the B-based break machine; independent of `structural_state`. Distinct from the daily-overshoot `lrr_extended`/`hrr_extended` flags — three separate "extended" concepts, never conflate.
-- **ABC selection & dynamic update** — A anchors at the most extreme confirmed pivot in the lookback window (`_MAX_A_LOOKBACK` trade=90 / trend=200 / lt=None). B advances to the most recent pivot AFTER C is finalized (`update_b_dynamically` runs after `update_c_dynamically` — never reorder/remove). `find_abc_structure()` prefers the price-intact structure; `_price_on_correct_side` validates that D has established on the correct side of B (respects `d_extended`). Heal-at-break-level: price on the correct side of break level immediately restores VALID state (no "B recovery" requirement). Break only fires from VALID states. `_has_prior_break_confirmed` was removed (it blocked valid structures for weeks). See **ADR-003**.
+- **ABC selection & dynamic update** — A anchors at the most extreme confirmed pivot in the lookback window (`_MAX_A_LOOKBACK` trade=90 / trend=200 / lt=None). B advances to the most recent pivot AFTER C is finalized (`update_b_dynamically` runs after `update_c_dynamically` — never reorder/remove). `find_abc_structure()` prefers the price-intact structure; when **both** uptrend and downtrend structures exist but **neither** is price-intact, returns `None` (→ NO_STRUCTURE) — never picks a broken structure via recency tiebreak (rule #125). `_price_on_correct_side` validates that D has established on the correct side of B (respects `d_extended`). Heal-at-break-level: price on the correct side of break level immediately restores VALID state (no "B recovery" requirement). Break only fires from VALID states. `_has_prior_break_confirmed` was removed (it blocked valid structures for weeks). See **ADR-003**.
 - **Yahoo `auto_adjust=False`** — store actual traded prices, never dividend-adjusted (Yahoo fallback only; Schwab always actual). See **ADR-004**.
 - **EOD bar inclusion:** `closes.index.date <= date.today()` — today's EOD bar is a confirmed close; never revert to `<`.
 - **Bar windows:** `TIMEFRAMES["lt"]=50`, `TIMEFRAMES["trend"]=10` — do not increase without verifying that 3–4-month-old (lt) / <6-week (trend) reversals still register.
@@ -269,6 +269,7 @@ signal-matrix/
 │   │   ├── email_alert.py                 ← Gmail SMTP email wrapper (send_email / send_email_to) ✅
 │   │   ├── fred.py                        ← FRED API client (HY OAS + future macro series) ✅
 │   │   ├── alert_catalog.py               ← canonical alert list (keys/labels/tooltips) — Alert Creator ✅
+│   │   ├── eod_alerts.py                 ← EOD alert checks (TREND_DIRECTION_CHANGE) — runs after calculate_signals ✅
 │   │   ├── system_status.py               ← ADR-020 — computes connection/data/status axes + standing integrity scan ✅
 │   │   └── ai_summary.py                 ← On-demand AI summary generation (Anthropic Haiku); called from security router, NOT scheduler (ADR-030)
 │   └── routers/
@@ -333,6 +334,7 @@ APScheduler (schwab_data_job)
     → schwab_fetch_iv()                 writes → price_cache.rel_iv + vol_history (IV-eligible tickers)
     → accumulate_hv_only()              writes → vol_history hv30/hv90 (Yahoo-only: SPX, NDX, RUT, VIX, $DJI, USD, JPY, futures, VVIX)
     → calculate_signals()               writes → signal_hurst / signal_pivots / signal_output / signal_history
+    → check_trend_direction_changes()   reads signal_output vs signal_history → email/SMS alerts — non-fatal step 3b
     → compute_and_cache_spx_impact()    writes → spx_impact_cache (label='eod') — non-fatal step 4
     → scheduler_log                     writes → success/failure entry
 ```
@@ -379,8 +381,9 @@ Run twice same day     → signal_history idempotency check prevents duplicate s
 | `backend/services/scheduler.py` | Core job logic, catch-up, start/shutdown; all three jobs |
 | `backend/routers/scheduler.py` | `GET /api/scheduler/status` endpoint |
 | `backend/models/scheduler_log.py` | SQLAlchemy model for `scheduler_log` table |
-| `backend/services/intraday_monitor.py` | PROXIMITY + RETRACEMENT_50 alert engine |
-| `backend/services/sms.py` | Twilio SMS wrapper |
+| `backend/services/intraday_monitor.py` | PROXIMITY + RETRACEMENT_50 + BREAK_OF_TRADE intraday alert engine |
+| `backend/services/eod_alerts.py` | TREND_DIRECTION_CHANGE EOD alert (runs after calculate_signals) |
+| `backend/services/sms.py` | Telnyx SMS wrapper |
 | `backend/models/intraday_alert_log.py` | Alert dedup log model |
 
 ### scheduler_log Table
@@ -620,6 +623,7 @@ or split into separate per-viewpoint alerts; the builder supports either. Implie
     fred_fetch_and_store()   FRED economic series (DGS2→TWO, HY OAS) — writes price_cache (non-fatal)
     schwab_fetch_iv()        ~65 requests (options-eligible only) — writes vol_history
     calculate_signals()      full pipeline — writes signal_output + signal_history
+    check_trend_direction_changes()  EOD alerts — trend direction vs prior day (non-fatal)
     scheduler_log            success/failure entry
 ```
 Both REFRESH DATA and CALCULATE SIGNALS go green together by ~4:02 PM.
@@ -1457,6 +1461,9 @@ git checkout -- .   # roll back if needed
 122. **Break-of-trade alert arrows match break direction** — `🔻` for bullish uptrend breaking down through support; `🔺` for bearish downtrend breaking up through resistance. Message body uses "support C" / "resistance B" labels. See **ADR-033**.
 123. **`_update_quote_only` must sync `history_json[-1]` to EOD close (ADR-035)** — when `_history_fetch_mode` returns `skip` (today's bar already in history), `_update_quote_only` now syncs `prices[-1]`, `vols[-1]`, H/L, and spark to the EOD quote. Previously only `price_cache.close` was updated, leaving `history_json[-1]` at the stale intraday value from an earlier append. The conviction engine reads `history_json[-1]` (rule #121), so OBV and direction computed with the wrong price. The 2026-08-13 incident: WOOD showed Bearish volume (score 0) because `history_json[-1]=72.36` (intraday) vs `close=72.98` (EOD up day) — OBV subtracted 140K volume instead of adding it; affected 67 tickers. Never remove the history sync from `_update_quote_only`.
 124. **Security Analysis Risk Range — Trade Level column** — shows the break level: `pivot_c` normally, `pivot_b` when `d_extended=True`. Trend Level = `lrr` (MA100-based from signal_output). Tail Level = `lrr` (MA200-based). Trade previously showed "—" — now shows the active invalidation pivot, matching the popup's Trade B/C display.
+125. **Both-broken structures → NO_STRUCTURE (`pivot_engine.py`)** — when `find_abc_structure` finds both uptrend and downtrend structures but NEITHER is price-intact (price below uptrend C AND above downtrend C), return `None` (→ NO_STRUCTURE) instead of picking a broken structure via the recency tiebreak. Previously the recency tiebreak surfaced a structure that was already broken for weeks → immediate BREAK_CONFIRMED on first appearance (false direction flips). The both-intact tiebreak (most recent C wins) is unchanged. Fixes the SPY Trend 4/25/2023 and 5/4/2023 false flips.
+126. **Trend confirmation buffer for structure replacement (`signals.py` `run_pivots`)** — when the Trend timeframe engine returns a NEW structure (different direction from prior VALID state) that is NOT a break within the same structure, the caller holds the prior pivots for 1 bar and sets `BREAK_OF_TREND` (direction holds). On the next bar: if prior state is already `BREAK_OF_TREND`, the buffer does NOT re-fire (`prior_is_valid` check) — the engine result passes through. This filters single-day oscillation noise where price hovers right at the C boundary (e.g. SPY 10/11/2023: close 436.32 vs C=436.29). Applied in `run_pivots()` AFTER computing pivots, BEFORE writing to `signal_pivots`. Does NOT apply to Trade or LT timeframes. Does NOT interfere with actual breaks (BREAK_OF_TRADE/BREAK_OF_TREND from the engine pass through unmodified).
+127. **TREND_DIRECTION_CHANGE is an EOD alert (`eod_alerts.py`)** — fires after `calculate_signals()` in the scheduler, NOT in the intraday monitor. Compares current `signal_output` trend directions vs prior day's `signal_history`. Two modes: "provisional" (today differs from yesterday) and "confirmed" (yesterday also differed from day-before, i.e. the change persisted for 2 consecutive days). Uses per-user alert delivery via `_load_alert_recipients` (same pattern as intraday monitor). Non-fatal step 3b in the EOD scheduler chain.
 116. **History gap detection and auto-backfill (`schwab_market_data.py`)** — `_history_fetch_mode` now detects missing NYSE trading days and escalates `skip`→`short` or `append`→`short` to trigger a full history fetch that fills gaps via `_upsert` merge. Two checks: (1) **Internal gap scan** (calendar_gap==0 / skip path): scans last 30 stored dates against NYSE calendar; any missing sessions → `short`. (2) **Forward gap prevention** (calendar_gap 2–5 / append path): checks for missed NYSE sessions between last stored date and today; any found → `short` (previously `_append_bar` only added today's bar, permanently losing intermediate trading days). Non-NYSE tickers (`_NON_NYSE_CALENDAR`: USD, JPY, /CL, /ZN, /GC, /HG) are exempt from both checks. **`scan_history_gaps()` in `system_status.py`** is the standing health check — scans all tickers for missing NYSE days in the last ~20 sessions; wired into `compute_data()` as amber `history_gaps` state (precedence: after integrity red, before run checks). The 2026-08-10 incident: 4 trading days (7/23, 7/30, 7/31, 8/06) missing across ALL ~50 tickers due to `_append_bar` silently dropping intermediate bars — corrupted OBV accumulation, MA20 slope, and downstream conviction scores (SPY volume_score 0→10, conviction updated after fix). REFRESH DATA self-heals via the `short` escalation.
 
 ---

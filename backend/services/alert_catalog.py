@@ -36,6 +36,15 @@ ALERT_CATALOG = [
             "Once per day."
         ),
     },
+    {
+        "key": "TREND_DIRECTION_CHANGE",
+        "label": "Trend Direction Change",
+        "description": (
+            "Trend timeframe direction changes from prior EOD value. "
+            "Day 1: provisional (watching for confirmation). "
+            "Day 2: confirmed. Fires after EOD signal calculation."
+        ),
+    },
 ]
 
 ALERT_KEYS = {a["key"] for a in ALERT_CATALOG}
