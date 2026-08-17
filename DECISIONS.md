@@ -48,6 +48,40 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-038 — Walk both ABC structures before intact check (pivot engine)
+Date: 2026-08-17
+Status: Active
+Component: backend/services/pivot_engine.py
+
+Context:
+  QQQ Trade showed NO_STRUCTURE on 2026-08-03 despite having a valid, intact downtrend
+  the day before (7/31). Root cause: `find_abc_structure` checked `_price_on_correct_side`
+  on RAW (un-walked) ABC values. C-walking and B-walking happen AFTER in
+  `compute_pivots_for_timeframe`, and the walked values can tell a different story.
+  On QQQ 8/3: raw downtrend B=693.69 (break level since D extended), price 700.07 > 693.69
+  → raw check says broken. After walking, B=709.43, price 700.07 < 709.43 → walked check
+  says intact. The bug is bidirectional: raw-intact + walked-broken also possible in
+  stairstep cases where B walks to a lower value. Mostly manifests with D-extended
+  structures where B-walking significantly moves the break level AND both structures exist.
+
+Decision:
+  In `compute_pivots_for_timeframe`: find both raw structures, walk C and B on BOTH,
+  THEN check `_price_on_correct_side` on walked values, THEN pick the winner. The
+  BREAK_CONFIRMED handler reuses already-walked opposite structures (no double-walk).
+  A separate "can't go backwards" persistence guard was considered but not needed —
+  `update_c_dynamically` converges to the same walked C regardless of raw starting
+  point because it scans ALL pivots directionally.
+
+Why (regression guard):
+  The raw intact check uses un-walked pivots that `compute_d_and_state` never sees.
+  Walking can significantly move B (most recent pivot after walked C, not after raw C),
+  which changes the break level when D is extended. Checking intact on raw values and
+  then walking is checking the wrong structure. `find_abc_structure` still exists
+  unchanged for backward compat (debug endpoints) but is no longer called from
+  `compute_pivots_for_timeframe`.
+
+Linked rule: CLAUDE.md rule #128
+
 ## ADR-037 — Yahoo fallback for SCHWAB_UNSUPPORTED tickers in LIVE mode
 Date: 2026-08-14
 Status: Active

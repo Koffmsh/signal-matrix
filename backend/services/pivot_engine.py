@@ -486,28 +486,76 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
         pivot_highs_abc = pivot_highs
         pivot_lows_abc  = pivot_lows
 
-    abc = find_abc_structure(pivot_highs_abc, pivot_lows_abc, prices)
+    # Find both candidate structures from filtered pivots
+    raw_uptrend   = _find_uptrend_abc(pivot_highs_abc, pivot_lows_abc)
+    raw_downtrend = _find_downtrend_abc(pivot_highs_abc, pivot_lows_abc)
+
+    if not raw_uptrend and not raw_downtrend:
+        return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
+
+    # Walk C and B on BOTH structures BEFORE checking intact.
+    # The raw ABC values can disagree with walked values (especially when
+    # d_extended shifts the break level to B, and B-walking moves B).
+    walked_up = None
+    walked_dn = None
+    if raw_uptrend:
+        walked_up = update_c_dynamically(raw_uptrend, pivot_highs, pivot_lows)
+        walked_up = update_b_dynamically(walked_up, pivot_highs, pivot_lows)
+    if raw_downtrend:
+        walked_dn = update_c_dynamically(raw_downtrend, pivot_highs, pivot_lows)
+        walked_dn = update_b_dynamically(walked_dn, pivot_highs, pivot_lows)
+
+    # Select winner using WALKED values
+    if walked_up and not walked_dn:
+        abc = walked_up
+    elif walked_dn and not walked_up:
+        abc = walked_dn
+    else:
+        # Both exist — check which structures are intact on walked values
+        current_price = prices[-1]
+        up_intact   = _price_on_correct_side(walked_up,  current_price, prices)
+        down_intact = _price_on_correct_side(walked_dn, current_price, prices)
+
+        if up_intact and not down_intact:
+            abc = walked_up
+        elif down_intact and not up_intact:
+            abc = walked_dn
+        elif not up_intact and not down_intact:
+            abc = None
+        else:
+            # Both intact — most recent C tiebreak (same as find_abc_structure)
+            winner = walked_up if walked_up["c_idx"] >= walked_dn["c_idx"] else walked_dn
+            other  = walked_dn if winner is walked_up else walked_up
+            if not _d_has_established(winner, prices):
+                abc = other
+            else:
+                abc = winner
 
     if abc is None:
         return {"structural_state": "NO_STRUCTURE", "bar_window": bar_window}
 
-    # Walk C to the most recent confirmed structural level, then advance B to
-    # the most recent confirmed pivot between A and the updated C.
-    abc = update_c_dynamically(abc, pivot_highs, pivot_lows)
-    abc = update_b_dynamically(abc, pivot_highs, pivot_lows)
-
     d_price, d_idx, state, d_extended = compute_d_and_state(abc, prices, timeframe)
 
-    # On BREAK_CONFIRMED, try the opposite direction for a valid structure
+    # On BREAK_CONFIRMED, try the opposite direction for a valid structure.
+    # In the new flow this fires when only one structure exists and it's broken,
+    # or when the selected structure ends up BREAK_CONFIRMED after compute_d_and_state.
     if state == "BREAK_CONFIRMED":
         if abc["direction"] == "uptrend":
-            opp_abc = _find_downtrend_abc(pivot_highs_abc, pivot_lows_abc)
+            opp_abc = walked_dn  # already walked if it exists
+            if opp_abc is None:
+                opp_raw = _find_downtrend_abc(pivot_highs_abc, pivot_lows_abc)
+                if opp_raw:
+                    opp_abc = update_c_dynamically(opp_raw, pivot_highs, pivot_lows)
+                    opp_abc = update_b_dynamically(opp_abc, pivot_highs, pivot_lows)
         else:
-            opp_abc = _find_uptrend_abc(pivot_highs_abc, pivot_lows_abc)
+            opp_abc = walked_up  # already walked if it exists
+            if opp_abc is None:
+                opp_raw = _find_uptrend_abc(pivot_highs_abc, pivot_lows_abc)
+                if opp_raw:
+                    opp_abc = update_c_dynamically(opp_raw, pivot_highs, pivot_lows)
+                    opp_abc = update_b_dynamically(opp_abc, pivot_highs, pivot_lows)
 
         if opp_abc is not None:
-            opp_abc = update_c_dynamically(opp_abc, pivot_highs, pivot_lows)
-            opp_abc = update_b_dynamically(opp_abc, pivot_highs, pivot_lows)
             opp_d, opp_d_idx, opp_state, opp_d_ext = compute_d_and_state(
                 opp_abc, prices, timeframe
             )
