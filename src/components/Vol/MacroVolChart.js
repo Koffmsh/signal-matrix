@@ -4,6 +4,7 @@ import {
   Tooltip, ResponsiveContainer,
 } from "recharts";
 import { fetchMacroVolHistory } from "../../services/api";
+import { GREEN, RED, AMBER, GREY, LABEL, GRID } from "../../styles/tokens";
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const COLORS = {
@@ -13,13 +14,6 @@ const COLORS = {
   GVZ:  "#e07b3a",   // orange
   OVX:  "#4e8fde",   // blue (right axis)
 };
-
-const GRID    = "#1a2a3a";
-const TEXT    = "#8899aa";
-const LABEL   = "#c8d8e8";
-const GREEN   = "#00e5a0";
-const RED     = "#ff4d6d";
-const AMBER   = "#f0b429";
 
 // ── Vol regime gauge thresholds (matches VOL_INDEX_THRESHOLDS in conviction_engine.py) ──
 const GAUGE_CONFIG = [
@@ -98,7 +92,7 @@ function VolGauge({ config, value, animate }) {
       padding: "16px 14px 12px", display: "flex", flexDirection: "column", alignItems: "center",
       minWidth: 155, flex: 1, maxWidth: 195,
     }}>
-      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", color: TEXT, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.15em", color: GREY, marginBottom: 2 }}>{label}</div>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${label} volatility gauge at ${value}, regime: ${r.label}`}>
         <title>{label}: {value.toFixed(2)} — {r.label}</title>
         <defs>
@@ -212,10 +206,10 @@ function fmtPct(v) {
 }
 
 function deltaColor(v) {
-  if (v == null) return TEXT;
+  if (v == null) return GREY;
   if (v > 0) return RED;    // vol up = bad
   if (v < 0) return GREEN;  // vol down = good
-  return TEXT;
+  return GREY;
 }
 
 // ── X-axis tick ───────────────────────────────────────────────────────────────
@@ -223,7 +217,7 @@ function XTick({ x, y, payload }) {
   if (!payload?.value) return null;
   const [yr] = payload.value.split("-");
   return (
-    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={TEXT}>
+    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={GREY}>
       {yr}
     </text>
   );
@@ -241,7 +235,7 @@ function ChartTooltip({ active, payload, label }) {
     }}>
       <div style={{ color: LABEL, marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {entries.map(p => (
-        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? TEXT, marginBottom: 2 }}>
+        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? GREY, marginBottom: 2 }}>
           {LABELS[p.dataKey] ?? p.dataKey}: {p.value.toFixed(2)}
         </div>
       ))}
@@ -269,7 +263,7 @@ function StatsTable({ stats, tickers }) {
     fontSize: 9,
     fontWeight: 700,
     letterSpacing: "0.1em",
-    color: TEXT,
+    color: GREY,
     textAlign: "center",
     borderBottom: `1px solid ${GRID}`,
     whiteSpace: "nowrap",
@@ -279,6 +273,7 @@ function StatsTable({ stats, tickers }) {
     fontSize: 11,
     textAlign: "center",
     fontVariantNumeric: "tabular-nums",
+    fontFamily: "'Menlo', 'Consolas', monospace",
     color: LABEL,
     borderBottom: `1px solid ${GRID}`,
   };
@@ -343,10 +338,10 @@ function StatsTable({ stats, tickers }) {
                 {/* Change columns */}
                 {changeCols.map(c => (
                   <>
-                    <td key={c.dKey} style={{ ...tdStyle, color: s ? deltaColor(s[c.dKey]) : TEXT }}>
+                    <td key={c.dKey} style={{ ...tdStyle, color: s ? deltaColor(s[c.dKey]) : GREY }}>
                       {s ? fmtBps(s[c.dKey]) : "—"}
                     </td>
-                    <td key={c.pKey} style={{ ...tdStyle, color: s ? deltaColor(s[c.pKey]) : TEXT }}>
+                    <td key={c.pKey} style={{ ...tdStyle, color: s ? deltaColor(s[c.pKey]) : GREY }}>
                       {s ? fmtPct(s[c.pKey]) : "—"}
                     </td>
                   </>
@@ -365,7 +360,7 @@ function LegendDot({ color, label, rightAxis }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <div style={{ width: 16, height: 2, background: color, borderRadius: 1 }} />
-      <span style={{ fontSize: 10, color: TEXT, letterSpacing: "0.04em" }}>
+      <span style={{ fontSize: 10, color: GREY, letterSpacing: "0.04em" }}>
         {label}{rightAxis && <span style={{ color: AMBER, marginLeft: 3 }}>▶</span>}
       </span>
     </div>
@@ -457,7 +452,7 @@ export default function MacroVolChart() {
           }}>
             MACRO VOL
           </h1>
-          <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
             CROSS-ASSET IMPLIED VOLATILITY
           </span>
           {rawData?.updated && (() => {
@@ -467,7 +462,7 @@ export default function MacroVolChart() {
             const isMarketHours = day >= 1 && day <= 5 && (h > 9 || (h === 9 && m >= 30)) && h < 16;
             const tag = isMarketHours ? "LIVE" : "EOD";
             return (
-              <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
+              <span style={{ fontSize: 10, color: GREY, marginLeft: "auto" }}>
                 {tag} · {rawData.updated}
               </span>
             );
@@ -477,7 +472,7 @@ export default function MacroVolChart() {
 
       {/* ── States ── */}
       {loading && (
-        <div style={{ color: TEXT, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
+        <div style={{ color: GREY, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
           Loading...
         </div>
       )}
@@ -530,7 +525,7 @@ export default function MacroVolChart() {
           </div>
 
           {/* OVX right-axis note */}
-          <div style={{ fontSize: 9, color: TEXT, marginBottom: 8, paddingLeft: 4, letterSpacing: "0.06em" }}>
+          <div style={{ fontSize: 9, color: GREY, marginBottom: 8, paddingLeft: 4, letterSpacing: "0.06em" }}>
             <span style={{ color: AMBER }}>▶</span> OVX plotted on right axis (crude oil vol — higher scale)
           </div>
 
@@ -559,7 +554,7 @@ export default function MacroVolChart() {
                   yAxisId="left"
                   orientation="left"
                   tickFormatter={v => `${v}`}
-                  tick={{ fontSize: 10, fill: TEXT }}
+                  tick={{ fontSize: 10, fill: GREY }}
                   tickLine={false}
                   axisLine={false}
                   domain={[0, "auto"]}

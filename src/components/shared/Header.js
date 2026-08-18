@@ -119,7 +119,7 @@ export default function Header() {
             boxShadow:    "0 12px 32px rgba(0,0,0,0.55)",
             padding:      "6px 0",
             zIndex:       300,
-            fontFamily:   "'IBM Plex Mono', 'Courier New', monospace",
+            fontFamily:   "-apple-system, 'Segoe UI', sans-serif",
           }}>
             {/* "Signed in as" header */}
             <div style={{ padding: "12px 16px 10px" }}>

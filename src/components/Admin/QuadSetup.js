@@ -18,7 +18,7 @@ const COUNTRY_CODE = {
   "India": "IN", "Brazil": "BR", "Canada": "CA", "Australia": "AU",
 };
 
-const mono = { fontFamily: "'IBM Plex Mono', 'Courier New', monospace" };
+const mono = { fontFamily: "'Menlo', 'Consolas', monospace" };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

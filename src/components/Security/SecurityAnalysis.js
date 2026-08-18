@@ -6,15 +6,8 @@ import {
 } from "recharts";
 import { apiFetch } from "../../services/api";
 
-const GREEN  = "#00e5a0";
-const RED    = "#ff4d6d";
-const AMBER  = "#f0b429";
-const GREY   = "#8899aa";
-const GRID   = "#1a2a3a";
-const LABEL  = "#c8d8e8";
-const BG     = "#0a1628";
-const CARD   = "#0d1f35";
-const BORDER = "#1a2535";
+import { GREEN, RED, AMBER, GREY, LABEL, BG, CARD, BORDER, GRID, FONT_SANS, FONT_MONO } from "../../styles/tokens";
+const MONO = FONT_MONO;
 
 function vpColor(vp) {
   if (vp === "Bullish") return GREEN;
@@ -26,8 +19,8 @@ function pillarLabel(name, raw, data) {
   if (raw == null) return "—";
   switch (name) {
     case "STRUCTURE": {
-      if (raw >= 50) return data?.viewpoint || "Neutral";
-      if (raw >= 25) {
+      if (raw >= 45) return data?.viewpoint || "Neutral";
+      if (raw >= 15) {
         const dir = data?.trade?.direction !== "Neutral" ? data?.trade?.direction : data?.trend?.direction;
         return dir && dir !== "Neutral" ? `Leaning ${dir}` : "Neutral";
       }
@@ -48,7 +41,7 @@ function pillarLabel(name, raw, data) {
 function pillarColor(name, raw, data) {
   if (raw == null) return GREY;
   switch (name) {
-    case "STRUCTURE":      return raw >= 50 ? GREEN : raw >= 25 ? AMBER : GREY;
+    case "STRUCTURE":      return raw >= 45 ? GREEN : raw >= 15 ? AMBER : GREY;
     case "VOLUME":     return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "VOLATILITY": return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "QUAD": {
@@ -134,7 +127,7 @@ function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   const close = payload.find(p => p.dataKey === "close");
   return (
-    <div style={{ background: "#0d1f33", border: `1px solid ${GRID}`, borderRadius: 4, padding: "8px 12px", fontSize: 11, fontFamily: "monospace" }}>
+    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 4, padding: "8px 12px", fontSize: 11, fontFamily: MONO }}>
       <div style={{ color: LABEL, marginBottom: 4 }}>{label}</div>
       {close && <div style={{ color: "#e8f4ff" }}>Close: ${Number(close.value).toFixed(2)}</div>}
     </div>
@@ -303,7 +296,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
 
   if (loading) {
     return (
-      <div style={{ minHeight: "100vh", background: BG, color: GREY, fontFamily: "monospace", padding: "32px 40px" }}>
+      <div style={{ minHeight: "100vh", background: BG, color: GREY, padding: "32px 40px" }}>
         <style>{`
           @keyframes shimmer { 0% { opacity: 0.3; } 50% { opacity: 0.6; } 100% { opacity: 0.3; } }
           .skel { background: #1a2a3a; borderRadius: 3; animation: shimmer 1.5s ease-in-out infinite; }
@@ -328,7 +321,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
 
   if (error || !data) {
     return (
-      <div style={{ minHeight: "100vh", background: BG, color: GREY, fontFamily: "monospace", padding: "32px 40px" }}>
+      <div style={{ minHeight: "100vh", background: BG, color: GREY, padding: "32px 40px" }}>
         <Link to="/" style={{ color: GREY, textDecoration: "none", fontSize: 11, letterSpacing: "0.1em" }}>← DASHBOARD</Link>
         <div style={{ marginTop: 24, fontSize: 14, color: RED }}>{error || "No data available"}</div>
       </div>
@@ -341,7 +334,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
   const hrr = data.trade?.hrr;
 
   return (
-    <div style={{ minHeight: "100vh", background: BG, color: "#e8f4ff", fontFamily: "monospace", padding: "24px 32px" }}>
+    <div style={{ minHeight: "100vh", background: BG, color: "#e8f4ff", fontFamily: "-apple-system, 'Segoe UI', sans-serif", padding: "24px 32px" }}>
       <style>{`
         .sa-tab-scroll::-webkit-scrollbar { width: 4px; }
         .sa-tab-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -362,7 +355,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
               onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
               placeholder="Search ticker / name..."
               style={{
-                background: "#0d1a2a", border: "1px solid #1a2e45", borderRadius: 3,
+                background: CARD, border: `1px solid ${BORDER}`, borderRadius: 3,
                 color: "#c8d8e8", fontSize: 11, padding: "6px 12px", outline: "none",
                 width: 180, fontFamily: "inherit",
               }}
@@ -371,7 +364,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
           {showDropdown && filteredTickers.length > 0 && (
             <div style={{
               position: "absolute", top: "100%", left: 0, width: 280, marginTop: 2,
-              background: "#0d1a2a", border: "1px solid #1a2e45", borderRadius: 3,
+              background: CARD, border: `1px solid ${BORDER}`, borderRadius: 3,
               zIndex: 200, maxHeight: 300, overflowY: "auto",
             }}>
               {filteredTickers.map(t => (
@@ -445,7 +438,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   ? "No score — conviction below 45%"
                   : undefined}>
                 <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 8 }}>CONVICTION</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: data.conviction != null ? vpColor(data.viewpoint) : GREY }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: data.conviction != null ? vpColor(data.viewpoint) : GREY, fontFamily: MONO }}>
                   {data.conviction != null ? `${data.conviction}%` : "—"}
                 </div>
               </div>
@@ -456,17 +449,17 @@ export default function SecurityAnalysis({ defaultTicker }) {
           <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: 16, flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>LAST PRICE</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>{data.close?.toFixed(2)}</div>
+              <div style={{ fontSize: 18, fontWeight: 600, fontFamily: MONO }}>{data.close?.toFixed(2)}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: changeColor }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: changeColor, fontFamily: MONO }}>
                 {data.close != null && data.prev_close != null ? `${(data.close - data.prev_close) >= 0 ? "+" : ""}${(data.close - data.prev_close).toFixed(2)}` : "—"}
               </div>
             </div>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.12em", color: GREY, marginBottom: 2 }}>CHANGE %</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: changeColor }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: changeColor, fontFamily: MONO }}>
                 {changePct != null ? `${changePct > 0 ? "+" : ""}${changePct.toFixed(2)}%` : "—"}
               </div>
             </div>
@@ -476,19 +469,19 @@ export default function SecurityAnalysis({ defaultTicker }) {
           <div style={{ display: "flex", gap: 24, marginBottom: 24, flexWrap: "wrap", fontSize: 12 }}>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>IV30</div>
-              <div style={{ fontWeight: 700, color: LABEL }}>{data.iv30 != null ? `${(data.iv30 * 100).toFixed(2)}%` : "—"}</div>
+              <div style={{ fontWeight: 700, color: LABEL, fontFamily: MONO }}>{data.iv30 != null ? `${(data.iv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>HV30</div>
-              <div style={{ fontWeight: 700, color: LABEL }}>{data.hv30 != null ? `${(data.hv30 * 100).toFixed(2)}%` : "—"}</div>
+              <div style={{ fontWeight: 700, color: LABEL, fontFamily: MONO }}>{data.hv30 != null ? `${(data.hv30 * 100).toFixed(2)}%` : "—"}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>IV RANK</div>
-              <div style={{ fontWeight: 700, color: LABEL }}>{data.iv_rank != null ? `${data.iv_rank.toFixed(2)}%` : "—"}</div>
+              <div style={{ fontWeight: 700, color: LABEL, fontFamily: MONO }}>{data.iv_rank != null ? `${data.iv_rank.toFixed(2)}%` : "—"}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>VRP</div>
-              <div style={{ fontWeight: 700, color: data.vrp != null ? (data.vrp < 0 ? GREEN : data.vrp > 0 ? RED : LABEL) : GREY }}>
+              <div style={{ fontWeight: 700, color: data.vrp != null ? (data.vrp < 0 ? GREEN : data.vrp > 0 ? RED : LABEL) : GREY, fontFamily: MONO }}>
                 {data.vrp != null ? `${(data.vrp * 100).toFixed(2)}%` : "—"}
               </div>
             </div>
@@ -529,7 +522,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                 style={{
                   padding: "8px 16px", fontSize: 11, letterSpacing: "0.12em", fontWeight: 600,
                   color: block1Tab === tab ? GREEN : GREY,
-                  cursor: "pointer", fontFamily: "monospace",
+                  cursor: "pointer",
                   background: "none", border: "none",
                   borderBottom: `2px solid ${block1Tab === tab ? GREEN : "transparent"}`,
                 }}
@@ -538,7 +531,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
           </div>
 
           {/* Block 1 tab content */}
-          <div className="sa-tab-scroll" style={{ flex: 1, maxHeight: 115, overflowY: "auto" }}>
+          <div className="sa-tab-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
             {block1Tab === "AI ANALYSIS" && (
               <div>
                 {aiLoading ? (
@@ -632,7 +625,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
         </div>
 
         {/* ── Block 2: Signal Score — 2×2 pillar grid ── */}
-        <div style={{ flex: 1, minWidth: 340, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "20px 24px" }}>
+        <div style={{ flex: "0 1 auto", minWidth: 340, maxWidth: 480, padding: "20px 24px" }}>
           <div style={{ fontSize: 12, letterSpacing: "0.2em", color: GREEN, marginBottom: 14, fontWeight: 700 }}>SIGNAL SCORE</div>
 
           {data.alert && (
@@ -650,16 +643,9 @@ export default function SecurityAnalysis({ defaultTicker }) {
               <div key={p.name} style={{
                 background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6,
                 borderTop: `3px solid ${p.color}`, padding: "18px 14px", textAlign: "center",
-                position: "relative", overflow: "hidden",
               }}>
-                {/* Subtle glow at top */}
-                <div style={{
-                  position: "absolute", top: 0, left: 0, right: 0, height: 40,
-                  background: `linear-gradient(to bottom, ${p.color}11, transparent)`,
-                  pointerEvents: "none",
-                }} />
-                <div style={{ position: "relative" }}>
-                  <div style={{ fontSize: 36, fontWeight: 700, color: p.color, marginBottom: 6, lineHeight: 1 }}>
+                <div>
+                  <div style={{ fontSize: 36, fontWeight: 700, color: p.color, marginBottom: 6, lineHeight: 1, fontFamily: MONO }}>
                     {p.score != null ? p.score : "—"}
                   </div>
                   <div style={{ fontSize: 14, color: p.color, letterSpacing: "0.08em", fontWeight: 600, marginBottom: 10 }}>{p.label}</div>
@@ -695,7 +681,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   border: `1px solid ${dateRange === r.val ? GREEN : BORDER}`,
                   borderRadius: 4, color: dateRange === r.val ? GREEN : GREY,
                   fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
-                  padding: "4px 8px", cursor: "pointer", fontFamily: "monospace",
+                  padding: "4px 8px", cursor: "pointer",
                   minWidth: 32, textAlign: "center",
                 }}
               >{r.label}</button>
@@ -709,7 +695,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
             <XAxis dataKey="date" tick={<XTick />} axisLine={{ stroke: GRID }} tickLine={false} interval="preserveStartEnd" minTickGap={60} />
             <YAxis
               domain={["auto", "auto"]}
-              tick={{ fill: GREY, fontSize: 10, fontFamily: "monospace" }}
+              tick={{ fill: GREY, fontSize: 10, fontFamily: MONO }}
               axisLine={false} tickLine={false}
               tickFormatter={v => `$${v}`}
               width={65}
@@ -783,7 +769,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
               style={{
                 padding: "10px 20px", fontSize: 11, letterSpacing: "0.12em", fontWeight: 600,
                 color: contentTab === tab ? GREEN : GREY,
-                cursor: "pointer", fontFamily: "monospace",
+                cursor: "pointer",
                 background: "none", border: "none",
                 borderBottom: `2px solid ${contentTab === tab ? GREEN : "transparent"}`,
               }}

@@ -4,14 +4,10 @@ import {
   Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import { fetchSpxVolHistory } from "../../services/api";
+import { GREEN, RED, GREY, LABEL, GRID } from "../../styles/tokens";
 
-const GREEN  = "#00e5a0";
-const RED    = "#ff4d6d";
 const BLUE   = "#4e8fde";
 const ORANGE = "#e07b3a";
-const GRID   = "#1a2a3a";
-const TEXT   = "#8899aa";
-const LABEL  = "#c8d8e8";
 
 // ── Custom bar: green if positive, red if negative ────────────────────────────
 function PctBar(props) {
@@ -54,7 +50,7 @@ function XTick({ x, y, payload }) {
   if (!payload?.value) return null;
   const [yr] = payload.value.split("-");
   return (
-    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={TEXT}>
+    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={GREY}>
       {yr}
     </text>
   );
@@ -126,11 +122,11 @@ export default function SpxVolChart() {
           }}>
             SPX VOL
           </h1>
-          <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
             REALIZED VOLATILITY · 1 MONTH vs 3 MONTH
           </span>
           {updated && (
-            <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
+            <span style={{ fontSize: 10, color: GREY, marginLeft: "auto" }}>
               EOD · {updated}
             </span>
           )}
@@ -139,7 +135,7 @@ export default function SpxVolChart() {
 
       {/* ── States ── */}
       {loading && (
-        <div style={{ color: TEXT, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
+        <div style={{ color: GREY, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
           Loading...
         </div>
       )}
@@ -208,7 +204,7 @@ export default function SpxVolChart() {
                   yAxisId="hv"
                   orientation="left"
                   tickFormatter={v => `${v}%`}
-                  tick={{ fontSize: 10, fill: TEXT }}
+                  tick={{ fontSize: 10, fill: GREY }}
                   tickLine={false}
                   axisLine={false}
                   domain={[0, "auto"]}
@@ -220,7 +216,7 @@ export default function SpxVolChart() {
                   yAxisId="pct"
                   orientation="right"
                   tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`}
-                  tick={{ fontSize: 10, fill: TEXT }}
+                  tick={{ fontSize: 10, fill: GREY }}
                   tickLine={false}
                   axisLine={false}
                   domain={([dataMin, dataMax]) => {
@@ -283,7 +279,7 @@ function LegendDot({ color, label, square }) {
         ? <div style={{ width: 10, height: 10, background: color, opacity: 0.75, borderRadius: 1 }} />
         : <div style={{ width: 16, height: 2, background: color, borderRadius: 1 }} />
       }
-      <span style={{ fontSize: 10, color: TEXT, letterSpacing: "0.04em" }}>{label}</span>
+      <span style={{ fontSize: 10, color: GREY, letterSpacing: "0.04em" }}>{label}</span>
     </div>
   );
 }

@@ -961,7 +961,10 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
 def compute_output(ticker: str, db, prior_ranges: dict = None,
                    asset_class: str = "", sector: str = "",
                    quad_current: int | None = None,
-                   quad_prob: float = 0.0) -> dict:
+                   quad_prob: float = 0.0,
+                   quad_next: int | None = None,
+                   quad_next_prob: float = 0.0,
+                   quad_blend_weight: float = 0.0) -> dict:
     """
     Compute full signal output for all three timeframes for one ticker.
 
@@ -1221,11 +1224,11 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     # Component 1 — Structural (base 0/25/50, adjusted ±5 for NATH/warn → range -5 to 55)
     # Trade=Bullish + Trend=Bearish (opposing) = 0 — conflicted structure = no conviction.
     if trade_dir == trend_dir and trade_dir != "Neutral":
-        structural_base = 50     # both Bullish or both Bearish — full alignment
+        structural_base = 45     # both aligned — Trade(15) + Trend(30)
     elif trade_dir != "Neutral" and trend_dir == "Neutral":
-        structural_base = 25     # trade only
+        structural_base = 15     # trade only
     elif trade_dir == "Neutral" and trend_dir != "Neutral":
-        structural_base = 25     # trend only (unusual but valid)
+        structural_base = 30     # trend only
     else:
         structural_base = 0      # both Neutral, OR opposing directions (conflicted)
 
@@ -1249,37 +1252,43 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             _trade_hrr_adj > ath):
         structural_score += 5
 
-    # Component 2 — Quad (+20 / 0 / -15, prob-weighted)
+    # Component 2 — Quad (blended current/next month, linear weight)
     # Gate: fully Neutral (structural_base == 0, both timeframes Neutral or opposing)
-    # → quad_score = 0. Partial structure (structural_base >= 25, one timeframe confirmed)
-    # → quad allowed to contribute. Uses _struct_bias (directional lean from Trade or Trend)
-    # instead of viewpoint so that a Leaning Bearish ticker in a Worst quad scores Aligned.
+    # → quad_score = 0. Uses _struct_bias (directional lean from Trade or Trend).
+    def _score_single_quad(q, qp):
+        """Score a single quad month. Returns (score, label)."""
+        if q is None:
+            return 0, "Neutral"
+        qa = get_quad_alignment(asset_class, sector, q)
+        if (structural_base == 0 and _struct_bias == "Neutral") or qa == 0.0:
+            if qa > 0:
+                return 0, "Best"
+            elif qa < 0:
+                return 0, "Worst"
+            return 0, "Neutral"
+        _bb  = (_struct_bias == "Bullish" and qa > 0)
+        _bw = (_struct_bias == "Bearish" and qa < 0)
+        if _bb or _bw:
+            return (20 if qp >= 0.45 else 15), "Aligned"
+        return (-15 if qp >= 0.45 else -11), "Misaligned"
+
+    cur_score, cur_label = _score_single_quad(quad_current, quad_prob)
+    nxt_score, nxt_label = _score_single_quad(quad_next, quad_next_prob)
+
+    w = quad_blend_weight
+    if w <= 0.0 or quad_next is None:
+        quad_score = cur_score
+        quad_align_label = cur_label
+    elif w >= 1.0:
+        quad_score = nxt_score
+        quad_align_label = nxt_label
+    else:
+        quad_score = round((1.0 - w) * cur_score + w * nxt_score)
+        quad_align_label = nxt_label if w >= 0.5 else cur_label
+
     if quad_current is not None:
-        _quad_alignment = get_quad_alignment(asset_class, sector, quad_current)
-        if (structural_base == 0 and _struct_bias == "Neutral") or _quad_alignment == 0.0:
-            quad_score = 0
-            # No structure to align with — show raw macro stance (Best/Worst/Neutral)
-            if _quad_alignment > 0:
-                quad_align_label = "Best"
-            elif _quad_alignment < 0:
-                quad_align_label = "Worst"
-            else:
-                quad_align_label = "Neutral"
-        else:
-            _bullish_best  = (_struct_bias == "Bullish" and _quad_alignment > 0)
-            _bearish_worst = (_struct_bias == "Bearish" and _quad_alignment < 0)
-            _aligned = _bullish_best or _bearish_worst
-            if _aligned:
-                quad_score = 20 if quad_prob >= 0.45 else 15
-                quad_align_label = "Aligned"
-            else:
-                quad_score = -15 if quad_prob >= 0.45 else -11
-                quad_align_label = "Misaligned"
-        # Informational quad_mult — stored for popup/debug, not used in v2.0 formula
         quad_mult_val, _ = get_quad_multiplier(viewpoint, asset_class, sector, quad_current, quad_prob)
     else:
-        quad_score       = 0
-        quad_align_label = "Neutral"
         quad_mult_val    = 1.00
 
     # Component 3 — Volume (max 15)
@@ -1304,7 +1313,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     # Assembly: sum → floor(0) → cap(105)
     conviction_sum = structural_score + quad_score + volume_score + vix_score
     conviction_sum = max(0.0, conviction_sum)   # floor — quad misalignment can push negative
-    conviction_final = min(conviction_sum, 105.0)
+    conviction_final = min(conviction_sum, 100.0)
 
     # Display threshold: blank below 45
     conviction = round(conviction_final, 2) if conviction_final >= 45.0 else None

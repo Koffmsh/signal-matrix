@@ -7,7 +7,7 @@ import { useAuth } from "../../context/AuthContext";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
-  page:    { background: "#070d14", minHeight: "100vh", fontFamily: "'IBM Plex Mono', 'Courier New', monospace", color: "#c8d8e8" },
+  page:    { background: "#070d14", minHeight: "100vh", fontFamily: "-apple-system, 'Segoe UI', sans-serif", color: "#c8d8e8" },
   header:  { background: "linear-gradient(90deg, #0a1628 0%, #0d1f3c 100%)", borderBottom: "1px solid #1a3050", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" },
   badge:   { background: "#0d2a45", border: "1px solid #0077ff", borderRadius: "2px", padding: "2px 10px", fontSize: "10px", color: "#0099ff", letterSpacing: "0.15em", marginLeft: "12px" },
   backBtn: { background: "none", border: "1px solid #1a2e45", borderRadius: "2px", color: "#8899aa", padding: "5px 14px", fontSize: "10px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" },

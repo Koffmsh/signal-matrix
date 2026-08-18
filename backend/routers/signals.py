@@ -259,22 +259,37 @@ def run_output(db: Session) -> dict:
     asset_class_map_out = {t.ticker: (t.asset_class or "") for t in ticker_rows_out}
     sector_map_out      = {t.ticker: (t.sector      or "") for t in ticker_rows_out}
 
-    # Fetch US monthly quad — shift to next month's quad on the 24th
+    # Fetch US monthly quad — linear blend from current to next month (day 15→EOM)
     from zoneinfo import ZoneInfo
+    import calendar
     _ET = ZoneInfo("America/New_York")
     now_et        = datetime.now(_ET)
     current_month = now_et.strftime("%Y-%m")
-    if now_et.day >= 24:
-        conviction_month = _next_calendar_month(current_month)
+    next_month    = _next_calendar_month(current_month)
+
+    _BLEND_START_DAY = 15
+    days_in_month = calendar.monthrange(now_et.year, now_et.month)[1]
+    if now_et.day < _BLEND_START_DAY:
+        quad_blend_weight = 0.0
     else:
-        conviction_month = current_month
-    quad_row = db.query(QuadSettings).filter(
+        quad_blend_weight = (now_et.day - _BLEND_START_DAY) / (days_in_month - _BLEND_START_DAY)
+        quad_blend_weight = min(quad_blend_weight, 1.0)
+
+    quad_row_cur = db.query(QuadSettings).filter(
         QuadSettings.country        == "US",
-        QuadSettings.forecast_month == conviction_month,
+        QuadSettings.forecast_month == current_month,
         QuadSettings.quad_type      == "monthly",
     ).first()
-    quad_current = quad_row.quad        if quad_row else None
-    quad_prob    = quad_row.probability if quad_row else 0.0
+    quad_current = quad_row_cur.quad        if quad_row_cur else None
+    quad_prob    = quad_row_cur.probability if quad_row_cur else 0.0
+
+    quad_row_nxt = db.query(QuadSettings).filter(
+        QuadSettings.country        == "US",
+        QuadSettings.forecast_month == next_month,
+        QuadSettings.quad_type      == "monthly",
+    ).first()
+    quad_next      = quad_row_nxt.quad        if quad_row_nxt else None
+    quad_next_prob = quad_row_nxt.probability if quad_row_nxt else 0.0
 
     # Fetch country quarterly quads for current quarter (International Equities routing)
     current_q_num    = (now_et.month - 1) // 3 + 1
@@ -334,9 +349,15 @@ def run_output(db: Session) -> dict:
                 country_code  = _SECTOR_TO_CODE.get(ticker_sector)
                 ticker_quad   = quarterly_quads.get(country_code) if country_code else None
                 ticker_prob   = 1.0 if ticker_quad is not None else 0.0
+                ticker_quad_next = None
+                ticker_quad_next_prob = 0.0
+                ticker_blend = 0.0
             else:
                 ticker_quad   = quad_current
                 ticker_prob   = quad_prob
+                ticker_quad_next = quad_next
+                ticker_quad_next_prob = quad_next_prob
+                ticker_blend = quad_blend_weight
 
             data = compute_output(
                 ticker, db,
@@ -345,6 +366,9 @@ def run_output(db: Session) -> dict:
                 sector        = ticker_sector,
                 quad_current  = ticker_quad,
                 quad_prob     = ticker_prob,
+                quad_next     = ticker_quad_next,
+                quad_next_prob = ticker_quad_next_prob,
+                quad_blend_weight = ticker_blend,
             )
             now  = datetime.utcnow()
 

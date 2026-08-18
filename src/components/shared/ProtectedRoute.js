@@ -6,7 +6,7 @@ const ProtectedRoute = ({ children, requireAdmin = false }) => {
 
   if (authLoading) {
     return (
-      <div style={{ padding: "40px", color: "#8899aa", textAlign: "center", fontFamily: "'IBM Plex Mono', 'Courier New', monospace" }}>
+      <div style={{ padding: "40px", color: "#8899aa", textAlign: "center", fontFamily: "-apple-system, 'Segoe UI', sans-serif" }}>
         Loading...
       </div>
     );

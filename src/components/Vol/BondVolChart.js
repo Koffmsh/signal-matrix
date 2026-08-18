@@ -4,17 +4,12 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { fetchBondVolHistory } from "../../services/api";
+import { GREEN, RED, GREY, LABEL, GRID } from "../../styles/tokens";
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const COLORS = {
   MOVE: "#c8d8e8",
 };
-
-const GRID    = "#1a2a3a";
-const TEXT    = "#8899aa";
-const LABEL   = "#c8d8e8";
-const GREEN   = "#00e5a0";
-const RED     = "#ff4d6d";
 
 // Threshold lines matching MOVE vol scorer (rule #61)
 const MOVE_INVESTABLE = 85;
@@ -51,10 +46,10 @@ function fmtPct(v) {
 }
 
 function deltaColor(v) {
-  if (v == null) return TEXT;
+  if (v == null) return GREY;
   if (v > 0) return RED;
   if (v < 0) return GREEN;
-  return TEXT;
+  return GREY;
 }
 
 // ── X-axis tick ───────────────────────────────────────────────────────────────
@@ -62,7 +57,7 @@ function XTick({ x, y, payload }) {
   if (!payload?.value) return null;
   const [yr] = payload.value.split("-");
   return (
-    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={TEXT}>
+    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={GREY}>
       {yr}
     </text>
   );
@@ -79,7 +74,7 @@ function ChartTooltip({ active, payload, label }) {
     }}>
       <div style={{ color: LABEL, marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {entries.map(p => (
-        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? TEXT, marginBottom: 2 }}>
+        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? GREY, marginBottom: 2 }}>
           {LABELS[p.dataKey] ?? p.dataKey}: {p.value.toFixed(2)}
         </div>
       ))}
@@ -107,7 +102,7 @@ function StatsTable({ stats, tickers }) {
     fontSize: 9,
     fontWeight: 700,
     letterSpacing: "0.1em",
-    color: TEXT,
+    color: GREY,
     textAlign: "center",
     borderBottom: `1px solid ${GRID}`,
     whiteSpace: "nowrap",
@@ -117,6 +112,7 @@ function StatsTable({ stats, tickers }) {
     fontSize: 11,
     textAlign: "center",
     fontVariantNumeric: "tabular-nums",
+    fontFamily: "'Menlo', 'Consolas', monospace",
     color: LABEL,
     borderBottom: `1px solid ${GRID}`,
   };
@@ -178,10 +174,10 @@ function StatsTable({ stats, tickers }) {
                 ))}
                 {changeCols.map(c => (
                   <React.Fragment key={c.dKey}>
-                    <td style={{ ...tdStyle, color: s ? deltaColor(s[c.dKey]) : TEXT }}>
+                    <td style={{ ...tdStyle, color: s ? deltaColor(s[c.dKey]) : GREY }}>
                       {s ? fmtBps(s[c.dKey]) : "—"}
                     </td>
-                    <td style={{ ...tdStyle, color: s ? deltaColor(s[c.pKey]) : TEXT }}>
+                    <td style={{ ...tdStyle, color: s ? deltaColor(s[c.pKey]) : GREY }}>
                       {s ? fmtPct(s[c.pKey]) : "—"}
                     </td>
                   </React.Fragment>
@@ -200,7 +196,7 @@ function LegendDot({ color, label }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <div style={{ width: 16, height: 2, background: color, borderRadius: 1 }} />
-      <span style={{ fontSize: 10, color: TEXT, letterSpacing: "0.04em" }}>
+      <span style={{ fontSize: 10, color: GREY, letterSpacing: "0.04em" }}>
         {label}
       </span>
     </div>
@@ -277,11 +273,11 @@ export default function BondVolChart() {
           }}>
             BOND VOL
           </h1>
-          <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
             ICE BofA MOVE INDEX &mdash; TREASURY IMPLIED VOLATILITY
           </span>
           {rawData?.updated && (
-            <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
+            <span style={{ fontSize: 10, color: GREY, marginLeft: "auto" }}>
               EOD &middot; {rawData.updated}
             </span>
           )}
@@ -290,7 +286,7 @@ export default function BondVolChart() {
 
       {/* ── States ── */}
       {loading && (
-        <div style={{ color: TEXT, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
+        <div style={{ color: GREY, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
           Loading...
         </div>
       )}
@@ -308,7 +304,7 @@ export default function BondVolChart() {
             {chartTickers.map(tk => (
               <LegendDot key={tk} color={COLORS[tk]} label={LABELS[tk]} />
             ))}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 9, color: TEXT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 9, color: GREY }}>
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <span style={{ width: 16, height: 0, borderTop: "1px dashed #00e5a0" }} />
                 Investable ({MOVE_INVESTABLE})
@@ -366,7 +362,7 @@ export default function BondVolChart() {
                   yAxisId="left"
                   orientation="left"
                   tickFormatter={v => `${v}`}
-                  tick={{ fontSize: 10, fill: TEXT }}
+                  tick={{ fontSize: 10, fill: GREY }}
                   tickLine={false}
                   axisLine={false}
                   domain={[0, "auto"]}
@@ -416,7 +412,7 @@ export default function BondVolChart() {
           <div style={{
             marginTop: 16, padding: "12px 16px",
             border: `1px solid ${GRID}`, borderRadius: 6,
-            background: "#07111f", fontSize: 10, color: TEXT,
+            background: "#07111f", fontSize: 10, color: GREY,
             lineHeight: 1.6, letterSpacing: "0.03em",
           }}>
             <span style={{ color: LABEL, fontWeight: 600 }}>MOVE</span> (Merrill Lynch Option Volatility Estimate)

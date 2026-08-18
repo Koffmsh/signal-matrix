@@ -4,6 +4,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { fetchYieldCurveHistory } from "../../services/api";
+import { GREEN, RED, GREY, LABEL, GRID } from "../../styles/tokens";
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const COLORS = {
@@ -11,12 +12,6 @@ const COLORS = {
   TNX:    "#8899aa",   // grey — 10Y yield (matches NazVol)
   SPREAD: "#4e8fde",   // blue — 2-10 spread
 };
-
-const GRID  = "#1a2a3a";
-const TEXT  = "#8899aa";
-const LABEL = "#c8d8e8";
-const GREEN = "#00e5a0";
-const RED   = "#ff4d6d";
 
 const LABELS = {
   TWO:    "2Y Yield",
@@ -51,17 +46,17 @@ function fmtPct(v) {
 }
 
 function deltaColor(v) {
-  if (v == null) return TEXT;
+  if (v == null) return GREY;
   if (v > 0) return RED;
   if (v < 0) return GREEN;
-  return TEXT;
+  return GREY;
 }
 
 function spreadDeltaColor(v) {
-  if (v == null) return TEXT;
+  if (v == null) return GREY;
   if (v > 0) return GREEN;
   if (v < 0) return RED;
-  return TEXT;
+  return GREY;
 }
 
 // ── X-axis tick ─────────────────────────────────────────────────────────────
@@ -69,7 +64,7 @@ function XTick({ x, y, payload }) {
   if (!payload?.value) return null;
   const [yr] = payload.value.split("-");
   return (
-    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={TEXT}>
+    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={GREY}>
       {yr}
     </text>
   );
@@ -91,7 +86,7 @@ function ChartTooltip({ active, payload, label }) {
           ? `${(p.value * 100).toFixed(0)} bps`
           : `${p.value.toFixed(2)}%`;
         return (
-          <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? TEXT, marginBottom: 2 }}>
+          <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? GREY, marginBottom: 2 }}>
             {LABELS[p.dataKey] ?? p.dataKey}: {val}
           </div>
         );
@@ -117,12 +112,14 @@ function StatsTable({ stats, tickers }) {
 
   const thStyle = {
     padding: "6px 10px", fontSize: 9, fontWeight: 700,
-    letterSpacing: "0.1em", color: TEXT, textAlign: "center",
+    letterSpacing: "0.1em", color: GREY, textAlign: "center",
     borderBottom: `1px solid ${GRID}`, whiteSpace: "nowrap",
   };
   const tdStyle = {
     padding: "5px 10px", fontSize: 11, textAlign: "center",
-    fontVariantNumeric: "tabular-nums", color: LABEL,
+    fontVariantNumeric: "tabular-nums",
+    fontFamily: "'Menlo', 'Consolas', monospace",
+    color: LABEL,
     borderBottom: `1px solid ${GRID}`,
   };
 
@@ -182,10 +179,10 @@ function StatsTable({ stats, tickers }) {
                 ))}
                 {changeCols.map(c => (
                   <React.Fragment key={c.dKey}>
-                    <td style={{ ...tdStyle, color: s ? dColorFn(s[c.dKey]) : TEXT }}>
+                    <td style={{ ...tdStyle, color: s ? dColorFn(s[c.dKey]) : GREY }}>
                       {s ? fmtBps(s[c.dKey]) : "—"}
                     </td>
-                    <td style={{ ...tdStyle, color: s ? dColorFn(s[c.pKey]) : TEXT }}>
+                    <td style={{ ...tdStyle, color: s ? dColorFn(s[c.pKey]) : GREY }}>
                       {s ? fmtPct(s[c.pKey]) : "—"}
                     </td>
                   </React.Fragment>
@@ -207,7 +204,7 @@ function LegendDot({ color, label, dashed }) {
         width: 16, height: 0,
         borderTop: dashed ? `2px dashed ${color}` : `2px solid ${color}`,
       }} />
-      <span style={{ fontSize: 10, color: TEXT, letterSpacing: "0.04em" }}>
+      <span style={{ fontSize: 10, color: GREY, letterSpacing: "0.04em" }}>
         {label}
       </span>
     </div>
@@ -288,7 +285,7 @@ export default function YieldCurveChart() {
           }}>
             YIELD CURVE
           </h1>
-          <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
             2-YEAR &middot; 10-YEAR TREASURY YIELDS &amp; SPREAD
           </span>
           {spreadLast != null && (
@@ -300,7 +297,7 @@ export default function YieldCurveChart() {
             </span>
           )}
           {rawData?.updated && (
-            <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
+            <span style={{ fontSize: 10, color: GREY, marginLeft: "auto" }}>
               EOD &middot; {rawData.updated}
             </span>
           )}
@@ -309,7 +306,7 @@ export default function YieldCurveChart() {
 
       {/* ── States ── */}
       {loading && (
-        <div style={{ color: TEXT, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
+        <div style={{ color: GREY, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
           Loading...
         </div>
       )}
@@ -374,7 +371,7 @@ export default function YieldCurveChart() {
                   yAxisId="left"
                   orientation="left"
                   tickFormatter={v => `${v}%`}
-                  tick={{ fontSize: 10, fill: TEXT }}
+                  tick={{ fontSize: 10, fill: GREY }}
                   tickLine={false}
                   axisLine={false}
                   domain={["auto", "auto"]}
@@ -408,7 +405,7 @@ export default function YieldCurveChart() {
                   <ReferenceLine
                     yAxisId="right"
                     y={0}
-                    stroke={TEXT}
+                    stroke={GREY}
                     strokeDasharray="4 4"
                     strokeWidth={1}
                     strokeOpacity={0.5}
@@ -454,7 +451,7 @@ export default function YieldCurveChart() {
           <div style={{
             marginTop: 16, padding: "12px 16px",
             border: `1px solid ${GRID}`, borderRadius: 6,
-            background: "#07111f", fontSize: 10, color: TEXT,
+            background: "#07111f", fontSize: 10, color: GREY,
             lineHeight: 1.6, letterSpacing: "0.03em",
           }}>
             The <span style={{ color: LABEL, fontWeight: 600 }}>2-10 Spread</span> (10Y minus 2Y yield)

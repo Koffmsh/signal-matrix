@@ -18,7 +18,7 @@ export default function TickerAnalysis() {
         minHeight: "100vh",
         background: "#0a1628",
         color: "#e8f4ff",
-        fontFamily: "monospace",
+        fontFamily: "inherit",
         padding: "32px 40px",
       }}
     >

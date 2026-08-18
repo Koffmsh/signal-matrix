@@ -8,7 +8,7 @@ export const A = {
     display:    "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontFamily: "'IBM Plex Mono', 'Courier New', monospace",
+    fontFamily: "-apple-system, 'Segoe UI', sans-serif",
     color:      "#c8d8e8",
     padding:    "40px 16px",
   },

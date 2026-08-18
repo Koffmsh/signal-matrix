@@ -117,7 +117,7 @@ export default function UserList() {
   const isSelf = (u) => currentUser && currentUser.email === u.email;
 
   return (
-    <div style={{ padding: "20px 24px", color: "#c8d8e8", fontFamily: "'IBM Plex Mono', 'Courier New', monospace" }}>
+    <div style={{ padding: "20px 24px", color: "#c8d8e8", fontFamily: "-apple-system, 'Segoe UI', sans-serif" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px" }}>
         <div style={{ fontSize: "11px", color: "#8899aa", letterSpacing: "0.12em" }}>
           {loading ? "LOADING…" : `${users.length} USERS`}

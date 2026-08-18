@@ -5,12 +5,10 @@ import {
   Tooltip, ResponsiveContainer,
 } from "recharts";
 import { fetchCorrelations } from "../../services/api";
+import { LABEL, GREEN, RED, AMBER } from "../../styles/tokens";
 
 const GRID  = "#1a2a3a";
 const TEXT  = "#8899aa";
-const LABEL = "#c8d8e8";
-const GREEN = "#00e5a0";
-const RED   = "#ff4d6d";
 
 const WINDOWS = ["15D", "30D", "90D", "120D", "180D"];
 
@@ -53,7 +51,6 @@ function fmtPct(v) {
 }
 
 const Q_COLORS = { 1: "#007a55", 2: "#00e5a0", 3: "#f0b429", 4: "#ff4d6d" };
-const AMBER = "#f0b429";
 
 function quadTooltip(dxy) {
   const align = dxy.quad_alignment;

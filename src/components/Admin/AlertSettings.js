@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { apiFetch } from "../../services/api";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
-const mono = "'IBM Plex Mono', 'Courier New', monospace";
+const mono = "'Menlo', 'Consolas', monospace";
 
 const S = {
   wrap:        { padding: "20px 24px", color: "#c8d8e8", fontFamily: mono, maxWidth: "720px" },

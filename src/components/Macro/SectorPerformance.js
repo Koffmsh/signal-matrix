@@ -1,13 +1,11 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "../../services/api";
+import { GREEN, RED, GREY } from "../../styles/tokens";
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
+// ── Design tokens (page-specific overrides) ───────────────────────────────────
 const BG      = "#07111f";
 const SURFACE = "#0b1929";
 const BORDER  = "#1a2a3a";
-const GREEN   = "#00e5a0";
-const RED     = "#ff4d6d";
-const GREY    = "#8899aa";
 const HEADER  = "#c8d8e8";
 const WHITE   = "#e8f4ff";
 

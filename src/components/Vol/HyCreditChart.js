@@ -4,6 +4,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { fetchHyCreditHistory } from "../../services/api";
+import { GREEN, RED, GREY, LABEL, GRID } from "../../styles/tokens";
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const COLORS = {
@@ -11,11 +12,6 @@ const COLORS = {
   HYG: "#c8d8e8",
 };
 
-const GRID    = "#1a2a3a";
-const TEXT    = "#8899aa";
-const LABEL   = "#c8d8e8";
-const GREEN   = "#00e5a0";
-const RED     = "#ff4d6d";
 const BLUE    = "#4e8fde";
 
 const LABELS = {
@@ -64,21 +60,21 @@ function fmtPct(v) {
 }
 
 function oasDeltaColor(v) {
-  if (v == null) return TEXT;
+  if (v == null) return GREY;
   if (v > 0) return RED;
   if (v < 0) return GREEN;
-  return TEXT;
+  return GREY;
 }
 
 function priceDeltaColor(v) {
-  if (v == null) return TEXT;
+  if (v == null) return GREY;
   if (v > 0) return GREEN;
   if (v < 0) return RED;
-  return TEXT;
+  return GREY;
 }
 
 function getOasRegime(oas) {
-  if (oas == null) return { label: "—", color: TEXT };
+  if (oas == null) return { label: "—", color: GREY };
   if (oas < OAS_TIGHT) return { label: "TIGHT", color: GREEN };
   if (oas < OAS_STRESS) return { label: "NORMAL", color: "#f0b429" };
   return { label: "STRESS", color: RED };
@@ -89,7 +85,7 @@ function XTick({ x, y, payload }) {
   if (!payload?.value) return null;
   const [yr] = payload.value.split("-");
   return (
-    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={TEXT}>
+    <text x={x} y={y + 12} textAnchor="middle" fontSize={10} fill={GREY}>
       {yr}
     </text>
   );
@@ -106,7 +102,7 @@ function ChartTooltip({ active, payload, label }) {
     }}>
       <div style={{ color: LABEL, marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {entries.map(p => (
-        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? TEXT, marginBottom: 2 }}>
+        <div key={p.dataKey} style={{ color: COLORS[p.dataKey] ?? GREY, marginBottom: 2 }}>
           {LABELS[p.dataKey] ?? p.dataKey}:{" "}
           {p.dataKey === "OAS" ? fmtBps(p.value) : fmtPrice(p.value)}
         </div>
@@ -134,12 +130,14 @@ function StatsTable({ stats }) {
 
   const thStyle = {
     padding: "6px 10px", fontSize: 9, fontWeight: 700,
-    letterSpacing: "0.1em", color: TEXT, textAlign: "center",
+    letterSpacing: "0.1em", color: GREY, textAlign: "center",
     borderBottom: `1px solid ${GRID}`, whiteSpace: "nowrap",
   };
   const tdStyle = {
     padding: "5px 10px", fontSize: 11, textAlign: "center",
-    fontVariantNumeric: "tabular-nums", color: LABEL,
+    fontVariantNumeric: "tabular-nums",
+    fontFamily: "'Menlo', 'Consolas', monospace",
+    color: LABEL,
     borderBottom: `1px solid ${GRID}`,
   };
 
@@ -201,10 +199,10 @@ function StatsTable({ stats }) {
                 ))}
                 {changeCols.map(c => (
                   <React.Fragment key={c.dKey}>
-                    <td style={{ ...tdStyle, color: s ? dColor(tk, s[c.dKey]) : TEXT }}>
+                    <td style={{ ...tdStyle, color: s ? dColor(tk, s[c.dKey]) : GREY }}>
                       {s ? fmtDelta(tk, s[c.dKey]) : "—"}
                     </td>
-                    <td style={{ ...tdStyle, color: s ? dColor(tk, s[c.pKey]) : TEXT }}>
+                    <td style={{ ...tdStyle, color: s ? dColor(tk, s[c.pKey]) : GREY }}>
                       {s ? fmtPct(s[c.pKey]) : "—"}
                     </td>
                   </React.Fragment>
@@ -223,7 +221,7 @@ function LegendDot({ color, label }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <div style={{ width: 16, height: 2, background: color, borderRadius: 1 }} />
-      <span style={{ fontSize: 10, color: TEXT, letterSpacing: "0.04em" }}>
+      <span style={{ fontSize: 10, color: GREY, letterSpacing: "0.04em" }}>
         {label}
       </span>
     </div>
@@ -295,7 +293,7 @@ export default function HyCreditChart() {
           }}>
             HY CREDIT
           </h1>
-          <span style={{ fontSize: 11, color: TEXT, letterSpacing: "0.05em" }}>
+          <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
             HIGH YIELD OPTION-ADJUSTED SPREAD + HYG
           </span>
           {currentOAS != null && (
@@ -308,7 +306,7 @@ export default function HyCreditChart() {
             </span>
           )}
           {rawData?.updated && (
-            <span style={{ fontSize: 10, color: TEXT, marginLeft: "auto" }}>
+            <span style={{ fontSize: 10, color: GREY, marginLeft: "auto" }}>
               EOD &middot; {rawData.updated}
             </span>
           )}
@@ -317,7 +315,7 @@ export default function HyCreditChart() {
 
       {/* ── States ── */}
       {loading && (
-        <div style={{ color: TEXT, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
+        <div style={{ color: GREY, fontSize: 13, padding: "60px 0", textAlign: "center" }}>
           Loading...
         </div>
       )}
@@ -334,7 +332,7 @@ export default function HyCreditChart() {
           <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 14, paddingLeft: 4, flexWrap: "wrap" }}>
             {hasOAS && <LegendDot color={COLORS.OAS} label="HY OAS (bps)" />}
             {hasHYG && <LegendDot color={COLORS.HYG} label="HYG ($)" />}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 9, color: TEXT }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 9, color: GREY }}>
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <span style={{ width: 16, height: 0, borderTop: "1px dashed #00e5a0" }} />
                 Tight ({OAS_TIGHT})
@@ -471,7 +469,7 @@ export default function HyCreditChart() {
           <div style={{
             marginTop: 16, padding: "12px 16px",
             border: `1px solid ${GRID}`, borderRadius: 6,
-            background: "#07111f", fontSize: 10, color: TEXT,
+            background: "#07111f", fontSize: 10, color: GREY,
             lineHeight: 1.6, letterSpacing: "0.03em",
           }}>
             <span style={{ color: LABEL, fontWeight: 600 }}>HY OAS</span> (ICE BofA US High Yield Option-Adjusted Spread)

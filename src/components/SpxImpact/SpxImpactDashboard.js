@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { apiFetch } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
+import { GREEN, GREY } from "../../styles/tokens";
 
-const GREEN   = "#00e5a0";
 const ORANGE  = "#ff4d6d";
 const PINK    = "#e879f9";
-const GREY    = "#8899aa";
 const BG      = "#07111f";
 const BORDER  = "#1a2a3a";
 const HEADER  = "#c8d8e8";

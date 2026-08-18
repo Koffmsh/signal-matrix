@@ -924,7 +924,7 @@ function Dashboard() {
   };
 
   return (
-    <div style={{ background: "#070d14", minHeight: "100vh", fontFamily: "'IBM Plex Mono', 'Courier New', monospace", color: "#c8d8e8", padding: "0" }}>
+    <div style={{ background: "#070d14", minHeight: "100vh", fontFamily: "-apple-system, 'Segoe UI', sans-serif", color: "#c8d8e8", padding: "0" }}>
 
       {/* Header */}
       <div style={{ background: "linear-gradient(90deg, #0a1628 0%, #0d1f3c 100%)", borderBottom: "1px solid #1a3050", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1122,7 +1122,7 @@ function Dashboard() {
 
       {/* Table */}
       <div style={{ overflowX: "auto", padding: "0 24px 24px" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", marginTop: "8px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", marginTop: "8px", fontFamily: "'Menlo', 'Consolas', monospace" }}>
           <thead>
             <tr style={{ background: "#0a1220" }}>
               <th style={{ width: "24px", padding: "10px 4px 10px 8px", borderBottom: "1px solid #1a2535" }} />
@@ -1136,7 +1136,7 @@ function Dashboard() {
               <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 105&#10;Show ≥45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥80" />
+                title="Structural (−5 to 50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100&#10;Trade(15) + Trend(30) · Quad blends current→next month day 15→EOM&#10;Show ≥45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥80" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -1216,7 +1216,7 @@ function Dashboard() {
           ] : []),
           ["Conviction",   fmtConv(row.conviction),                                                       row.conviction != null ? convColorVP(row.conviction, row.viewpoint) : "#8899aa",
                            false, row.conviction != null
-                             ? "Structural (−5 to 55) + Quad (±20) + Volume (15) + Vol (−10 to +15)"
+                             ? "Structural (−5 to 50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → cap 100"
                              : "No score — conviction below 45%"],
           ["Vol Direction", row.obvDirection,                                                               dirColor(row.obvDirection),              false],
           ["Vol Regime",   row.vixRegime || "—",
