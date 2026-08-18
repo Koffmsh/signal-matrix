@@ -48,6 +48,79 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-041 — Design tokens file + font split (sans-serif labels, monospace values)
+Date: 2026-08-18
+Status: Active
+Component: src/styles/tokens.js, all frontend components
+
+Context:
+  Every component defined its own color constants locally (GREEN, RED, GREY, etc.),
+  leading to subtle inconsistencies and maintenance burden. The all-monospace font
+  made prose/labels dense and harder to read compared to the Half-Exit artifact which
+  used sans-serif for labels with monospace for values only.
+
+Decision:
+  Created `src/styles/tokens.js` as single source of truth for colors, fonts, and
+  locked typography spec. Two-font system: FONT_SANS (`-apple-system, 'Segoe UI',
+  sans-serif`) for labels/headers/prose/buttons; FONT_MONO (`'Menlo', 'Consolas',
+  monospace`) for numeric data values only. Propagated across all ~20 components.
+  Unified card backgrounds (CARD `#0d1f35`) and borders (BORDER `#2a3a50`) on
+  Security Analysis page. Signal Score wrapper: no background or border.
+
+Why (regression guard):
+  Do not revert to IBM Plex Mono or all-monospace. Do not define local color
+  constants that duplicate tokens.js exports. Do not use `#1a2535` or `#243040`
+  for card borders (insufficient contrast on `#0a1628` background — use `#2a3a50`).
+
+Linked rule: CLAUDE.md rule #70 (UI text contrast + table typography)
+
+## ADR-040 — Quad linear blend current→next month (day 15→EOM)
+Date: 2026-08-18
+Status: Active
+Component: backend/routers/signals.py, backend/services/conviction_engine.py
+
+Context:
+  The hard day-24 cutoff for switching from current to next month's quad caused an
+  abrupt conviction score jump on the 24th of every month. A ticker's quad score
+  could swing ±35 points overnight with no price movement.
+
+Decision:
+  Linear blend from day 15 to end of month. Days 1–14 use 100% current month.
+  Day 15 begins ramping: w = (day - 15) / (days_in_month - 15). Both months are
+  scored independently via `_score_single_quad`, then blended:
+  `quad_score = round((1-w) × cur_score + w × nxt_score)`. The quad_align_label
+  follows the dominant weight (≥50% → next month's label). International Equities
+  still route to country quarterly quads (no blend).
+
+Why (regression guard):
+  Do not revert to the hard day-24 cutoff — it creates artificial conviction cliffs.
+  The blend start day (15) and formula are in `_BLEND_START_DAY` in signals.py.
+
+Linked rule: CLAUDE.md rule #102
+
+## ADR-039 — Structural pillar rebalance: Trade 15 + Trend 30 = 45
+Date: 2026-08-18
+Status: Active
+Component: backend/services/conviction_engine.py
+
+Context:
+  The structural pillar used equal weighting (25/25/50) for trade-only, trend-only,
+  and both-aligned states. This underweighted trend alignment (the primary directional
+  filter) and overweighted trade-only signals relative to their conviction value.
+
+Decision:
+  Rebalanced to Trade(15) + Trend(30) = 45 both aligned. Trade-only = 15 (short-term
+  timing signal alone carries less conviction). Trend-only = 30 (directional bias is
+  the primary filter and carries more weight). Both aligned = 45 (was 50; the 5-point
+  reduction is offset by the NATH boost which can add +5 back to 50).
+
+Why (regression guard):
+  Do not revert to 25/25/50. The asymmetry (Trend > Trade) reflects the core
+  philosophy that trend alignment is the primary filter. A trade-only signal without
+  trend confirmation should not carry half the structural weight.
+
+Linked rule: CLAUDE.md "Conviction Score Formula — v2.0"
+
 ## ADR-038 — Walk both ABC structures before intact check (pivot engine)
 Date: 2026-08-17
 Status: Active
