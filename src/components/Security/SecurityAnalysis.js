@@ -176,6 +176,239 @@ const BLOCK1_TABS = ["AI ANALYSIS", "RISK RANGE", "PROFILE"];
 
 const CONTENT_TABS = ["METRICS", "ANALYSIS", "FINANCIALS", "NEWS"];
 
+function momentumColor(signal) {
+  if (!signal) return GREY;
+  if (signal === "Strong Upgrade" || signal === "Upgrade") return GREEN;
+  if (signal === "Downgrade" || signal === "Moderate Downgrade") return RED;
+  if (signal === "Peak Consensus") return AMBER;
+  return GREY;
+}
+
+function AnalystSection({ data, loading, close }) {
+  if (loading) {
+    return (
+      <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11 }}>
+        Loading analyst data...
+      </div>
+    );
+  }
+  if (!data || !data.available) {
+    return (
+      <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
+        NO ANALYST COVERAGE AVAILABLE FOR THIS TICKER
+      </div>
+    );
+  }
+
+  const pt = data.price_targets;
+  const c = data.consensus;
+  const signal = data.momentum_signal;
+  const sigColor = momentumColor(signal);
+
+  const cellStyle = { padding: "6px 10px", fontSize: 11, color: LABEL, textAlign: "center", borderBottom: `1px solid ${BORDER}` };
+  const headerStyle = { ...cellStyle, fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", textAlign: "center" };
+
+  return (
+    <div style={{ padding: "12px 0" }}>
+      {/* Momentum Signal Banner */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 14px", marginBottom: 12,
+        background: `${sigColor}15`, border: `1px solid ${sigColor}40`, borderRadius: 6,
+      }}>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", marginBottom: 4 }}>
+            ANALYST MOMENTUM
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: sigColor }}>{signal || "Neutral"}</div>
+        </div>
+        {data.peak_consensus && (
+          <div style={{
+            fontSize: 9, fontWeight: 700, color: AMBER, letterSpacing: "0.05em",
+            padding: "4px 8px", border: `1px solid ${AMBER}`, borderRadius: 4,
+          }}>
+            PEAK CONSENSUS
+          </div>
+        )}
+        {data.days_since_upgrade != null && (
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: GREY, letterSpacing: "0.05em" }}>LAST UPGRADE</div>
+            <div style={{ fontSize: 11, color: LABEL }}>{data.days_since_upgrade}d ago</div>
+          </div>
+        )}
+      </div>
+
+      {/* Price Targets + Consensus side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        {/* Price Targets */}
+        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "10px 14px" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", marginBottom: 8 }}>
+            PRICE TARGETS
+          </div>
+          {pt ? (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 10, color: GREY }}>Average</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: LABEL }}>${pt.mean?.toFixed(0)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 10, color: GREY }}>Median</span>
+                <span style={{ fontSize: 11, color: LABEL }}>${pt.median?.toFixed(0)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 10, color: GREY }}>Range</span>
+                <span style={{ fontSize: 11, color: LABEL }}>${pt.low?.toFixed(0)} — ${pt.high?.toFixed(0)}</span>
+              </div>
+              {pt.upside_pct != null && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 10, color: GREY }}>Upside</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: pt.upside_pct >= 0 ? GREEN : RED }}>
+                    {pt.upside_pct >= 0 ? "+" : ""}{pt.upside_pct}%
+                  </span>
+                </div>
+              )}
+              {/* Visual bar: low — current — avg — high */}
+              {pt.low != null && pt.high != null && pt.mean != null && close != null && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ position: "relative", height: 6, background: `${GREY}30`, borderRadius: 3 }}>
+                    {(() => {
+                      const lo = pt.low, hi = pt.high;
+                      const range = hi - lo || 1;
+                      const curPct = Math.max(0, Math.min(100, ((close - lo) / range) * 100));
+                      const avgPct = Math.max(0, Math.min(100, ((pt.mean - lo) / range) * 100));
+                      return (
+                        <>
+                          <div style={{ position: "absolute", left: `${curPct}%`, top: -3, width: 3, height: 12, background: "#fff", borderRadius: 1 }}
+                               title={`Current $${close?.toFixed(2)}`} />
+                          <div style={{ position: "absolute", left: `${avgPct}%`, top: -2, width: 2, height: 10, background: GREEN, borderRadius: 1 }}
+                               title={`Avg Target $${pt.mean?.toFixed(0)}`} />
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: GREY, marginTop: 3 }}>
+                    <span>${pt.low?.toFixed(0)}</span>
+                    <span>${pt.high?.toFixed(0)}</span>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: GREY }}>No targets available</div>
+          )}
+        </div>
+
+        {/* Consensus Distribution */}
+        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "10px 14px" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", marginBottom: 8 }}>
+            CONSENSUS
+          </div>
+          {c ? (
+            <>
+              {/* Stacked bar */}
+              <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
+                {c.buy > 0 && <div style={{ flex: c.buy, background: GREEN }} title={`Buy: ${c.buy}`} />}
+                {c.hold > 0 && <div style={{ flex: c.hold, background: GREY }} title={`Hold: ${c.hold}`} />}
+                {c.sell > 0 && <div style={{ flex: c.sell, background: RED }} title={`Sell: ${c.sell}`} />}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: GREEN }}>Buy {c.buy}</span>
+                <span style={{ fontSize: 10, color: GREY }}>Hold {c.hold}</span>
+                <span style={{ fontSize: 10, color: RED }}>Sell {c.sell}</span>
+              </div>
+              <div style={{ fontSize: 11, color: LABEL, textAlign: "center", marginTop: 4 }}>
+                {c.buy_pct?.toFixed(0)}% Buy — {c.total} analysts
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: GREY }}>No consensus data</div>
+          )}
+        </div>
+      </div>
+
+      {/* Rating Momentum Table */}
+      {data.has_ratings && (
+        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, marginBottom: 12, overflow: "hidden" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", padding: "10px 14px 4px" }}>
+            RATING MOMENTUM
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ ...headerStyle, textAlign: "left" }}>Window</th>
+                <th style={headerStyle}>Upgrades</th>
+                <th style={headerStyle}>Downgrades</th>
+                <th style={headerStyle}>Net</th>
+                <th style={headerStyle}>PT Raises</th>
+                <th style={headerStyle}>PT Lowers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {["30d", "90d", "180d"].map(w => {
+                const net = data[`net_${w}`] || 0;
+                return (
+                  <tr key={w}>
+                    <td style={{ ...cellStyle, textAlign: "left", fontWeight: 600 }}>{w.toUpperCase()}</td>
+                    <td style={cellStyle}>{data[`upgrades_${w}`] || 0}</td>
+                    <td style={cellStyle}>{data[`downgrades_${w}`] || 0}</td>
+                    <td style={{ ...cellStyle, fontWeight: 700, color: net > 0 ? GREEN : net < 0 ? RED : GREY }}>
+                      {net > 0 ? "+" : ""}{net}
+                    </td>
+                    <td style={cellStyle}>{w === "90d" ? (data.pt_raises_90d ?? "—") : "—"}</td>
+                    <td style={cellStyle}>{w === "90d" ? (data.pt_lowers_90d ?? "—") : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Recent Actions */}
+      {data.recent_actions?.length > 0 && (
+        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, overflow: "hidden" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", padding: "10px 14px 4px" }}>
+            RECENT ACTIONS
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ ...headerStyle, textAlign: "left" }}>Date</th>
+                <th style={{ ...headerStyle, textAlign: "left" }}>Firm</th>
+                <th style={headerStyle}>Action</th>
+                <th style={headerStyle}>Rating</th>
+                <th style={headerStyle}>Target</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recent_actions.map((a, i) => {
+                const actionLabel = a.action === "up" ? "↑ Upgrade" : a.action === "down" ? "↓ Downgrade" :
+                  a.action === "init" ? "Initiate" : a.action === "main" ? "Maintain" : a.action === "reit" ? "Reiterate" : a.action;
+                const actionColor = a.action === "up" ? GREEN : a.action === "down" ? RED : GREY;
+                return (
+                  <tr key={i}>
+                    <td style={{ ...cellStyle, textAlign: "left", fontSize: 10 }}>{a.date}</td>
+                    <td style={{ ...cellStyle, textAlign: "left", fontSize: 10 }}>{a.firm}</td>
+                    <td style={{ ...cellStyle, color: actionColor, fontWeight: a.action === "up" || a.action === "down" ? 700 : 400 }}>
+                      {actionLabel}
+                    </td>
+                    <td style={cellStyle}>{a.to_grade || "—"}</td>
+                    <td style={cellStyle}>
+                      {a.pt_current ? `$${a.pt_current}` : "—"}
+                      {a.pt_action === "Raises" && <span style={{ color: GREEN, fontSize: 9 }}> ↑</span>}
+                      {a.pt_action === "Lowers" && <span style={{ color: RED, fontSize: 9 }}> ↓</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const THUMBNAILS = [
   { title: "Vol Risk Premium", desc: "IV30 vs HV30 spread — cheap or expensive options" },
   { title: "Signal History",   desc: "Conviction over time from daily snapshots" },
@@ -199,6 +432,8 @@ export default function SecurityAnalysis({ defaultTicker }) {
   const [contentTab, setContentTab] = useState("METRICS");
   const [aiSummary, setAiSummary] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [analystData, setAnalystData] = useState(null);
+  const [analystLoading, setAnalystLoading] = useState(false);
 
   useEffect(() => {
     apiFetch("/api/tickers?active=true").then(r => r.json()).then(d => setTickerList(d)).catch(() => {});
@@ -241,6 +476,13 @@ export default function SecurityAnalysis({ defaultTicker }) {
         .then(d => { if (d.headline) setAiSummary(d); })
         .catch(() => {})
         .finally(() => setAiLoading(false));
+      setAnalystData(null);
+      setAnalystLoading(true);
+      apiFetch(`/api/security/${encodeURIComponent(ticker)}/analyst`)
+        .then(r => r.json())
+        .then(d => setAnalystData(d))
+        .catch(() => {})
+        .finally(() => setAnalystLoading(false));
       window.scrollTo(0, 0);
     }
   }, [ticker, fetchDetail]);
@@ -593,8 +835,24 @@ export default function SecurityAnalysis({ defaultTicker }) {
                           {isTrendBreak && <span title={breakTip} style={{ cursor: "help" }}> ⚠</span>}
                         </td>
                         <td style={{ padding: "8px 8px", color: isTrendBreak ? "#f0b429" : GREY, fontSize: 10 }}>{d?.structural_state?.replace(/_/g, " ") || "—"}</td>
-                        <td style={{ padding: "8px 8px", color: dirClr }}>{d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}</td>
-                        <td style={{ padding: "8px 8px", color: dirClr }}>{d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}</td>
+                        <td style={{ padding: "8px 8px", color: d?.lrr_warn ? AMBER : dirClr }}>
+                          {d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
+                          {d?.direction !== "Neutral" && d?.lrr_warn && <span title={
+                            d.direction === "Bullish"
+                              ? (d.d_extended ? `LRR is below SUPPORT B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — Potential break (EXTENDED: B replaces C)` : `LRR is below SUPPORT C${d.pivot_c != null ? ` ($${d.pivot_c.toFixed(2)})` : ""} — Potential break`)
+                              : `LRR is above B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — target doesn't reach prior swing low`
+                          } style={{ cursor: "help" }}> ⚠</span>}
+                          {d?.direction !== "Neutral" && d?.lrr_extended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help", color: RED }}> ↓</span>}
+                        </td>
+                        <td style={{ padding: "8px 8px", color: d?.hrr_warn ? AMBER : dirClr }}>
+                          {d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}
+                          {d?.direction !== "Neutral" && d?.hrr_warn && <span title={
+                            d.direction === "Bearish"
+                              ? (d.d_extended ? `HRR is above RESISTANCE B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — Potential break (EXTENDED: B replaces C)` : `HRR is above RESISTANCE C${d.pivot_c != null ? ` ($${d.pivot_c.toFixed(2)})` : ""} — Potential break`)
+                              : `HRR is below B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — target doesn't reach prior swing high`
+                          } style={{ cursor: "help" }}> ⚠</span>}
+                          {d?.direction !== "Neutral" && d?.hrr_extended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help", color: GREEN }}> ↑</span>}
+                        </td>
                         <td style={{ padding: "8px 8px", color: dirClr }}>
                           {tf === "Trade"
                             ? (d?.d_extended && d?.pivot_b != null ? `$${d.pivot_b.toFixed(2)}`
@@ -810,9 +1068,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
           </div>
         )}
         {contentTab === "ANALYSIS" && (
-          <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
-            ANALYSIS — DEEP DIVE REPORTS (COMING SOON)
-          </div>
+          <AnalystSection data={analystData} loading={analystLoading} close={data?.close} />
         )}
         {contentTab === "FINANCIALS" && (
           <div style={{ textAlign: "center", padding: "32px 20px", color: GREY, fontSize: 11, letterSpacing: "0.1em" }}>
