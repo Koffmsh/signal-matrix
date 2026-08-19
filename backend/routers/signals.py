@@ -439,6 +439,7 @@ def run_output(db: Session) -> dict:
                     volume_score        = data.get("volume_score") if tf == "trade" else None,
                     vix_score           = data.get("vix_score") if tf == "trade" else None,
                     emerging_direction  = emerging_dir if tf == "trade" else None,
+                    drift_dir           = data.get("drift_dir"),
                     calculated_at       = now,
                 )
 
@@ -513,6 +514,7 @@ def snapshot_signals(trigger: str, db: Session) -> dict:
             volume_score        = row.volume_score,
             vix_score           = row.vix_score,
             emerging_direction  = row.emerging_direction,
+            drift_dir           = row.drift_dir,
             calculated_at       = str(row.calculated_at) if row.calculated_at else None,
             created_at          = now_utc_str,
         ))
@@ -755,6 +757,7 @@ def get_stored_signals(db: Session = Depends(get_db)):
             "pivot_c":            row.pivot_c,
             "h_trade_delta":      row.h_trade_delta if row.timeframe == "trade" else None,
             "emerging_direction": row.emerging_direction if row.timeframe == "trade" else None,
+            "drift_dir":          row.drift_dir,
         }
         if row.conviction is not None:
             by_ticker[t]["conviction"] = row.conviction

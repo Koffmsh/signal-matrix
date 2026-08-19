@@ -1136,7 +1136,7 @@ function Dashboard() {
               <th title="60 trading days (~3 months)" style={{ padding: "10px 8px", fontSize: "10px", letterSpacing: "0.08em", color: "#8899aa", borderBottom: "1px solid #1a2535", whiteSpace: "nowrap", cursor: "help" }}>TREND</th>
               <SortHdr label="VIEWPOINT"   k="viewpoint" />
               <SortHdr label="CONVICTION"  k="conviction"
-                title="Structural (−5 to 50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100&#10;Trade(15) + Trend(30) · Quad blends current→next month day 15→EOM&#10;Show ≥45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥80" />
+                title="Structural (−5 to 50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100&#10;Trend(30) + Drift(10) + Trade(5) · Quad blends current→next month day 15→EOM&#10;Show ≥45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥80" />
               <SortHdr label="ENTRY" k="entrySignal" align="center"
                 title="▲ BUY — price within bottom 15% of trade range (prox > 0.85), all timeframes Bullish · ▼ SELL — price within top 15% of trade range (prox > 0.85), all timeframes Bearish" />
               <SortHdr label="TRADE DIR"   k="tradeDir" />
@@ -1324,7 +1324,7 @@ function Dashboard() {
               </div>
               {row.isAlert && (
                 <div style={{ margin: "0 20px 12px 20px", background: "#1a1200", border: "1px solid #f0b429", borderRadius: "3px", padding: "8px 12px", fontSize: "10px", color: "#f0b429", letterSpacing: "0.05em" }}>
-                  ⚡ HIGH CONVICTION ALERT — Trade & Trend aligned · {fmtConv(row.conviction)} conviction
+                  ⚡ HIGH CONVICTION ALERT — Trend & Drift aligned · {fmtConv(row.conviction)} conviction
                 </div>
               )}
             </div>

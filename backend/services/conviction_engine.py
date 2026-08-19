@@ -121,6 +121,25 @@ def _build_obv_ma20(closes: list, volumes: list) -> list:
 
 
 
+# ── Drift (MA20 slope) ────────────────────────────────────────────────────────
+
+def _compute_drift(closes: list) -> str:
+    """
+    Drift signal: 3-bar MA20 slope direction.
+    Compares today's MA20 to the MA20 value 3 bars ago.
+    Returns 'Bullish' | 'Bearish' | 'Neutral'.
+    """
+    if not closes or len(closes) < 23:
+        return "Neutral"
+    ma_now = sum(closes[-20:]) / 20.0
+    ma_prev = sum(closes[-23:-3]) / 20.0
+    if ma_now > ma_prev:
+        return "Bullish"
+    if ma_now < ma_prev:
+        return "Bearish"
+    return "Neutral"
+
+
 ASYMMETRIC_H_ASSET_CLASSES = {"Commodities", "Foreign Exchange"}
 ASYMMETRIC_H_EXCLUDED      = {"/ZN"}   # Fixed Income behavior despite Commodities classification
 
@@ -1162,26 +1181,27 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
             "d_extended":       d_extended,
         }
 
-    # ── Viewpoint (trade + trend alignment) ─────────────────────────────────
+    # ── Drift (MA20 3-bar slope) ──────────────────────────────────────────
+    drift_dir = _compute_drift(prices)
+
+    # ── Viewpoint (trend + drift alignment) ────────────────────────────────
     trade_dir = timeframe_results["trade"]["direction"]
     trend_dir = timeframe_results["trend"]["direction"]
 
-    if trade_dir == "Bullish" and trend_dir == "Bullish":
+    if trend_dir == "Bullish" and drift_dir == "Bullish":
         viewpoint = "Bullish"
-    elif trade_dir == "Bearish" and trend_dir == "Bearish":
+    elif trend_dir == "Bearish" and drift_dir == "Bearish":
         viewpoint = "Bearish"
     else:
         viewpoint = "Neutral"
 
-    # ── OBV direction vs structure — volume scoring mirrors structure logic
-    # obv_dir is the two-layer combined direction: Bullish / Bearish / Leaning Bullish / Leaning Bearish / Neutral
-    # Structure's directional bias determines what volume is checked against.
-    if trade_dir != "Neutral" and trend_dir != "Neutral" and trade_dir != trend_dir:
+    # ── Structural bias — Trend OR Drift (feeds Volume + Quad pillars) ────
+    if trend_dir != "Neutral" and drift_dir != "Neutral" and trend_dir != drift_dir:
         _struct_bias = "Neutral"   # opposing — no directional bias
-    elif trade_dir != "Neutral":
-        _struct_bias = trade_dir
     elif trend_dir != "Neutral":
         _struct_bias = trend_dir
+    elif drift_dir != "Neutral":
+        _struct_bias = drift_dir
     else:
         _struct_bias = "Neutral"
 
@@ -1221,16 +1241,16 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
     # Display when conviction_final >= 45 (else None/blank).
     # Neutral viewpoint: calculates same way; UI renders in grey (#8899aa) when >= 45.
 
-    # Component 1 — Structural (base 0/25/50, adjusted ±5 for NATH/warn → range -5 to 55)
-    # Trade=Bullish + Trend=Bearish (opposing) = 0 — conflicted structure = no conviction.
-    if trade_dir == trend_dir and trade_dir != "Neutral":
-        structural_base = 45     # both aligned — Trade(15) + Trend(30)
-    elif trade_dir != "Neutral" and trend_dir == "Neutral":
-        structural_base = 15     # trade only
-    elif trade_dir == "Neutral" and trend_dir != "Neutral":
-        structural_base = 30     # trend only
+    # Component 1 — Structural (base 0–45, adjusted ±5 for NATH/warn)
+    # Trend(30) + Drift(10) + Trade(5). Trend is the anchor — no Trend = no score.
+    if trend_dir == "Neutral":
+        structural_base = 0
     else:
-        structural_base = 0      # both Neutral, OR opposing directions (conflicted)
+        structural_base = 30
+        if drift_dir == trend_dir:
+            structural_base += 10
+        if trade_dir == trend_dir:
+            structural_base += 5
 
     structural_score = structural_base
 
@@ -1341,6 +1361,7 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
         "structural_score": structural_score,
         "volume_score":    volume_score,
         "vix_score":       vix_score,
+        "drift_dir":       drift_dir,
         "vol_signal":      None,
         "obv_direction":   obv_dir,
         "obv_confirming":  obv_confirming,

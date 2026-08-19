@@ -134,6 +134,7 @@ def get_security_detail(ticker: str, db: Session = Depends(get_db)):
         "vix_score":       trade_row.vix_score if trade_row else None,
         "vol_signal":      trade_row.vol_signal if trade_row else None,
         "obv_direction":   trade_row.obv_direction if trade_row else None,
+        "drift_dir":       trade_row.drift_dir if trade_row else None,
 
         "trade": _tf_data(trade_row),
         "trend": _tf_data(trend_row),

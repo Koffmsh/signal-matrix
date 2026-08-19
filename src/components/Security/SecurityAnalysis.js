@@ -19,9 +19,9 @@ function pillarLabel(name, raw, data) {
   if (raw == null) return "—";
   switch (name) {
     case "STRUCTURE": {
-      if (raw >= 45) return data?.viewpoint || "Neutral";
-      if (raw >= 15) {
-        const dir = data?.trade?.direction !== "Neutral" ? data?.trade?.direction : data?.trend?.direction;
+      if (raw >= 40) return data?.viewpoint || "Neutral";
+      if (raw >= 30) {
+        const dir = data?.trend?.direction;
         return dir && dir !== "Neutral" ? `Leaning ${dir}` : "Neutral";
       }
       return "Neutral";
@@ -41,7 +41,7 @@ function pillarLabel(name, raw, data) {
 function pillarColor(name, raw, data) {
   if (raw == null) return GREY;
   switch (name) {
-    case "STRUCTURE":      return raw >= 45 ? GREEN : raw >= 15 ? AMBER : GREY;
+    case "STRUCTURE":      return raw >= 40 ? GREEN : raw >= 30 ? AMBER : GREY;
     case "VOLUME":     return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "VOLATILITY": return raw >= 10 ? GREEN : raw >= 5 ? AMBER : GREY;
     case "QUAD": {
@@ -60,13 +60,15 @@ function pillarDetail(name, data) {
   if (!data) return "";
   switch (name) {
     case "STRUCTURE": {
-      const td = data.trade?.direction || "Neutral";
       const trd = data.trend?.direction || "Neutral";
-      if (td === trd && td !== "Neutral") return `Trade and Trend are both ${td}, fully aligned.`;
-      if (td !== "Neutral" && trd === "Neutral") return `Trade is ${td} but Trend has not confirmed direction.`;
-      if (td === "Neutral" && trd !== "Neutral") return `Trend is ${trd} but Trade has not confirmed direction.`;
-      if (td !== "Neutral" && trd !== "Neutral" && td !== trd) return `Trade and Trend are opposing — no structural alignment.`;
-      return "Neither timeframe has confirmed a direction.";
+      const drift = data.drift_dir || "Neutral";
+      const td = data.trade?.direction || "Neutral";
+      if (trd === "Neutral") return "Trend has not confirmed a direction.";
+      const parts = [`Trend is ${trd}`];
+      if (drift === trd) parts.push("Drift confirms");
+      else parts.push("Drift not confirming");
+      if (td === trd) parts.push("Trade aligned");
+      return parts.join(", ") + ".";
     }
     case "VOLUME": {
       const dir = data.obv_direction || "Neutral";
@@ -95,8 +97,8 @@ function pillarDetail(name, data) {
       if (align === "Neutral")
         return `No strong historical edge for ${sectorLabel} in the current macro environment.`;
 
-      const structDir = data.trade?.direction !== "Neutral" ? data.trade?.direction
-                      : data.trend?.direction !== "Neutral" ? data.trend?.direction : null;
+      const structDir = data.trend?.direction !== "Neutral" ? data.trend?.direction
+                      : (data.drift_dir && data.drift_dir !== "Neutral") ? data.drift_dir : null;
       // "Best"/"Worst" = raw macro stance (no structure). "Aligned"/"Misaligned" = relative to structure.
       // Aligned+Bullish or Misaligned+Bearish → quad is Best for sector → "perform well"
       // Aligned+Bearish or Misaligned+Bullish → quad is Worst for sector → "perform poorly"
@@ -192,6 +194,7 @@ export default function SecurityAnalysis({ defaultTicker }) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [dateRange, setDateRange] = useState(252);
   const [showRR, setShowRR] = useState(true);
+  const [showMA20, setShowMA20] = useState(false);
   const [block1Tab, setBlock1Tab] = useState("AI ANALYSIS");
   const [contentTab, setContentTab] = useState("METRICS");
   const [aiSummary, setAiSummary] = useState(null);
@@ -265,7 +268,13 @@ export default function SecurityAnalysis({ defaultTicker }) {
     }
     const result = [];
     for (let i = start; i < len; i++) {
-      result.push({ date: dates[i], close: closes[i] });
+      let ma20 = null;
+      if (i >= 19) {
+        let sum = 0;
+        for (let j = i - 19; j <= i; j++) sum += closes[j];
+        ma20 = sum / 20;
+      }
+      result.push({ date: dates[i], close: closes[i], ma20 });
     }
     return result;
   }, [data, dateRange]);
@@ -664,13 +673,22 @@ export default function SecurityAnalysis({ defaultTicker }) {
 
         {/* Chart controls: toggle left, date ranges right */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: LABEL, cursor: "pointer" }}>
-            <input
-              type="checkbox" checked={showRR} onChange={e => setShowRR(e.target.checked)}
-              style={{ accentColor: GREEN, width: 14, height: 14 }}
-            />
-            Risk Range
-          </label>
+          <div style={{ display: "flex", gap: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: LABEL, cursor: "pointer" }}>
+              <input
+                type="checkbox" checked={showRR} onChange={e => setShowRR(e.target.checked)}
+                style={{ accentColor: GREEN, width: 14, height: 14 }}
+              />
+              Risk Range
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: LABEL, cursor: "pointer" }}>
+              <input
+                type="checkbox" checked={showMA20} onChange={e => setShowMA20(e.target.checked)}
+                style={{ accentColor: "#4e8fde", width: 14, height: 14 }}
+              />
+              MA20
+            </label>
+          </div>
           <div style={{ display: "flex", gap: 4 }}>
             {DATE_RANGES.map(r => (
               <button
@@ -735,6 +753,9 @@ export default function SecurityAnalysis({ defaultTicker }) {
             })()}
 
             <Line type="linear" dataKey="close" stroke="#e8f4ff" strokeWidth={1.5} dot={false} activeDot={{ r: 3, fill: "#e8f4ff" }} />
+            {showMA20 && (
+              <Line type="linear" dataKey="ma20" stroke="#4e8fde" strokeWidth={1.2} dot={false} activeDot={false} connectNulls />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
 
@@ -744,6 +765,12 @@ export default function SecurityAnalysis({ defaultTicker }) {
             <span style={{ width: 20, height: 2, background: "#e8f4ff", display: "inline-block" }} />
             <span style={{ color: LABEL }}>Price</span>
           </span>
+          {showMA20 && (
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 20, height: 2, background: "#4e8fde", display: "inline-block" }} />
+              <span style={{ color: LABEL }}>MA20</span>
+            </span>
+          )}
           {showRR && (
             <>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>

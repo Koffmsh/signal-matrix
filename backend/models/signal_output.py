@@ -41,6 +41,7 @@ class SignalOutput(Base):
     hrr_snapped         = Column(Boolean,    nullable=False, server_default="0")  # v1.9.1 trade RR snap state
     lrr_snapped         = Column(Boolean,    nullable=False, server_default="0")  # v1.9.1 trade RR snap state
     emerging_direction  = Column(String(10), nullable=True)  # "Bullish"|"Bearish"|null — trade tf only, when trade_direction==Neutral
+    drift_dir           = Column(String(10), nullable=True)  # "Bullish"|"Bearish"|"Neutral" — MA20 3-bar slope direction
     calculated_at       = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

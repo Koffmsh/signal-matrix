@@ -253,7 +253,8 @@ signal-matrix/
 │   │       ├── z1a2b3c4d5e6_price_cache_unique_ticker.py                          ← dedup + enforce UNIQUE(ticker) on price_cache (ADR-027; fixes the ROBO duplicate-row bug)
 │   │       ├── a2b3c4d5e6f7_signal_output_add_pillar_scores.py                    ← structural_score/volume_score/vix_score on signal_output + signal_history (+ quad_score on signal_history)
 │   │       ├── b3c4d5e6f7g8_add_ai_summaries_table.py                             ← ai_summaries table (on-demand AI summary cache, ADR-030)
-│   │       └── c4d5e6f7g8h9_tickers_add_profile_summary.py                        ← tickers.profile_summary (company profile text from Schwab/yfinance backfill)
+│   │       ├── c4d5e6f7g8h9_tickers_add_profile_summary.py                        ← tickers.profile_summary (company profile text from Schwab/yfinance backfill)
+│   │       └── f9d817a3f23a_add_drift_dir_to_signal_output_and_.py                ← drift_dir on signal_output + signal_history (Viewpoint gate: Trend + Drift)
 │   ├── services/
 │   │   ├── yahoo_finance.py
 │   │   ├── signal_engine.py               ← Task 3.1 — Hurst + Fractal Dimension (DFA) ✅
@@ -677,22 +678,24 @@ H is still calculated and stored for regime classification display only:
 conviction_final = structural_score + quad_score + volume_score + vix_score
                  → floor(0) → cap(100)
 
-Structural (−5 to 50, base 0/15/30/45 ±5 adjustments):
-  Both aligned (Bullish+Bullish or Bearish+Bearish) → 45 (Trade 15 + Trend 30)
-  Trade only (Trend Neutral) → 15
-  Trend only (Trade Neutral) → 30
-  Both Neutral OR opposing (Bullish+Bearish) → 0
+Structural (−5 to 50, base 0/30/35/40/45 ±5 adjustments):
+  Trend is the anchor — no Trend = 0. Drift = MA20 3-bar slope direction.
+  Trend directional → 30
+  + Drift confirms (matches Trend direction) → +10
+  + Trade aligned (matches Trend direction) → +5
+  All three aligned → 45 (Trend 30 + Drift 10 + Trade 5)
+  Trend Neutral → 0 (regardless of Drift or Trade)
   +5 NATH boost: Viewpoint=Bullish AND trade HRR > ATH
   −5 target-side warn: BB target can't reach structural reference (hrr_warn uptrend / lrr_warn downtrend)
-  Quad gate uses structural_base (0/15/30/45) not adjusted score
+  Quad gate uses structural_base (0/30/35/40/45) not adjusted score
 
 Quad (−15 / −11 / 0 / +15 / +20, blended current→next month):
   Linear blend: day 1–14 = 100% current month; day 15→EOM linear ramp to 100% next month.
   Both current and next month quads are scored independently, then blended:
     quad_score = round((1 - w) × current_score + w × next_score)
-  Gate: structural_score==0 AND Viewpoint=Neutral → 0 (both timeframes Neutral/opposing).
-        structural_score>=15 (one timeframe confirmed) → quad CONTRIBUTES (not gated).
-  Aligned = (Bullish viewpoint + Best quad) OR (Bearish viewpoint + Worst quad)
+  Gate: structural_score==0 AND _struct_bias=Neutral → 0 (Trend Neutral, no directional bias).
+        structural_score>=30 (Trend confirmed) → quad CONTRIBUTES (not gated).
+  Aligned = (Bullish bias + Best quad) OR (Bearish bias + Worst quad)
   Aligned, prob≥0.45 → +20; Aligned, prob<0.45 → +15
   Neutral alignment → 0
   Misaligned (Bearish+Best or Bullish+Worst), prob≥0.45 → −15; prob<0.45 → −11
@@ -703,7 +706,7 @@ Volume (0 / 5 / 10 / 15):
     One directional + one Neutral → "Leaning Bullish" / "Leaning Bearish"
     Opposing → "Neutral"; Both Neutral → "Neutral"
   Mirrors Structure pillar: opposing OBV layers = 0 (not partial credit).
-  Directional bias: Trade OR Trend (whichever is directional; opposing → no bias → 0)
+  Directional bias: Trend OR Drift (whichever is directional; opposing → no bias → 0)
   Scoring: obv_direction checked against structure's directional bias:
     Full alignment (Bullish/Bearish) matching structure → 10
     Leaning matching structure → 5
@@ -750,6 +753,27 @@ It no longer drives a multiplier — used only for popup Vol Signal display.
 **Tail/Long Term H (756-day):** calculated and stored, displayed in popup as context only.
 Not used in conviction formula.
 
+### Drift Signal — MA20 Slope Direction
+```python
+def _compute_drift(closes: list) -> str:
+    """MA20 3-bar slope: compare current MA20 vs MA20 from 3 bars ago."""
+    if not closes or len(closes) < 23:
+        return "Neutral"
+    ma_now = sum(closes[-20:]) / 20.0
+    ma_prev = sum(closes[-23:-3]) / 20.0
+    if ma_now > ma_prev:
+        return "Bullish"
+    if ma_now < ma_prev:
+        return "Bearish"
+    return "Neutral"
+```
+- Computed inline in `compute_output` from existing `history_json` closes — no new price_cache columns
+- Named "Drift" to reserve "Momentum" for a future ROC-based component
+- Stored in `signal_output.drift_dir` and `signal_history.drift_dir`
+- Gates Viewpoint (replaces Trade in the alignment check): Viewpoint = Trend + Drift
+- Contributes +10 to structural score when confirming Trend direction
+- Feeds `_struct_bias` as secondary signal (Trend OR Drift)
+
 ### Direction Determination — Pivots Only (H has NO role)
 
 **H does not determine direction. H is stored for regime classification display only (v1.8+: H removed from conviction formula and band width).**
@@ -768,10 +792,13 @@ elif pivot_direction == "downtrend" and current_price < c:
 else:
     trade_dir = "Neutral"
 
-# Viewpoint — three states only
-if trade_dir == "Bullish" and trend_dir == "Bullish":
+# Drift — MA20 3-bar slope direction
+drift_dir = _compute_drift(closes)  # Bullish (rising) | Bearish (falling) | Neutral (flat)
+
+# Viewpoint — three states only (Trend + Drift gate)
+if trend_dir == "Bullish" and drift_dir == "Bullish":
     viewpoint = "Bullish"
-elif trade_dir == "Bearish" and trend_dir == "Bearish":
+elif trend_dir == "Bearish" and drift_dir == "Bearish":
     viewpoint = "Bearish"
 else:
     viewpoint = "Neutral"
@@ -804,38 +831,38 @@ Each LRR/HRR cell uses its own timeframe's direction for color — not the overa
 
 | Viewpoint | Condition | Conviction |
 |---|---|---|
-| **Bullish** | Trade Bullish + Trend Bullish | Calculated; shown in green when ≥ 45 |
-| **Bearish** | Trade Bearish + Trend Bearish | Calculated; shown in red when ≥ 45 |
-| **Neutral** | Any other combination — including one Neutral, one Bullish/Bearish, or opposite directions | Calculated; shown in **grey `#8899aa`** when ≥ 45; never alerts |
+| **Bullish** | Trend Bullish + Drift Bullish (MA20 rising) | Calculated; shown in green when ≥ 45 |
+| **Bearish** | Trend Bearish + Drift Bearish (MA20 falling) | Calculated; shown in red when ≥ 45 |
+| **Neutral** | Any other combination — Trend Neutral, Drift doesn't confirm, or opposing | Calculated; shown in **grey `#8899aa`** when ≥ 45; never alerts |
 
 **No Diverging state.** Three states only: Bullish, Bearish, Neutral.
 **Conviction always calculates (v2.1)** — blank (None) only when score < 45. Neutral viewpoint displays score in grey; it does not suppress calculation. Conviction color follows viewpoint: green (Bullish), red (Bearish), grey (Neutral) — never score-based.
 
 ### Alert Flag ⚡ Trigger (v2.0 — TWO conditions)
 1. Viewpoint = Bullish OR Bearish (never fires on Neutral)
-2. Conviction ≥ 80 (v2.0; requires full structural 50 + quad aligned 20 + partial VIX 10 minimum)
+2. Conviction ≥ 80 (v2.0; requires Trend 30 + Drift 10 + quad aligned 20 + VIX 15 + Trade 5 minimum)
 
 ### The Four Trading Scenarios
 
-**Scenario 1 — Bearish Trend + Bearish Trade (Aligned Short)**
-- Viewpoint = Bearish
+**Scenario 1 — Bearish Trend + Bearish Drift (Aligned Short)**
+- Viewpoint = Bearish (Trend + Drift aligned)
 - Add to short: price near or at HRR (entry zone on bounce)
-- Remove short: Trade or Trend breaks (price closes above C)
+- Remove short: Trend breaks (price closes above C) or Drift turns Bullish
 
-**Scenario 2 — Bearish Trend, Trade Turning**
-- Viewpoint = Neutral
-- Trade breaks upward: higher low C forms, price closes above B on trade timeframe
-- Either continues (→ Scenario 3) or Trade fails and breaks back below new C
+**Scenario 2 — Bearish Trend, Drift Turning**
+- Viewpoint = Neutral (Drift flips Bullish while Trend still Bearish)
+- MA20 slope turns up — Drift = Bullish, but Trend structure still intact
+- Either continues (→ Scenario 3 if Trend also flips) or Drift reverses back
 
-**Scenario 3 — Bullish Trend + Bullish Trade (Aligned Long)**
-- Viewpoint = Bullish
+**Scenario 3 — Bullish Trend + Bullish Drift (Aligned Long)**
+- Viewpoint = Bullish (Trend + Drift aligned)
 - Add to long: price near or at LRR
 - Lighten long: price approaching HRR
-- Remove long: Trade or Trend breaks (price closes below C)
+- Remove long: Trend breaks (price closes below C) or Drift turns Bearish
 
-**Scenario 4 — Bullish Trend, Trade Breaking Down**
-- Viewpoint = Neutral (Trade broken, Trend still Bullish)
-- Trade Dir flips to Neutral immediately on close below C
+**Scenario 4 — Bullish Trend, Drift Breaking Down**
+- Viewpoint = Neutral (Drift flips Bearish while Trend still Bullish)
+- MA20 slope turns down — early warning before Trend structure breaks
 - LRR/HRR still show — displayed grey
 - Watch for Trend break (price closes below Trend C)
 
@@ -1024,9 +1051,10 @@ signal_output:  ticker, timeframe, lrr, hrr, structural_state,
                 quad_score,                 ← Integer — additive conviction contribution: +20/+15/0/−11/−15; shown in popup (v2.0)
                 hrr_snapped,                ← Boolean — v1.9.1 trade RR snap state (HRR side, persistent across runs)
                 lrr_snapped,                ← Boolean — v1.9.1 trade RR snap state (LRR side, persistent across runs)
-                structural_score,           ← Integer — pillar: 0/25/50 (trade tf only; NULL on trend/lt)
+                structural_score,           ← Integer — pillar: 0/30/35/40/45 (trade tf only; NULL on trend/lt)
                 volume_score,               ← Integer — pillar: 0/10/15 (trade tf only)
                 vix_score,                  ← Integer — pillar: 0/5/10/15 (trade tf only)
+                drift_dir,                  ← String(10) — "Bullish"|"Bearish"|"Neutral" — MA20 3-bar slope direction
                 calculated_at
                 UNIQUE(ticker, timeframe)
 
@@ -1374,7 +1402,7 @@ git checkout -- .   # roll back if needed
 38. **Neo cannot read .docx files** — CLAUDE.md is the primary spec source for Neo; keep it current
 39. **One close through break level = BREAK_OF_TRADE immediately** — break level = C normally; B when `d_extended=True`. Direction HOLDS during BREAK_OF_TRADE (not Neutral). Forgiveness: recovery on day 1 restores prior state; 2+ consecutive closes = BREAK_CONFIRMED → direction → Neutral. Recovery from BREAK_CONFIRMED: close above B (non-extended); close at or above D when `d_extended=True` (B is too close to oscillation noise — only re-establishing D proves the extension can be reclaimed). Implemented in `compute_d_and_state`: early-return `UPTREND_VALID` when `current_price >= d_price`; `_check_break_confirmed` receives `d_price` as recovery threshold instead of `b_price` in d_extended branches.
 40. **Break of Trade = reduce to minimum position** — Trend break = go to zero (full exit)
-41. **OBV direction is a two-layer consensus** — `_obv_direction(slope_dir, lookback_dir)` combines both OBV layers (MA20 slope + 21-bar lookback) into a single directional assessment, mirroring Structure pillar logic: both aligned → Bullish/Bearish, one directional + one Neutral → Leaning Bullish/Leaning Bearish, opposing → Neutral, both Neutral → Neutral. `_obv_lookback_direction()` handles the raw 21-bar comparison (`_OBV_LOOKBACK = 21`). **Volume scoring mirrors Structure:** `obv_direction` checked against structure's directional bias (Trade OR Trend — whichever is directional; opposing = no bias = 0). Full alignment matching structure = 10 (+5 acceleration = 15). Leaning matching structure = 5. Opposing or Neutral = 0. **`vol_signal` is no longer computed** — `obv_direction` (Bullish/Bearish/Leaning/Neutral) replaces both `vol_signal` and the old single-layer `obv_direction`. DB column `vol_signal` retained (no migration) but written as None.
+41. **OBV direction is a two-layer consensus** — `_obv_direction(slope_dir, lookback_dir)` combines both OBV layers (MA20 slope + 21-bar lookback) into a single directional assessment, mirroring Structure pillar logic: both aligned → Bullish/Bearish, one directional + one Neutral → Leaning Bullish/Leaning Bearish, opposing → Neutral, both Neutral → Neutral. `_obv_lookback_direction()` handles the raw 21-bar comparison (`_OBV_LOOKBACK = 21`). **Volume scoring mirrors Structure:** `obv_direction` checked against structure's directional bias (Trend OR Drift — whichever is directional; opposing = no bias = 0). Full alignment matching structure = 10 (+5 acceleration = 15). Leaning matching structure = 5. Opposing or Neutral = 0. **`vol_signal` is no longer computed** — `obv_direction` (Bullish/Bearish/Leaning/Neutral) replaces both `vol_signal` and the old single-layer `obv_direction`. DB column `vol_signal` retained (no migration) but written as None.
 42. **Schwab API approved for Phase 5** — OBV volume source swap point flagged with `# PHASE 5 TODO` in `yahoo_finance.py`; OBV engine in `conviction_engine.py` is source-agnostic
 43. **schwab-py is the only Schwab API client** — never write raw HTTP calls against Schwab endpoints
 44. **Yahoo Finance is a permanent fallback** — never remove it; always called when Schwab is unavailable
@@ -1398,14 +1426,14 @@ git checkout -- .   # roll back if needed
 59. **WARNING is a boolean flag only** — `signal_output.warning`; never override `structural_state` to "WARNING" in `conviction_engine.py`
 60. **`d_extended` is the sole source of truth for B vs C break level** — `is_warning`, `_compute_warn_flags`, popup `tradeBreakIsB`/`trendBreakIsB`, and `warnTip` all read `d_extended` directly; never derive from state string comparison
 61. **Vol score tiers (v2.3 — asset-specific vol indices, direction-aware, Edgy eliminated)** — Each ticker routes to its relevant volatility index via `_resolve_vol_index(ticker, asset_class)`: ticker-level map (`VOL_INDEX_TICKER_MAP`) → Domestic Equities default to VIX → None (flat +15). **Vol indices:** VIX (broad SPX equities), VXN (Nasdaq-heavy: QQQ/NDX/XLK/SMH/SOXX/CIBR/QTUM/GRID/AAPL/MSFT/NVDA/AVGO/GOOGL/META/NFLX), RVX (Russell: IWM/RUT), GVZ (Gold: GLD/SGOL//GC), OVX (Oil: USO//CL/XOP/OIH), MOVE (Fixed Income: TLT//ZN/SHY/IEF/VGIT/LQD/MBB/PFF/TIP). **Per-index thresholds** `(investable_ceiling, danger_floor)` in `VOL_INDEX_THRESHOLDS`: VIX (19,30), VXN (22,32), RVX (21,31), GVZ (22,32), OVX (38,60), MOVE (85,120). **Three tiers (Edgy eliminated → folded into Choppy):** Bullish/Neutral: Investable+ (close < ceiling AND HRR < ceiling) +15 · Investable (close < ceiling) +10 · Choppy (ceiling–danger) +0 · Danger (≥ danger) −10. Bearish (asymmetric, +5 floor): Danger +15 · Choppy +10 · Tradable +5 (label is "Tradable" not "Investable" — low vol doesn't help a short thesis; frontend also maps stale "Investable"/"Calm" → "Tradable" when structural lean is Bearish). **Vol scorer uses `_struct_bias` (structural lean), not `viewpoint`** — same variable as Volume and Quad pillars; a Neutral viewpoint with a Bearish lean gets the asymmetric Bearish scoring (+5 Tradable floor), not the Bullish/Neutral scoring (+10/+15). `get_vol_score(vol_close, vol_hrr, thresholds, viewpoint)` is the generic scorer (the `viewpoint` parameter receives `_struct_bias` from the caller); `get_vix_score()` wraps it with index routing. Security detail endpoint resolves vol index per ticker and returns `vol_index` field. Popup label: "Vol Regime" (not "VIX Regime"). **NATH Boost (+5 structural):** Viewpoint=Bullish AND trade HRR > `price_cache.ath` → structural_score += 5 (was ×1.05 on final score pre-v2.1). **Target-side warn (−5 structural):** hrr_warn (Bullish) or lrr_warn (Bearish) → structural_score −= 5 (was ×0.92 on final score pre-v2.1). Both baked into the structural pillar.
-66. **Quad score uses structural lean (`_struct_bias`), not viewpoint (v2.0)** — `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0/0.0/-1.0. `_struct_bias` = directional lean from Trade or Trend (whichever is non-Neutral; opposing = Neutral) — same variable the Volume pillar uses. Gate: `_struct_bias == "Neutral"` AND `structural_base == 0` (raw 0/25/50 alignment, before ±5 adjustments) → quad_score=0. **Aligned = (Bullish lean + Best) OR (Bearish lean + Worst)** — the structural lean must agree with the quad tailwind direction. A Neutral viewpoint with a Leaning Bearish structure (structural_score=25) in a Worst quad scores **Aligned** (+20), not Misaligned. Previously used `viewpoint` which required full Bullish/Bearish alignment — Neutral viewpoints always scored Misaligned even when the lean matched. Aligned: +20 (prob≥0.45) or +15 (prob<0.45). Misaligned: -15 (prob≥0.45) or -11 (prob<0.45). Neutral alignment: 0. `quad_score` (Integer) is stored in `signal_output` and shown in popup (green/red/grey). `quad_mult` still written to `signal_output` for debug only — not in v2.0 formula and not shown in popup. Index sectors always return 0. **Quad alignment LABEL is separate from quad SCORE (ADR-034):** when the structural gate fires (score=0, no direction), `quad_align_label` shows the raw macro stance — "Best" (+1.0), "Worst" (−1.0), or "Neutral" (0.0) — so users see whether the macro environment favors/opposes the security even without directional structure. When structure exists, label shows "Aligned"/"Misaligned" as before. Popup: "Best ▲" green / "Worst ▼" red. Never re-merge label and score.
+66. **Quad score uses structural lean (`_struct_bias`), not viewpoint (v2.0)** — `alignment = get_quad_alignment(asset_class, sector, current_quad)` → +1.0/0.0/-1.0. `_struct_bias` = directional lean from Trend or Drift (whichever is non-Neutral; opposing = Neutral) — same variable the Volume pillar uses. Gate: `_struct_bias == "Neutral"` AND `structural_base == 0` (raw 0/30/35/40/45 alignment, before ±5 adjustments) → quad_score=0. **Aligned = (Bullish lean + Best) OR (Bearish lean + Worst)** — the structural lean must agree with the quad tailwind direction. A Neutral viewpoint with a Leaning Bearish structure (structural_score=30) in a Worst quad scores **Aligned** (+20), not Misaligned. Previously used `viewpoint` which required full Bullish/Bearish alignment — Neutral viewpoints always scored Misaligned even when the lean matched. Aligned: +20 (prob≥0.45) or +15 (prob<0.45). Misaligned: -15 (prob≥0.45) or -11 (prob<0.45). Neutral alignment: 0. `quad_score` (Integer) is stored in `signal_output` and shown in popup (green/red/grey). `quad_mult` still written to `signal_output` for debug only — not in v2.0 formula and not shown in popup. Index sectors always return 0. **Quad alignment LABEL is separate from quad SCORE (ADR-034):** when the structural gate fires (score=0, no direction), `quad_align_label` shows the raw macro stance — "Best" (+1.0), "Worst" (−1.0), or "Neutral" (0.0) — so users see whether the macro environment favors/opposes the security even without directional structure. When structure exists, label shows "Aligned"/"Misaligned" as before. Popup: "Best ▲" green / "Worst ▼" red. Never re-merge label and score.
 67. **Quad settings use upsert semantics** — POST to `/api/quad/settings` checks `UNIQUE(country, forecast_month, quad_type)`: updates existing row if found, inserts new row otherwise. `forecast_month` replaces the old `effective_date` key. Conviction reads the US monthly row whose `forecast_month` = conviction month (see rule #102). Admin Panel → QUAD SETUP manages this.
 102. **Conviction engine quad blend — linear current→next month (v2.2)** — `run_output()` in `signals.py` fetches BOTH the current AND next month's US monthly quad. A linear blend weight ramps from 0% (day 1–14) to 100% (last day of month), starting on day 15 (`_BLEND_START_DAY = 15`). Formula: `w = (day - 15) / (days_in_month - 15)`. Both quads are scored independently (`_score_single_quad` in `conviction_engine.py`), then blended: `quad_score = round((1-w) × cur_score + w × nxt_score)`. The `quad_align_label` follows the dominant weight (≥50% → next month's label). International Equities still route to country quarterly quads (no blend — quarterly rows). The **visual** quad columns (Quad Now / Quad Next / Quad Qtr) are unaffected — they always show the calendar month. If the next month's quad row is not yet configured, blend uses current month only (`w` effectively 0). Supersedes the hard day-24 cutoff.
 68. **Quad alignment uses sector-first priority** — `get_quad_alignment()` checks `sector` key first, then `asset_class`. This correctly handles USD (sector="USD"), GLD/SGOL//GC (sector="Gold"), JPY/FXY (sector="Yen"), FXB (sector="British Pound"), FXE (sector="Euro"), IBIT (sector="Cryptocurrency"). Foreign Exchange asset_class is the fallback for any unlisted FX ticker.
 118. **Equities asset class quad mapping: Best Q1/Q2, Neutral Q3, Worst Q4** — `Domestic Equities` and `International Equities` are in `QUAD_ALIGNMENT` best asset_class for Q1 (Goldilocks) and Q2 (Reflation), worst for Q4 (Deflation), and **NOT listed** in Q3 (Stagflation) — making them Neutral at the asset_class level. Hedgeye backtest data shows SPY EV is +6.6% (Q1), +4.6% (Q2), −0.1% (Q3), −0.8% (Q4); Q3 is essentially flat because sector winners (Utilities, Energy, Tech, Health Care) and losers (Financials, Comm Services, Consumer Disc, Industrials) cancel out for broad indices. Individual equity sectors still score Best/Worst in Q3 via sector-level matching — this only affects tickers that fall through to asset_class (e.g. SPY/QQQ/IWM with sector="Broad Market"). Do not re-add equities to Q3 worst asset_class.
 71. **International Equities route to country quarterly quads** — `signals.py` `run_output()` routes tickers with `asset_class = "International Equities"` to their country's current-quarter quad (e.g. EWJ sector="Japan" → "JP" → `YYYY-QN` quarterly row) instead of the US monthly quad. `_SECTOR_TO_CODE` dict in `signals.py` maps sector labels to ISO country codes. If no country quarterly quad is set, falls back to no quad (multiplier = 1.00). Dashboard columns for international rows show the country quarterly quad (no probability — quarterly rows always store 1.0); US monthly quad + probability shown for all other rows. Quarterly data fetched in `App.js` from `/api/quad/settings?country=ALL&type=quarterly` on page load, mapped via `CODE_TO_SECTOR` to build `countryQuads` state `{sector: {cur, next}}`.
 72. **Quad UI colors (dashboard + QuadSetup)** — Q1: `#007a55` (dark green, white text) · Q2: `#00e5a0` (system green) · Q3: `#f0b429` (system amber) · Q4: `#ff4d6d` (system red). Box style: `background: color + "55"` (33% opacity) + `border: 1px solid color` + white text — matches QuadBtn active style. Do not introduce new quad color values.
-73. **Conviction tooltip — 3-line format (v2.2)** — Line 1: formula `Structural (−5 to 50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100`. Line 2: `Trade(15) + Trend(30) · Quad blends current→next month day 15→EOM`. Line 3: display rules `Show ≥ 45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥ 80`. Security page: when conviction is blank, tooltip reads "No score — conviction below 45%". Conviction color always follows viewpoint (green/red/grey), never score-based. Do not revert to proximity/multiplier descriptions.
+73. **Conviction tooltip — 3-line format (v2.2)** — Line 1: formula `Structural (−5 to 50) + Quad (±20) + Volume (15) + Vol (−10 to +15) → floor(0) → cap 100`. Line 2: `Trend(30) + Drift(10) + Trade(5) · Quad blends current→next month day 15→EOM`. Line 3: display rules `Show ≥ 45 · Green (Bullish) · Red (Bearish) · Grey (Neutral) · ⚡ ≥ 80`. Security page: when conviction is blank, tooltip reads "No score — conviction below 45%". Conviction color always follows viewpoint (green/red/grey), never score-based. Do not revert to proximity/multiplier descriptions.
 69. **Slope boost changed to × 1.20 in v1.9** (was × 1.17 in v1.8). Do not revert to 1.17.
 62. **H_eff (asymmetric Hurst) asset class scope (Phase 6)** — asymmetric H (H_trend_up / H_trend_down) applies to Commodities and Foreign Exchange ONLY. All other asset classes use symmetric H_trend. `/ZN` (10-Year Treasury futures) is EXCLUDED from asymmetric H despite being a futures ticker — its price series is driven by rate policy, not directional commodity flows; always uses symmetric H_trend.
 63. **ΔH (delta-H) threshold for display color** — `h_trade_delta >= 0` → green (momentum improving or stable); `h_trade_delta < -0.05` → red (meaningful deterioration); between -0.05 and 0 → neutral grey. Stored in `signal_output.h_trade_delta`; display only — NOT in conviction formula.
@@ -1450,14 +1478,14 @@ git checkout -- .   # roll back if needed
 106. **VRP regime labels (Security Analysis page)** — computed from IV Rank + VRP (percentage points). Priority order: **Falling Knife** (red, IV Rank > 80, VRP < −15) · **Gamma Trap** (amber, IV Rank > 50, VRP < −10) · **Yield Harvest** (green, IV Rank > 50, VRP > 5) · **Upside Panic** (amber, IV Rank < 30, VRP > 5) · **Quiet Accumulation** (light green `#66eebb`, IV Rank < 20, −2 < VRP < 5) · **Neutral** (grey, everything else). Displayed inline next to VRP percentage in the vol metrics row. Source: ToS VRP Matrix script.
 107. **Sector Performance LIVE mode** — `GET /api/sector-performance?live=true` fetches fresh Schwab quotes for the 12 sector tickers + SPX only (not all ~107 tickers), computes perf from live prices, returns with `refreshed_at` timestamp. Frontend: EOD/LIVE toggle tabs with `sessionStorage` persistence (navigating away and back restores LIVE tab if previously fetched). Re-clicking LIVE always re-fetches. LIVE button disabled after 4 PM ET weekdays and on weekends (EOD data is current). No DB table — browser-only caching.
 108. **Security detail endpoint NaN guard (`_safe()`)** — `security.py` wraps all float fields with `_safe(v)` (NaN/Inf → None) before returning. FastAPI's `JSONResponse` uses `allow_nan=False`, so any NaN in the response dict crashes serialization AFTER the CORS middleware passes — the error response lacks CORS headers → browser sees "Failed to fetch" (not a JSON error). Index tickers (SPX, NDX, RUT) had NaN in `signal_history.lrr/hrr` rows which propagated into `rr_history`. The `is not None` check does not catch NaN (`float('nan') is not None` → True). Always use `_safe()` or `math.isnan()` when guarding against NaN in API responses.
-109. **Security Analysis pillar boxes show raw scores** — STRUCTURE: 0/25/50, VOLUME: 0/5/10/15, VOLATILITY: 0/5/10/15, QUAD: -15 to +20. Labels derived from raw values: STRUCTURE (Bullish/Bearish/Leaning Bullish/Leaning Bearish/Neutral — viewpoint-aware, see rule 111), VOLUME (`obv_direction`: Bullish/Bearish/Leaning Bullish/Leaning Bearish/Neutral — two-layer consensus), QUAD (Aligned/Misaligned/Neutral/Best/Worst — Best/Worst shown when structural gate fires, see rule #66 + ADR-034). **VOLATILITY label uses `vix_regime` from backend** (not derived from score); "N/A" regime shows "Full Credit" (+15 flat, no applicable vol index). VOLATILITY detail text shows the resolved vol index name (VIX/VXN/RVX/GVZ/OVX/MOVE). Colors: STRUCTURE green≥50/amber≥25/grey, VOLUME green≥10/amber≥5/grey, VOLATILITY green≥10/grey (no amber — Edgy eliminated), QUAD green>0/red<0/grey **+ green for Best or red for Worst when score=0 (raw macro stance, not directional alignment)**.
+109. **Security Analysis pillar boxes show raw scores** — STRUCTURE: 0/30/35/40/45 (Trend 30 + Drift 10 + Trade 5), VOLUME: 0/5/10/15, VOLATILITY: 0/5/10/15, QUAD: -15 to +20. Labels derived from raw values: STRUCTURE (Bullish/Bearish/Leaning Bullish/Leaning Bearish/Neutral — viewpoint-aware, see rule 111), VOLUME (`obv_direction`: Bullish/Bearish/Leaning Bullish/Leaning Bearish/Neutral — two-layer consensus), QUAD (Aligned/Misaligned/Neutral/Best/Worst — Best/Worst shown when structural gate fires, see rule #66 + ADR-034). **VOLATILITY label uses `vix_regime` from backend** (not derived from score); "N/A" regime shows "Full Credit" (+15 flat, no applicable vol index). VOLATILITY detail text shows the resolved vol index name (VIX/VXN/RVX/GVZ/OVX/MOVE). Colors: STRUCTURE green≥40/amber≥30/grey, VOLUME green≥10/amber≥5/grey, VOLATILITY green≥10/grey (no amber — Edgy eliminated), QUAD green>0/red<0/grey **+ green for Best or red for Worst when score=0 (raw macro stance, not directional alignment)**.
 110. **Security Analysis chart price bubbles** — `PriceBubble` SVG component renders colored bubbles at the right end of each `ReferenceLine`: LRR (green `#00e5a0`), HRR (red `#ff4d6d`), current price (white `#ffffff` with dark text). Smart overlap avoidance: when price is within 18px of HRR or LRR, the price bubble offsets vertically. Render order: LRR → HRR → Price (price on top). Current price `ReferenceLine` uses `stroke="transparent"` (no visible line, bubble only). Chart grid stroke `#3a4f65` (brighter than default `#1a2a3a` for readability). Chart margins `{ top: 20, right: 55, bottom: 10, left: 10 }` — top/bottom provide bubble room outside the grid (no phantom grid lines); right accommodates bubble width. Y-axis `domain: ["auto", "auto"]` — no padding (avoids odd tick values). Legend labels: "LRR (Buy/Add)" and "HRR (Sell/Reduce)".
-111. **STRUCTURE pillar label is viewpoint-aware** — `pillarLabel("STRUCTURE", raw, data)` returns the actual viewpoint for score ≥ 50 (`data.viewpoint` — "Bullish"/"Bearish"), "Leaning {direction}" for score = 25 (uses whichever of Trade/Trend direction is non-Neutral), and "Neutral" for score = 0. This is a frontend-only translation — backend `structural_score` values (0/25/50) are unchanged; the AI summary prompt reads raw backend fields directly (`structural_score`, `viewpoint`, `trade_direction`) and never sees these labels.
+111. **STRUCTURE pillar label is viewpoint-aware** — `pillarLabel("STRUCTURE", raw, data)` returns the actual viewpoint for score ≥ 40 (`data.viewpoint` — "Bullish"/"Bearish"), "Leaning {direction}" for score ≥ 30 (uses Trend direction only), and "Neutral" for score = 0. This is a frontend-only translation — backend `structural_score` values (0/30/35/40/45) are unchanged; the AI summary prompt reads raw backend fields directly (`structural_score`, `viewpoint`, `trade_direction`, `drift_dir`) and never sees these labels.
 112. **VRP regime is a separate labeled field with hover tooltips** — the Security Analysis vol metrics row shows VRP as a percentage only; the regime label (Falling Knife / Gamma Trap / Yield Harvest / Upside Panic / Quiet Accumulation / Neutral) appears in its own "VOLATILITY REGIME" field with independent header and color. Each regime label has a `title` tooltip explaining the condition and how to apply it (e.g. Yield Harvest → sell premium; Falling Knife → avoid selling premium). Vol metrics headers: "IV30" and "HV30" (not "IMPLIED VOL 30D" / "HISTORICAL VOL (HV30)"). Regime computation unchanged (rule 106).
 113. **Security Analysis tab content scrolls at maxHeight 115px** — tab content container uses `maxHeight: 115` + `overflowY: auto` so the block height stays fixed across tabs (Risk Range, AI Analysis, Profile). Content taller than 115px scrolls within the tab; shorter content fits without scrollbar. The outer block never stretches.
 114. **Security Analysis timestamp formatting** — `updated_at` (raw UTC string from backend) is converted to readable ET via `toLocaleString("en-US", { timeZone: "America/New_York" })` + " ET" suffix. Fallback to raw string on parse failure.
 115. **Security Analysis layout spacing** — VIEWPOINT/CONVICTION labels use `marginBottom: 8` for label-to-value gap. Conviction value is centered under its label (`textAlign: "center"`). Vol metrics row labels use `marginBottom: 6`; row has `marginBottom: 24` for breathing room before tabs.
-117. **Security Analysis pillar detail text — two-line format** — VOLATILITY: description uses vol index name + level + positioning guidance. QUAD: two-line format — line 1 describes how the macro environment treats the security's sector/style ("X historically perform well/poorly in the current macro environment"), line 2 explains alignment with price structure ("The macro environment supports current price structure" or "Currently working against {direction} price structure"). **"perform well" vs "perform poorly" is direction-aware:** "Best" or (Aligned+Bullish) or (Misaligned+Bearish) → "perform well" (quad is favorable for the sector); "Worst" or (Aligned+Bearish) or (Misaligned+Bullish) → "perform poorly" (quad is unfavorable). Previously "Aligned" was always treated as "Best" — wrong for Bearish tickers where Aligned means Worst-for-sector (good for the short thesis). Uses `structDir` (Trade or Trend lean) not `viewpoint` for determining quad direction, consistent with rule #66. Generic sectors (Index, Broad Market, Equities) fall through to `asset_class` for the label. Neutral quad shows single line: "No strong historical edge for X in the current macro environment."
+117. **Security Analysis pillar detail text — two-line format** — VOLATILITY: description uses vol index name + level + positioning guidance. QUAD: two-line format — line 1 describes how the macro environment treats the security's sector/style ("X historically perform well/poorly in the current macro environment"), line 2 explains alignment with price structure ("The macro environment supports current price structure" or "Currently working against {direction} price structure"). **"perform well" vs "perform poorly" is direction-aware:** "Best" or (Aligned+Bullish) or (Misaligned+Bearish) → "perform well" (quad is favorable for the sector); "Worst" or (Aligned+Bearish) or (Misaligned+Bullish) → "perform poorly" (quad is unfavorable). Previously "Aligned" was always treated as "Best" — wrong for Bearish tickers where Aligned means Worst-for-sector (good for the short thesis). Uses `structDir` (Trend or Drift lean) not `viewpoint` for determining quad direction, consistent with rule #66. Generic sectors (Index, Broad Market, Equities) fall through to `asset_class` for the label. Neutral quad shows single line: "No strong historical edge for X in the current macro environment."
 118. **Security Analysis ticker search validates before navigating** — `handleNav` in `SecurityAnalysis.js` checks `tickerList.some(t => t.ticker === s)` before calling `navigate()`. If the user types a non-existent ticker and presses Enter, nothing happens (no broken page navigation). The dropdown filter already shows "no results" — this guards the form submit path.
 119. **Volume pillar text says "volume signals" not "OBV layers"** — pillar detail text in `SecurityAnalysis.js` uses "both volume signals aligned" (full direction) and "one volume signal directional" (leaning direction). The OBV implementation detail is hidden from the user-facing label.
 120. **Scheduled EOD job bypasses `schwab_fetch_all` idempotency check (ADR-033)** — `schwab_fetch_all(db, force=True)` from the scheduler; manual REFRESH DATA uses `force=False` (default). The idempotency check (`cache_date == today` for all Schwab tickers) prevents redundant API calls on double-clicks, but previously also blocked the 4 PM scheduled run when REFRESH DATA was clicked earlier that day — the actual EOD close was never captured, producing stale `price_cache.close` (from the intraday monitor) and stale `history_json` (from the earlier manual fetch). See **ADR-033**.
@@ -1469,6 +1497,7 @@ git checkout -- .   # roll back if needed
 126. **Trend confirmation buffer for structure replacement (`signals.py` `run_pivots`)** — when the Trend timeframe engine returns a NEW structure (different direction from prior VALID state) that is NOT a break within the same structure, the caller holds the prior pivots for 1 bar and sets `BREAK_OF_TREND` (direction holds). On the next bar: if prior state is already `BREAK_OF_TREND`, the buffer does NOT re-fire (`prior_is_valid` check) — the engine result passes through. This filters single-day oscillation noise where price hovers right at the C boundary (e.g. SPY 10/11/2023: close 436.32 vs C=436.29). Applied in `run_pivots()` AFTER computing pivots, BEFORE writing to `signal_pivots`. Does NOT apply to Trade or LT timeframes. Does NOT interfere with actual breaks (BREAK_OF_TRADE/BREAK_OF_TREND from the engine pass through unmodified).
 127. **TREND_DIRECTION_CHANGE is an EOD alert (`eod_alerts.py`)** — fires after `calculate_signals()` in the scheduler, NOT in the intraday monitor. Compares current `signal_output` trend directions vs prior day's `signal_history`. Two modes: "provisional" (today differs from yesterday) and "confirmed" (yesterday also differed from day-before, i.e. the change persisted for 2 consecutive days). Uses per-user alert delivery via `_load_alert_recipients` (same pattern as intraday monitor). Non-fatal step 3b in the EOD scheduler chain.
 128. **Pivot intact check uses walked values, not raw (`pivot_engine.py`, ADR-038)** — `compute_pivots_for_timeframe` finds both raw uptrend and downtrend ABCs, walks C and B on BOTH using all pivots (not filtered), THEN checks `_price_on_correct_side` on the walked values to select the winner. Previously `find_abc_structure` checked intact on raw un-walked values before walking happened — the walked break level (especially B when `d_extended=True`) can differ significantly, producing false NO_STRUCTURE or picking the wrong structure. `find_abc_structure` is unchanged but no longer called from `compute_pivots_for_timeframe` (kept for backward compat). The BREAK_CONFIRMED handler reuses already-walked opposite structures. **Do not revert to checking intact on raw values** — the raw check and walked check can disagree whenever B-walking moves the break level (QQQ 8/3: raw B=693.69 → walked B=709.43; price 700.07 was between them).
+129. **Viewpoint gates on Trend + Drift, not Trend + Trade** — Viewpoint = Bullish requires `trend_dir == "Bullish" AND drift_dir == "Bullish"`. Viewpoint = Bearish requires `trend_dir == "Bearish" AND drift_dir == "Bearish"`. Trade direction is a +5 kicker in the structural score but does NOT gate Viewpoint. Drift = `_compute_drift(closes)` — MA20 3-bar slope (mean of last 20 closes vs mean of closes[-23:-3]). `_struct_bias` = Trend OR Drift (whichever is directional; opposing = Neutral). Never revert Viewpoint to Trade + Trend alignment.
 116. **History gap detection and auto-backfill (`schwab_market_data.py`)** — `_history_fetch_mode` now detects missing NYSE trading days and escalates `skip`→`short` or `append`→`short` to trigger a full history fetch that fills gaps via `_upsert` merge. Two checks: (1) **Internal gap scan** (calendar_gap==0 / skip path): scans last 30 stored dates against NYSE calendar; any missing sessions → `short`. (2) **Forward gap prevention** (calendar_gap 2–5 / append path): checks for missed NYSE sessions between last stored date and today; any found → `short` (previously `_append_bar` only added today's bar, permanently losing intermediate trading days). Non-NYSE tickers (`_NON_NYSE_CALENDAR`: USD, JPY, /CL, /ZN, /GC, /HG) are exempt from both checks. **`scan_history_gaps()` in `system_status.py`** is the standing health check — scans all tickers for missing NYSE days in the last ~20 sessions; wired into `compute_data()` as amber `history_gaps` state (precedence: after integrity red, before run checks). The 2026-08-10 incident: 4 trading days (7/23, 7/30, 7/31, 8/06) missing across ALL ~50 tickers due to `_append_bar` silently dropping intermediate bars — corrupted OBV accumulation, MA20 slope, and downstream conviction scores (SPY volume_score 0→10, conviction updated after fix). REFRESH DATA self-heals via the `short` escalation.
 
 ---
