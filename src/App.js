@@ -805,7 +805,8 @@ function Dashboard() {
         </td>
         {/* Trade Dir */}
         <td style={{ padding: "9px 8px", fontWeight: "600",
-          color: row.tradeDir === "Neutral" && row.emergingDir
+          color: row.tradeState === "BREAK_OF_TRADE" ? "#f0b429"
+            : row.tradeDir === "Neutral" && row.emergingDir
             ? (row.emergingDir === "Bullish" ? "#00e5a0" : "#ff4d6d")
             : dirColor(row.tradeDir)
         }}>
@@ -813,6 +814,9 @@ function Dashboard() {
             ? <span title="Emerging — No confirmed ABCD pivot structure.">~ {row.emergingDir}</span>
             : <>{dirIcon(row.tradeDir)} {row.tradeDir}</>
           }
+          {row.tradeState === "BREAK_OF_TRADE" && (
+            <span title={row.tradeDir === "Bullish" ? "Break of Trade Support — watching for confirmation" : "Break of Trade Resistance — watching for confirmation"} style={{ cursor: "help" }}> ⚠</span>
+          )}
         </td>
         {/* Trade LRR — always show (grey when Neutral, color = direction otherwise) */}
         <td style={{ padding: "9px 8px", color: dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeLrrWarn), fontVariantNumeric: "tabular-nums" }}>
@@ -1234,9 +1238,9 @@ function Dashboard() {
           // ── TRADE ────────────────────────────────────────────────────────
           SECTION("TRADE"),
           ["__dual__", [
-            ["Trade Dir", row.tradeDir === "Neutral" && row.emergingDir ? `~ ${row.emergingDir}` : `${dirIcon(row.tradeDir)} ${row.tradeDir}`,
-                          row.tradeDir === "Neutral" && row.emergingDir ? (row.emergingDir === "Bullish" ? "#00e5a0" : "#ff4d6d") : dirColor(row.tradeDir),
-                          false, row.tradeDir === "Neutral" && row.emergingDir ? "Emerging — No confirmed ABCD pivot structure." : null],
+            ["Trade Dir", row.tradeDir === "Neutral" && row.emergingDir ? `~ ${row.emergingDir}` : `${dirIcon(row.tradeDir)} ${row.tradeDir}${row.tradeState === "BREAK_OF_TRADE" ? " ⚠" : ""}`,
+                          row.tradeState === "BREAK_OF_TRADE" ? "#f0b429" : row.tradeDir === "Neutral" && row.emergingDir ? (row.emergingDir === "Bullish" ? "#00e5a0" : "#ff4d6d") : dirColor(row.tradeDir),
+                          false, row.tradeState === "BREAK_OF_TRADE" ? (row.tradeDir === "Bullish" ? "Break of Trade Support — watching for confirmation" : "Break of Trade Resistance — watching for confirmation") : row.tradeDir === "Neutral" && row.emergingDir ? "Emerging — No confirmed ABCD pivot structure." : null],
             ["Trade State", row.tradeState || "—", stateColor(row.tradeState), true, null]
           ]],
           ["Trade LRR",    row.tradeLRR != null ? `${fmtPrice(row.tradeLRR)}${row.tradeDir !== "Neutral" && row.tradeLrrWarn ? " ⚠" : ""}${row.tradeDir !== "Neutral" && row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],

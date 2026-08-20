@@ -660,6 +660,29 @@ export default function SecurityAnalysis({ defaultTicker }) {
                 color: GREEN, letterSpacing: "0.08em",
               }}>{data.ticker}</span>
               <span style={{ fontSize: 18, color: LABEL }}>{data.description}</span>
+              {(() => {
+                const lrr = data.trade?.lrr;
+                const hrrVal = data.trade?.hrr;
+                const cl = data.close;
+                const band = (lrr != null && hrrVal != null && hrrVal > lrr) ? hrrVal - lrr : null;
+                const proxBull = band != null ? 1 - (cl - lrr) / band : null;
+                const proxBear = band != null ? (cl - lrr) / band : null;
+                const isBuy = data.viewpoint === "Bullish" && data.trade?.direction === "Bullish" && data.trend?.direction === "Bullish" && proxBull != null && proxBull > 0.85;
+                const isSell = data.viewpoint === "Bearish" && data.trade?.direction === "Bearish" && data.trend?.direction === "Bearish" && proxBear != null && proxBear > 0.85;
+                const pct = isBuy ? proxBull : isSell ? proxBear : null;
+                if (!isBuy && !isSell) return null;
+                return (
+                  <span
+                    title={isBuy
+                      ? `Price within entry zone — ${Math.round(pct * 100)}% proximity to LRR (buy/add level)`
+                      : `Price within entry zone — ${Math.round(pct * 100)}% proximity to HRR (sell/reduce level)`}
+                    style={{
+                      display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
+                      letterSpacing: "0.1em", color: "#fff", cursor: "help", marginLeft: 12,
+                      background: isBuy ? GREEN : RED,
+                    }}>{isBuy ? "▲ BUY" : "▼ SELL"} {Math.round(pct * 100)}% prox.</span>
+                );
+              })()}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ textAlign: "right" }}>
@@ -672,6 +695,18 @@ export default function SecurityAnalysis({ defaultTicker }) {
                   {data.viewpoint?.toUpperCase() || "NEUTRAL"}
                 </span>
               </div>
+              {data.trade?.structural_state === "BREAK_OF_TRADE" && (
+                <div style={{ textAlign: "center" }}
+                  title={data.trade?.direction === "Bullish"
+                    ? "Break of Trade Support — watching for confirmation"
+                    : "Break of Trade Resistance — watching for confirmation"}>
+                  <div style={{ fontSize: 11, letterSpacing: "0.12em", color: GREY, marginBottom: 8 }}>TRADE</div>
+                  <span style={{
+                    display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
+                    letterSpacing: "0.1em", color: "#fff", background: "#f0b429", cursor: "help",
+                  }}>⚠ BREAK</span>
+                </div>
+              )}
               {data.trend?.structural_state === "BREAK_OF_TREND" && (
                 <div style={{ textAlign: "center" }}
                   title={data.trend?.direction === "Bullish"
@@ -823,18 +858,22 @@ export default function SecurityAnalysis({ defaultTicker }) {
                       { tf: "Tail",  d: data.lt },
                     ].map(({ tf, d }) => {
                       const isTrendBreak = tf === "Trend" && d?.structural_state === "BREAK_OF_TREND";
-                      const dirClr = isTrendBreak ? "#f0b429" : (d ? vpColor(d.direction) : GREY);
-                      const breakTip = isTrendBreak
-                        ? (d.direction === "Bullish" ? "Break of Trend Support — watching for confirmation" : "Break of Trend Resistance — watching for confirmation")
+                      const isTradeBreak = tf === "Trade" && d?.structural_state === "BREAK_OF_TRADE";
+                      const isBreak = isTrendBreak || isTradeBreak;
+                      const dirClr = isBreak ? "#f0b429" : (d ? vpColor(d.direction) : GREY);
+                      const breakTip = isBreak
+                        ? (d.direction === "Bullish"
+                          ? `Break of ${tf} Support — watching for confirmation`
+                          : `Break of ${tf} Resistance — watching for confirmation`)
                         : null;
                       return (
                       <tr key={tf}>
                         <td style={{ padding: "8px 8px", color: LABEL }}>{tf}</td>
                         <td style={{ padding: "8px 8px", color: dirClr, fontWeight: 600 }}>
                           {d?.direction || "—"}
-                          {isTrendBreak && <span title={breakTip} style={{ cursor: "help" }}> ⚠</span>}
+                          {isBreak && <span title={breakTip} style={{ cursor: "help" }}> ⚠</span>}
                         </td>
-                        <td style={{ padding: "8px 8px", color: isTrendBreak ? "#f0b429" : GREY, fontSize: 10 }}>{d?.structural_state?.replace(/_/g, " ") || "—"}</td>
+                        <td style={{ padding: "8px 8px", color: isBreak ? "#f0b429" : GREY, fontSize: 10 }}>{d?.structural_state?.replace(/_/g, " ") || "—"}</td>
                         <td style={{ padding: "8px 8px", color: d?.lrr_warn ? AMBER : dirClr }}>
                           {d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
                           {d?.direction !== "Neutral" && d?.lrr_warn && <span title={
