@@ -206,6 +206,23 @@ def get_summary(ticker: str, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/{ticker:path}/analyst")
+def get_analyst_data(ticker: str, db: Session = Depends(get_db)):
+    """On-demand analyst momentum data from yfinance. Not cached — fetches live."""
+    ticker = ticker.upper()
+    ticker_row = db.query(Ticker).filter(Ticker.ticker == ticker, Ticker.active == True).first()
+    if not ticker_row:
+        raise HTTPException(status_code=404, detail=f"Ticker {ticker} not found")
+
+    from services.analyst_data import fetch_analyst_data
+    data = fetch_analyst_data(ticker)
+    if data is None:
+        return {"ticker": ticker, "available": False}
+    data["ticker"] = ticker
+    data["available"] = True
+    return data
+
+
 @router.post("/{ticker:path}/summary")
 def regenerate_summary(ticker: str, request: Request, db: Session = Depends(get_db)):
     require_admin_user(request, db)
