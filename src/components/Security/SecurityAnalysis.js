@@ -269,7 +269,7 @@ function AnalystSection({ data, loading, close }) {
               )}
               {/* Visual bar: low — current — avg — high */}
               {pt.low != null && pt.high != null && pt.mean != null && close != null && (
-                <div style={{ marginTop: 16, padding: "0 8px" }}>
+                <div style={{ marginTop: 16, padding: "0 5px" }}>
                   <div style={{ position: "relative", height: 4, background: `${GREY}30`, borderRadius: 2, margin: "0 0 10px" }}>
                     {(() => {
                       const lo = pt.low, hi = pt.high;
@@ -323,12 +323,12 @@ function AnalystSection({ data, loading, close }) {
               {/* Stacked bar */}
               <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
                 {c.buy > 0 && <div style={{ flex: c.buy, background: GREEN }} title={`Buy: ${c.buy}`} />}
-                {c.hold > 0 && <div style={{ flex: c.hold, background: GREY }} title={`Hold: ${c.hold}`} />}
+                {c.hold > 0 && <div style={{ flex: c.hold, background: AMBER }} title={`Hold: ${c.hold}`} />}
                 {c.sell > 0 && <div style={{ flex: c.sell, background: RED }} title={`Sell: ${c.sell}`} />}
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, color: GREEN }}>Buy {c.buy}</span>
-                <span style={{ fontSize: 10, color: GREY }}>Hold {c.hold}</span>
+                <span style={{ fontSize: 10, color: AMBER }}>Hold {c.hold}</span>
                 <span style={{ fontSize: 10, color: RED }}>Sell {c.sell}</span>
               </div>
               <div style={{ fontSize: 11, color: LABEL, textAlign: "center", marginTop: 4 }}>
@@ -815,6 +815,22 @@ export default function SecurityAnalysis({ defaultTicker }) {
                 return <div style={{ fontWeight: 700, color: regimeColor, cursor: tip ? "help" : "default" }} title={tip}>{regime}</div>;
               })()}
             </div>
+            {analystData?.available && (
+              <div>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>ANALYST MOMENTUM</div>
+                <div style={{ fontWeight: 700, color: momentumColor(analystData.momentum_signal) }}>
+                  {analystData.momentum_signal || "—"}
+                </div>
+              </div>
+            )}
+            {analystData?.available && analystData.price_targets?.upside_pct != null && (
+              <div>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", color: GREY, marginBottom: 6 }}>PT UPSIDE</div>
+                <div style={{ fontWeight: 700, color: analystData.price_targets.upside_pct >= 0 ? GREEN : RED, fontFamily: MONO }}>
+                  {analystData.price_targets.upside_pct >= 0 ? "+" : ""}{analystData.price_targets.upside_pct}%
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Block 1 tab navigation */}

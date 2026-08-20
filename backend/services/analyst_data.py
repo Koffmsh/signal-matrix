@@ -148,11 +148,11 @@ def fetch_analyst_data(ticker: str) -> dict | None:
         result["momentum_signal"] = "Peak Consensus"
     elif net_90 >= 3 or (net_90 >= 2 and pt_net >= 3):
         result["momentum_signal"] = "Strong Upgrade"
-    elif net_90 >= 1 or pt_net >= 3:
+    elif net_90 >= 1 or (net_90 >= 0 and pt_net >= 3):
         result["momentum_signal"] = "Upgrade"
-    elif net_90 <= -2 or pt_net <= -3:
+    elif net_90 <= -2 or (net_90 < 0 and pt_net <= -3):
         result["momentum_signal"] = "Downgrade"
-    elif net_90 <= -1 or pt_net <= -2:
+    elif net_90 <= -1 or (net_90 <= 0 and pt_net <= -2):
         result["momentum_signal"] = "Moderate Downgrade"
     else:
         result["momentum_signal"] = "Neutral"
