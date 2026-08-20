@@ -161,6 +161,20 @@ def run_hurst(db: Session) -> dict:
     return {"calculated": len(results), "errors": len(errors), "error_list": errors, "results": results}
 
 
+def _get_current_price(ticker: str, db) -> float | None:
+    """Get the current price from history_json[-1] (consistent with compute_output)."""
+    from models.price_cache import PriceCache
+    row = db.query(PriceCache).filter(PriceCache.ticker == ticker).first()
+    if row and row.history_json:
+        import json
+        prices = json.loads(row.history_json)
+        if prices:
+            return prices[-1]
+    if row and row.close is not None:
+        return row.close
+    return None
+
+
 def run_pivots(db: Session) -> dict:
     """Compute ABC pivot structure for all active tickers."""
     results = []
@@ -180,30 +194,42 @@ def run_pivots(db: Session) -> dict:
 
                 existing = pivot_map.get((ticker, tf))
 
-                # Trend confirmation buffer: when a VALID trend structure is
-                # replaced by NO_STRUCTURE or an opposite-direction structure,
-                # hold the prior state as BREAK_OF_TREND for 1 bar. This
-                # filters single-day noise from structure replacement.
-                # Engine-produced breaks (BREAK_OF_TRADE/BREAK_OF_TREND) are
-                # left untouched — the engine already handles those.
-                if tf == "trend" and existing is not None:
+                # --- Break persistence layer ---
+                # The pivot engine is stateless — it recomputes from scratch
+                # each run. When the recompute returns NO_STRUCTURE (or a
+                # different-direction structure), we check the prior stored
+                # state. If the prior was VALID and price crossed its break
+                # level, record BREAK_OF_TRADE/BREAK_OF_TREND. If price
+                # didn't cross, persist the prior structure. If the prior
+                # was already a provisional break, escalate to BREAK_CONFIRMED.
+                if existing is not None:
                     prior_state = existing.structural_state
                     new_state = tf_data.get("structural_state")
 
-                    prior_is_valid = prior_state in ("UPTREND_VALID", "DOWNTREND_VALID")
-                    engine_break = new_state in ("BREAK_OF_TRADE", "BREAK_OF_TREND")
+                    prior_was_valid = prior_state in ("UPTREND_VALID", "DOWNTREND_VALID")
+                    prior_was_break = prior_state in ("BREAK_OF_TRADE", "BREAK_OF_TREND")
                     same_valid = (
                         (prior_state == "UPTREND_VALID" and new_state == "UPTREND_VALID") or
                         (prior_state == "DOWNTREND_VALID" and new_state == "DOWNTREND_VALID")
                     )
 
-                    if prior_is_valid and not same_valid and not engine_break:
-                        # Day 1: buffer — keep prior pivots, set BREAK_OF_TREND
-                        logger.info(
-                            f"{ticker} [trend]: structure replacement buffered — "
-                            f"{prior_state} → {new_state}, holding as BREAK_OF_TREND"
+                    if prior_was_valid and not same_valid:
+                        prior_dir = "uptrend" if prior_state == "UPTREND_VALID" else "downtrend"
+                        prior_break_level = (
+                            existing.pivot_b if existing.d_extended else existing.pivot_c
                         )
-                        tf_data = {
+                        current_price = _get_current_price(ticker, db)
+
+                        if prior_break_level is not None and current_price is not None:
+                            price_broke = (
+                                (prior_dir == "uptrend" and current_price < prior_break_level) or
+                                (prior_dir == "downtrend" and current_price > prior_break_level)
+                            )
+                        else:
+                            price_broke = False
+
+                        break_type = "BREAK_OF_TREND" if tf == "trend" else "BREAK_OF_TRADE"
+                        prior_tf_data = {
                             "bar_window":       existing.bar_window,
                             "pivot_a":          existing.pivot_a,
                             "pivot_b":          existing.pivot_b,
@@ -213,10 +239,65 @@ def run_pivots(db: Session) -> dict:
                             "pivot_b_date":     existing.pivot_b_date,
                             "pivot_c_date":     existing.pivot_c_date,
                             "pivot_d_date":     existing.pivot_d_date,
-                            "structural_state": "BREAK_OF_TREND",
                             "d_extended":       existing.d_extended,
-                            "direction":        "uptrend" if prior_state == "UPTREND_VALID" else "downtrend",
+                            "direction":        prior_dir,
                         }
+
+                        if price_broke:
+                            logger.info(
+                                f"{ticker} [{tf}]: break persistence — "
+                                f"{prior_state} → engine={new_state}, price {current_price} "
+                                f"crossed break {prior_break_level}, recording {break_type}"
+                            )
+                            prior_tf_data["structural_state"] = break_type
+                        else:
+                            logger.info(
+                                f"{ticker} [{tf}]: structure persistence — "
+                                f"{prior_state} → engine={new_state}, price {current_price} "
+                                f"still on correct side of {prior_break_level}, keeping {prior_state}"
+                            )
+                            prior_tf_data["structural_state"] = prior_state
+                        tf_data = prior_tf_data
+
+                    elif prior_was_break:
+                        # Infer direction from stored pivots (C > A = uptrend)
+                        if existing.pivot_a is not None and existing.pivot_c is not None:
+                            prior_dir = "uptrend" if existing.pivot_c > existing.pivot_a else "downtrend"
+                        else:
+                            prior_dir = "uptrend"
+                        prior_break_level = (
+                            existing.pivot_b if existing.d_extended else existing.pivot_c
+                        )
+                        current_price = _get_current_price(ticker, db)
+
+                        if prior_break_level is not None and current_price is not None:
+                            still_broken = (
+                                (prior_dir == "uptrend" and current_price < prior_break_level) or
+                                (prior_dir == "downtrend" and current_price > prior_break_level)
+                            )
+                        else:
+                            still_broken = False
+
+                        if still_broken:
+                            logger.info(
+                                f"{ticker} [{tf}]: break escalation — "
+                                f"{prior_state} → BREAK_CONFIRMED, price {current_price} "
+                                f"still on wrong side of {prior_break_level}"
+                            )
+                            tf_data = {
+                                "bar_window":       existing.bar_window,
+                                "pivot_a":          existing.pivot_a,
+                                "pivot_b":          existing.pivot_b,
+                                "pivot_c":          existing.pivot_c,
+                                "pivot_d":          existing.pivot_d,
+                                "pivot_a_date":     existing.pivot_a_date,
+                                "pivot_b_date":     existing.pivot_b_date,
+                                "pivot_c_date":     existing.pivot_c_date,
+                                "pivot_d_date":     existing.pivot_d_date,
+                                "structural_state": "BREAK_CONFIRMED",
+                                "d_extended":       existing.d_extended,
+                                "direction":        prior_dir,
+                            }
 
                 fields = dict(
                     bar_window       = tf_data.get("bar_window"),

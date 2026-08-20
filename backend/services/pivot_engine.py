@@ -479,7 +479,9 @@ def compute_pivots_for_timeframe(prices: list, dates: list, timeframe: str, bar_
     # Limit pivot candidates for A selection to the lookback window.
     max_a_lookback = max_a_lookback_override if max_a_lookback_override is not None else _MAX_A_LOOKBACK.get(timeframe)
     if max_a_lookback is not None and len(prices) > max_a_lookback:
-        cutoff_idx = len(prices) - max_a_lookback
+        # Buffer: extend cutoff backward by bar_window so pivots near the
+        # logical lookback edge have enough bars on both sides to confirm.
+        cutoff_idx = max(0, len(prices) - max_a_lookback - bar_window)
         pivot_highs_abc = [(i, p) for i, p in pivot_highs if i >= cutoff_idx]
         pivot_lows_abc  = [(i, p) for i, p in pivot_lows  if i >= cutoff_idx]
     else:

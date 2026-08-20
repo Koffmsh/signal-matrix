@@ -129,9 +129,6 @@ export default function PivotDebug() {
     }
   }, [ticker, timeframe, barWindow]);
 
-  // Auto-fetch on mount
-  useEffect(() => { fetchData(); }, []); // eslint-disable-line
-
   // Merge trail into price data for chart
   const chartData = useMemo(() => {
     if (!data) return [];
@@ -419,7 +416,7 @@ export default function PivotDebug() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
             <thead style={{ position: "sticky", top: 0, background: "#0d1f33", zIndex: 1 }}>
               <tr>
-                {["Date", "Close", "Direction", "State", "A", "A Date", "B", "B Date",
+                {["Date", "Close", "Direction", "State", "Engine", "A", "A Date", "B", "B Date",
                   "C", "C Date", "D", "D Date", "Break Lvl", "D Ext"].map(h => (
                   <th key={h} style={th}>{h}</th>
                 ))}
@@ -449,6 +446,9 @@ export default function PivotDebug() {
                     </td>
                     <td style={{ ...td, color: stateColor, fontWeight: isChange ? 700 : 400 }}>
                       {row.state}
+                    </td>
+                    <td style={{ ...td, color: (STATE_COLORS[row.engine_state] || GREY), fontSize: 9 }}>
+                      {row.engine_state || "—"}
                     </td>
                     <td style={td}>{fmt(row.pivot_a)}</td>
                     <td style={{ ...td, fontSize: 9 }}>{fmtDate(row.pivot_a_date)}</td>
@@ -492,6 +492,68 @@ export default function PivotDebug() {
           {data.trail[selectedBar].break_level != null && (
             <div style={{ color: AMBER }}>Break Level: {fmt(data.trail[selectedBar].break_level)}</div>
           )}
+          {data.trail[selectedBar].engine_state !== data.trail[selectedBar].state && data.trail[selectedBar].engine_pivots && (() => {
+            const ep = data.trail[selectedBar].engine_pivots;
+            const engineColor = STATE_COLORS[data.trail[selectedBar].engine_state] || GREY;
+            return (
+              <div style={{ marginTop: 6, padding: "6px 12px", background: "#0d1f33", borderRadius: 6, border: "1px solid #1a3050" }}>
+                <div style={{ color: engineColor, fontWeight: 700, marginBottom: 2, fontSize: 10 }}>
+                  ENGINE: {data.trail[selectedBar].engine_state} — {data.trail[selectedBar].engine_direction || "no direction"}
+                </div>
+                <div style={{ color: TEXT }}>
+                  A={fmt(ep.a)} ({ep.a_date || "—"})
+                  {" · "}B={fmt(ep.b)} ({ep.b_date || "—"})
+                  {" · "}C={fmt(ep.c)} ({ep.c_date || "—"})
+                  {" · "}D={fmt(ep.d)} ({ep.d_date || "—"})
+                  {ep.d_extended ? " · D Ext" : ""}
+                </div>
+              </div>
+            );
+          })()}
+          {data.trail[selectedBar].diag && (() => {
+            const d = data.trail[selectedBar].diag;
+            return (
+              <div style={{ marginTop: 8, padding: "8px 12px", background: "#0d1f33", borderRadius: 6, border: "1px solid #1a3050" }}>
+                <div style={{ color: "#ff4d6d", fontWeight: 700, marginBottom: 4 }}>
+                  ENGINE: NO_STRUCTURE — reason: {d.reason}
+                </div>
+                <div style={{ color: TEXT, marginBottom: 2 }}>
+                  Cutoff: idx {d.cutoff_idx} ({d.cutoff_date}) · Filtered: {d.filtered_highs_count} highs, {d.filtered_lows_count} lows
+                </div>
+                {d.raw_uptrend && (
+                  <div style={{ color: GREEN, marginBottom: 2 }}>
+                    Raw Up: A={fmt(d.raw_uptrend.a)}({d.raw_uptrend.a_date}) B={fmt(d.raw_uptrend.b)}({d.raw_uptrend.b_date}) C={fmt(d.raw_uptrend.c)}({d.raw_uptrend.c_date})
+                  </div>
+                )}
+                {d.raw_downtrend && (
+                  <div style={{ color: RED, marginBottom: 2 }}>
+                    Raw Dn: A={fmt(d.raw_downtrend.a)}({d.raw_downtrend.a_date}) B={fmt(d.raw_downtrend.b)}({d.raw_downtrend.b_date}) C={fmt(d.raw_downtrend.c)}({d.raw_downtrend.c_date})
+                  </div>
+                )}
+                {d.walked_uptrend && (
+                  <div style={{ color: GREEN, marginBottom: 2 }}>
+                    Walked Up: A={fmt(d.walked_uptrend.a)}({d.walked_uptrend.a_date}) B={fmt(d.walked_uptrend.b)}({d.walked_uptrend.b_date}) C={fmt(d.walked_uptrend.c)}({d.walked_uptrend.c_date})
+                    {" · "}intact={String(d.up_intact)} · d_ext={String(d.up_d_extended)} · break={fmt(d.up_break_level)} · D_est={String(d.up_d_established)}
+                  </div>
+                )}
+                {d.walked_downtrend && (
+                  <div style={{ color: RED, marginBottom: 2 }}>
+                    Walked Dn: A={fmt(d.walked_downtrend.a)}({d.walked_downtrend.a_date}) B={fmt(d.walked_downtrend.b)}({d.walked_downtrend.b_date}) C={fmt(d.walked_downtrend.c)}({d.walked_downtrend.c_date})
+                    {" · "}intact={String(d.dn_intact)} · d_ext={String(d.dn_d_extended)} · break={fmt(d.dn_break_level)} · D_est={String(d.dn_d_established)}
+                  </div>
+                )}
+                {d.stale_c_check && (
+                  <div style={{ color: d.stale_c_check.is_stale ? AMBER : TEXT }}>
+                    Stale C: {d.stale_c_check.c_date} — {d.stale_c_check.c_age_days}d age (cutoff {d.stale_c_check.max_age}d)
+                    {d.stale_c_check.is_stale ? " ⚠ STALE" : " ✓ OK"}
+                  </div>
+                )}
+                {d.current_price != null && (
+                  <div style={{ color: TEXT }}>Price: {fmt(d.current_price)}</div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
