@@ -194,6 +194,8 @@ signal-matrix/
 │   │   │   ├── BondVolChart.js            ← MOVE bond vol chart (threshold lines at 85/120); stats table; 2Y/MAX toggle
 │   │   │   ├── HyCreditChart.js           ← /vol/hy-credit — HY OAS (FRED) + HYG dual-axis chart; regime badge; 2Y/MAX toggle
 │   │   │   └── YieldCurveChart.js         ← /macro/yield-curve — 2Y/10Y yields + 2-10 spread dual-axis chart; 2Y/MAX toggle
+│   │   ├── Debug/
+│   │   │   └── PivotDebug.js              ← /debug/pivots route; interactive pivot engine trail viewer (chart + table + state bands); date inputs default to last year, colorScheme: dark
 │   │   └── shared/
 │   │       ├── Header.js                  ← global top bar (48px fixed); brand left, user profile right
 │   │       ├── Sidebar.js                 ← collapsible left sidebar (48px→180px); lock toggle; position: fixed; generic collapsible parents (VOL, MACRO); MacroIcon SVG
