@@ -676,11 +676,14 @@ export default function SecurityAnalysis({ defaultTicker }) {
                     title={isBuy
                       ? `Price within entry zone — ${Math.round(pct * 100)}% proximity to LRR (buy/add level)`
                       : `Price within entry zone — ${Math.round(pct * 100)}% proximity to HRR (sell/reduce level)`}
-                    style={{
-                      display: "inline-block", padding: "3px 10px", borderRadius: 3, fontSize: 11, fontWeight: 700,
-                      letterSpacing: "0.1em", color: "#fff", cursor: "help", marginLeft: 12,
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12, cursor: "help" }}>
+                    <span style={{
+                      display: "inline-block", padding: "3px 14px", borderRadius: 3, fontSize: 11, fontWeight: 700,
+                      letterSpacing: "0.1em", color: "#fff",
                       background: isBuy ? GREEN : RED,
-                    }}>{isBuy ? "▲ BUY" : "▼ SELL"} {Math.round(pct * 100)}% prox.</span>
+                    }}>{isBuy ? "▲ BUY" : "▼ SELL"}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: isBuy ? GREEN : RED, fontFamily: MONO }}>{Math.round(pct * 100)}% prox.</span>
+                  </span>
                 );
               })()}
             </div>
@@ -1021,31 +1024,47 @@ export default function SecurityAnalysis({ defaultTicker }) {
               <ReferenceArea y1={lrr} y2={hrr} fill={GREEN} fillOpacity={0.06} />
             )}
 
-            {showRR && lrr != null && (
-              <ReferenceLine y={lrr} stroke={GREEN} strokeDasharray="6 4" strokeWidth={1.5} label={<PriceBubble value={`$${lrr.toFixed(2)}`} color={GREEN} />} />
-            )}
-            {showRR && hrr != null && (
-              <ReferenceLine y={hrr} stroke={RED} strokeDasharray="6 4" strokeWidth={1.5} label={<PriceBubble value={`$${hrr.toFixed(2)}`} color={RED} />} />
-            )}
-            {data.close != null && (() => {
-              let yOff = 0;
-              if (showRR && chartData.length > 0) {
+            {(() => {
+              const cl = data.close;
+              let lrrOff = 0, hrrOff = 0, priceOff = 0;
+              if (showRR && lrr != null && hrr != null && cl != null && chartData.length > 0) {
                 const prices = chartData.map(d => d.close).filter(Boolean);
-                const yMin = Math.min(...prices, lrr || Infinity, hrr || -Infinity);
-                const yMax = Math.max(...prices, lrr || -Infinity, hrr || Infinity);
+                const yMin = Math.min(...prices, lrr, hrr);
+                const yMax = Math.max(...prices, lrr, hrr);
                 const range = yMax - yMin || 1;
                 const pxPerUnit = 360 / range;
-                if (hrr != null) {
-                  const gapPx = Math.abs(data.close - hrr) * pxPerUnit;
-                  if (gapPx < 18) yOff = 18 - gapPx;
+                const MIN_GAP = 18;
+                const bubbles = [
+                  { id: "hrr", val: hrr },
+                  { id: "price", val: cl },
+                  { id: "lrr", val: lrr },
+                ].sort((a, b) => b.val - a.val);
+                for (let i = 1; i < bubbles.length; i++) {
+                  const gapPx = (bubbles[i - 1].val - bubbles[i].val) * pxPerUnit;
+                  if (gapPx < MIN_GAP) {
+                    const push = MIN_GAP - gapPx;
+                    bubbles[i - 1].off = (bubbles[i - 1].off || 0) - push / 2;
+                    bubbles[i].off = (bubbles[i].off || 0) + push / 2;
+                  }
                 }
-                if (lrr != null) {
-                  const gapPx = Math.abs(data.close - lrr) * pxPerUnit;
-                  if (gapPx < 18 && (yOff === 0 || data.close > lrr)) yOff = -(18 - gapPx);
-                }
+                bubbles.forEach(b => {
+                  if (b.id === "lrr") lrrOff = b.off || 0;
+                  else if (b.id === "hrr") hrrOff = b.off || 0;
+                  else priceOff = b.off || 0;
+                });
               }
               return (
-                <ReferenceLine y={data.close} stroke="transparent" label={<PriceBubble value={`$${data.close.toFixed(2)}`} color="#ffffff" textColor="#0a1628" yOffset={yOff} />} />
+                <>
+                  {showRR && lrr != null && (
+                    <ReferenceLine y={lrr} stroke={GREEN} strokeDasharray="6 4" strokeWidth={1.5} label={<PriceBubble value={`$${lrr.toFixed(2)}`} color={GREEN} yOffset={lrrOff} />} />
+                  )}
+                  {showRR && hrr != null && (
+                    <ReferenceLine y={hrr} stroke={RED} strokeDasharray="6 4" strokeWidth={1.5} label={<PriceBubble value={`$${hrr.toFixed(2)}`} color={RED} yOffset={hrrOff} />} />
+                  )}
+                  {cl != null && (
+                    <ReferenceLine y={cl} stroke="transparent" label={<PriceBubble value={`$${cl.toFixed(2)}`} color="#ffffff" textColor="#0a1628" yOffset={priceOff} />} />
+                  )}
+                </>
               );
             })()}
 
