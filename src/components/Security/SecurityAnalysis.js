@@ -72,7 +72,7 @@ function pillarDetail(name, data) {
     }
     case "VOLUME": {
       const dir = data.obv_direction || "Neutral";
-      if (dir === "Bullish" || dir === "Bearish") return `Volume is ${dir.toLowerCase()} — both volume signals aligned.`;
+      if (dir === "Bullish" || dir === "Bearish") return `Volume is ${dir.toLowerCase()} — volume signals aligned.`;
       if (dir === "Leaning Bullish" || dir === "Leaning Bearish") return `Volume is ${dir.toLowerCase()} — one volume signal directional.`;
       return "Volume is neutral — no directional bias.";
     }
@@ -241,7 +241,7 @@ function AnalystSection({ data, loading, close }) {
       {/* Price Targets + Consensus side by side */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
         {/* Price Targets */}
-        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "10px 14px" }}>
+        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 6, padding: "10px 25px" }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: GREY, letterSpacing: "0.1em", marginBottom: 8 }}>
             PRICE TARGETS
           </div>
@@ -269,29 +269,42 @@ function AnalystSection({ data, loading, close }) {
               )}
               {/* Visual bar: low — current — avg — high */}
               {pt.low != null && pt.high != null && pt.mean != null && close != null && (
-                <div style={{ marginTop: 16, padding: "0 5px" }}>
-                  <div style={{ position: "relative", height: 4, background: `${GREY}30`, borderRadius: 2, margin: "0 0 10px" }}>
+                <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                  {/* Left label: show close if below low, otherwise show low */}
+                  {close < pt.low ? (
+                    <span style={{ fontSize: 10, whiteSpace: "nowrap", minWidth: 30 }}>
+                      <span style={{ color: LABEL, fontWeight: 600 }}>CLOSE ${close?.toFixed(0)}</span>
+                      <span style={{ color: RED, marginLeft: 6 }}>${pt.low?.toFixed(0)}</span>
+                    </span>
+                  ) : (
+                    <span style={{ color: RED, fontSize: 10, whiteSpace: "nowrap", minWidth: 30 }}>${pt.low?.toFixed(0)}</span>
+                  )}
+                  <div style={{ flex: 1, position: "relative", height: 4, background: `${GREY}30`, borderRadius: 2 }}>
                     {(() => {
                       const lo = pt.low, hi = pt.high;
                       const range = hi - lo || 1;
                       const pct = v => Math.max(0, Math.min(100, ((v - lo) / range) * 100));
                       const curPct = pct(close);
                       const avgPct = pct(pt.mean);
-                      // Offset current label above or below to avoid overlapping avg dot
                       const tooClose = Math.abs(curPct - avgPct) < 12;
                       const curLabelBelow = tooClose;
+                      const closeInRange = close >= lo && close <= hi;
                       return (
                         <>
                           {/* Low dot (red) */}
                           <div style={{ position: "absolute", left: 0, top: -3, width: 10, height: 10, borderRadius: "50%", background: RED, transform: "translateX(-50%)" }} />
                           {/* High dot (green) */}
                           <div style={{ position: "absolute", left: "100%", top: -3, width: 10, height: 10, borderRadius: "50%", background: GREEN, transform: "translateX(-50%)" }} />
-                          {/* Current price hash line + label */}
-                          <div style={{ position: "absolute", left: `${curPct}%`, top: -6, width: 2, height: 16, background: "#fff", transform: "translateX(-50%)" }} />
-                          <div style={{ position: "absolute", left: `${curPct}%`, transform: "translateX(-50%)",
-                            top: curLabelBelow ? 20 : -28, fontSize: 11, fontWeight: 600, color: LABEL, whiteSpace: "nowrap" }}>
-                            CLOSE ${close?.toFixed(0)}
-                          </div>
+                          {/* Current price hash line + label — only when close is within range */}
+                          {closeInRange && (
+                            <>
+                              <div style={{ position: "absolute", left: `${curPct}%`, top: -6, width: 2, height: 16, background: "#fff", transform: "translateX(-50%)" }} />
+                              <div style={{ position: "absolute", left: `${curPct}%`, transform: "translateX(-50%)",
+                                top: curLabelBelow ? 20 : -28, fontSize: 11, fontWeight: 600, color: LABEL, whiteSpace: "nowrap" }}>
+                                CLOSE ${close?.toFixed(0)}
+                              </div>
+                            </>
+                          )}
                           {/* Average target dot + label (always above) */}
                           <div style={{ position: "absolute", left: `${avgPct}%`, top: -3, width: 10, height: 10, borderRadius: "50%", background: "#fff", transform: "translateX(-50%)", border: `1.5px solid ${GREY}` }} />
                           <div style={{ position: "absolute", left: `${avgPct}%`, top: -28, transform: "translateX(-50%)", fontSize: 11, fontWeight: 600, color: LABEL, whiteSpace: "nowrap" }}>
@@ -301,10 +314,15 @@ function AnalystSection({ data, loading, close }) {
                       );
                     })()}
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-                    <span style={{ color: RED }}>${pt.low?.toFixed(0)}</span>
-                    <span style={{ color: GREEN }}>${pt.high?.toFixed(0)}</span>
-                  </div>
+                  {/* Right label: show close if above high, otherwise show high */}
+                  {close > pt.high ? (
+                    <span style={{ fontSize: 10, whiteSpace: "nowrap", minWidth: 30, textAlign: "right" }}>
+                      <span style={{ color: GREEN }}>${pt.high?.toFixed(0)}</span>
+                      <span style={{ color: LABEL, fontWeight: 600, marginLeft: 6 }}>CLOSE ${close?.toFixed(0)}</span>
+                    </span>
+                  ) : (
+                    <span style={{ color: GREEN, fontSize: 10, whiteSpace: "nowrap", minWidth: 30, textAlign: "right" }}>${pt.high?.toFixed(0)}</span>
+                  )}
                 </div>
               )}
             </>
