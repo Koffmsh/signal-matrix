@@ -358,7 +358,13 @@ def debug_pivots(
             # Compute break level
             if entry["state"] != "NO_STRUCTURE":
                 if entry["d_extended"] and entry["pivot_b"] is not None:
-                    entry["break_level"] = entry["pivot_b"]
+                    d = entry.get("direction", "")
+                    if d == "uptrend":
+                        entry["break_level"] = max(entry["pivot_b"], entry["pivot_c"]) if entry["pivot_c"] is not None else entry["pivot_b"]
+                    elif d == "downtrend":
+                        entry["break_level"] = min(entry["pivot_b"], entry["pivot_c"]) if entry["pivot_c"] is not None else entry["pivot_b"]
+                    else:
+                        entry["break_level"] = entry["pivot_b"]
                 elif entry["pivot_c"] is not None:
                     entry["break_level"] = entry["pivot_c"]
                 else:

@@ -930,7 +930,11 @@ export default function SecurityAnalysis({ defaultTicker }) {
                           {d?.lrr != null ? `$${d.lrr.toFixed(2)}` : "—"}
                           {d?.direction !== "Neutral" && d?.lrr_warn && <span title={
                             d.direction === "Bullish"
-                              ? (d.d_extended ? `LRR is below SUPPORT B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — Potential break (EXTENDED: B replaces C)` : `LRR is below SUPPORT C${d.pivot_c != null ? ` ($${d.pivot_c.toFixed(2)})` : ""} — Potential break`)
+                              ? (d.d_extended
+                                ? (d.pivot_c != null && d.pivot_b != null && d.pivot_c > d.pivot_b
+                                  ? `LRR is below SUPPORT C${` ($${d.pivot_c.toFixed(2)})`} — C walked above B (EXTENDED)`
+                                  : `LRR is below SUPPORT B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — Potential break (EXTENDED)`)
+                                : `LRR is below SUPPORT C${d.pivot_c != null ? ` ($${d.pivot_c.toFixed(2)})` : ""} — Potential break`)
                               : `LRR is above B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — target doesn't reach prior swing low`
                           } style={{ cursor: "help" }}> ⚠</span>}
                           {d?.direction !== "Neutral" && d?.lrr_extended && <span title="Price has closed below LRR — extended beyond target range, do not chase" style={{ cursor: "help", color: RED }}> ↓</span>}
@@ -939,7 +943,11 @@ export default function SecurityAnalysis({ defaultTicker }) {
                           {d?.hrr != null ? `$${d.hrr.toFixed(2)}` : "—"}
                           {d?.direction !== "Neutral" && d?.hrr_warn && <span title={
                             d.direction === "Bearish"
-                              ? (d.d_extended ? `HRR is above RESISTANCE B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — Potential break (EXTENDED: B replaces C)` : `HRR is above RESISTANCE C${d.pivot_c != null ? ` ($${d.pivot_c.toFixed(2)})` : ""} — Potential break`)
+                              ? (d.d_extended
+                                ? (d.pivot_c != null && d.pivot_b != null && d.pivot_c < d.pivot_b
+                                  ? `HRR is above RESISTANCE C${` ($${d.pivot_c.toFixed(2)})`} — C walked below B (EXTENDED)`
+                                  : `HRR is above RESISTANCE B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — Potential break (EXTENDED)`)
+                                : `HRR is above RESISTANCE C${d.pivot_c != null ? ` ($${d.pivot_c.toFixed(2)})` : ""} — Potential break`)
                               : `HRR is below B${d.pivot_b != null ? ` ($${d.pivot_b.toFixed(2)})` : ""} — target doesn't reach prior swing high`
                           } style={{ cursor: "help" }}> ⚠</span>}
                           {d?.direction !== "Neutral" && d?.hrr_extended && <span title="Price has closed above HRR — extended beyond target range, do not chase" style={{ cursor: "help", color: GREEN }}> ↑</span>}

@@ -383,7 +383,13 @@ def run_intraday_check(db: Session) -> dict:
         if bot_bucket and piv:
             state = piv.structural_state or ""
             if state in _VALID_STATES:
-                break_level = piv.pivot_b if piv.d_extended else piv.pivot_c
+                if piv.d_extended and piv.pivot_b is not None:
+                    if state == "UPTREND_VALID":
+                        break_level = max(piv.pivot_b, piv.pivot_c) if piv.pivot_c is not None else piv.pivot_b
+                    else:
+                        break_level = min(piv.pivot_b, piv.pivot_c) if piv.pivot_c is not None else piv.pivot_b
+                else:
+                    break_level = piv.pivot_c
                 if break_level is not None:
                     crossed = (
                         (state == "UPTREND_VALID" and close < break_level) or

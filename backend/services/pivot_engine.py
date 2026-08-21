@@ -200,10 +200,16 @@ def _price_on_correct_side(abc: dict, current_price: float, prices: list) -> boo
       uptrend:   price > break_level  (structure intact)
       downtrend: price < break_level  (structure intact)
 
-    Break level = C normally; B when d_extended (D > B + 0.5*|B-A|).
+    Break level = C normally; max(B,C) / min(B,C) when d_extended.
     """
     d_extended = _compute_d_extended(abc, prices)
-    break_level = abc["b"] if d_extended else abc["c"]
+    if d_extended:
+        if abc["direction"] == "uptrend":
+            break_level = max(abc["b"], abc["c"])
+        else:
+            break_level = min(abc["b"], abc["c"])
+    else:
+        break_level = abc["c"]
 
     if abc["direction"] == "uptrend":
         return current_price > break_level
@@ -427,7 +433,14 @@ def compute_d_and_state(abc: dict, prices: list, timeframe: str):
         d_idx = first_breach + d_local_idx
 
     # Determine break level and valid state label
-    break_level = b_price if d_extended else c_price
+    # When d_extended and C has walked past B, use the more protective level
+    if d_extended:
+        if direction == "uptrend":
+            break_level = max(b_price, c_price)
+        else:
+            break_level = min(b_price, c_price)
+    else:
+        break_level = c_price
     valid_state = "UPTREND_VALID" if direction == "uptrend" else "DOWNTREND_VALID"
 
     # Check current price vs break level

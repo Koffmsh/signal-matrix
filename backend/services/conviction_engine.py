@@ -889,7 +889,15 @@ def is_warning(lrr: float | None, hrr: float | None,
     """
     if pivot_direction is None:
         return False
-    break_level = b if (d_extended and b is not None) else c
+    if d_extended and b is not None:
+        if pivot_direction == "uptrend":
+            break_level = max(b, c) if c is not None else b
+        elif pivot_direction == "downtrend":
+            break_level = min(b, c) if c is not None else b
+        else:
+            break_level = b
+    else:
+        break_level = c
     if break_level is None:
         return False
     if pivot_direction == "uptrend":
@@ -927,8 +935,16 @@ def _compute_warn_flags(tf: str, pivot_dir: str | None,
     lrr_warn = False
     hrr_warn = False
 
-    # Break level shifts from C to B when d_extended is True
-    break_level = b if (d_extended and b is not None) else c
+    # Break level: when d_extended, use max(B,C)/min(B,C) so walked C raises it
+    if d_extended and b is not None:
+        if pivot_dir == "uptrend":
+            break_level = max(b, c) if c is not None else b
+        elif pivot_dir == "downtrend":
+            break_level = min(b, c) if c is not None else b
+        else:
+            break_level = b
+    else:
+        break_level = c
 
     # When d_extended, the target-side warn compares against D (the extended high/low).
     # If D is unavailable, fall back to B so the flag still fires conservatively.
@@ -1140,9 +1156,15 @@ def compute_output(ticker: str, db, prior_ranges: dict = None,
                     lrr_extended = True
 
         elif tf == "trend":
-            # Trend Level = break pivot (B when d_extended, else C); no MA100 slope check.
+            # Trend Level = break pivot; when d_extended use max(B,C)/min(B,C)
             if direction != "Neutral" and (b is not None or c is not None):
-                break_pivot = b if d_extended else c
+                if d_extended and b is not None:
+                    if pivot_dir == "uptrend":
+                        break_pivot = max(b, c) if c is not None else b
+                    else:
+                        break_pivot = min(b, c) if c is not None else b
+                else:
+                    break_pivot = c
                 lrr = round(break_pivot, 4) if break_pivot is not None else None
             else:
                 lrr = None

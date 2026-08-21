@@ -1205,8 +1205,16 @@ function Dashboard() {
           return `${date} · ${time} ET`;
         };
 
-        const tradeBreakIsB = row.tradeExtended || false;
-        const trendBreakIsB = row.trendExtended || false;
+        // When d_extended, break level = max(B,C) uptrend / min(B,C) downtrend.
+        // B is the break only when d_extended AND C hasn't walked past B.
+        const _breakIsB = (ext, dir, b, c) => {
+          if (!ext || b == null || c == null) return !!ext;
+          if (dir === "Bullish") return c <= b;
+          if (dir === "Bearish") return c >= b;
+          return !!ext;
+        };
+        const tradeBreakIsB = _breakIsB(row.tradeExtended, row.tradeDir, row.tradeB, row.tradeC);
+        const trendBreakIsB = _breakIsB(row.trendExtended, row.trendDir, row.trendB, row.trendC);
 
         // __section__ sentinel entries span the full grid width as labeled dividers
         const SECTION = (name) => ["__section__", name, null, false, null];
@@ -1246,7 +1254,7 @@ function Dashboard() {
           ["Trade LRR",    row.tradeLRR != null ? `${fmtPrice(row.tradeLRR)}${row.tradeDir !== "Neutral" && row.tradeLrrWarn ? " ⚠" : ""}${row.tradeDir !== "Neutral" && row.tradeLrrExtended ? " ↓" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeLrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeLrrExtended ? "Price has closed below LRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeLrrWarn ? warnTip(row.tradeDir, "lrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
           ["Trade HRR",    row.tradeHRR != null ? `${fmtPrice(row.tradeHRR)}${row.tradeDir !== "Neutral" && row.tradeHrrWarn ? " ⚠" : ""}${row.tradeDir !== "Neutral" && row.tradeHrrExtended ? " ↑" : ""}` : "—",  dirRangeColor(row.tradeDir, row.tradeDir !== "Neutral" && row.tradeHrrWarn),  false, row.tradeDir !== "Neutral" && row.tradeHrrExtended ? "Price has closed above HRR — extended beyond target range, do not chase" : row.tradeDir !== "Neutral" && row.tradeHrrWarn ? warnTip(row.tradeDir, "hrr", row.tradeC, row.tradeB, tradeBreakIsB) : null],
           ["Trade B" + (tradeBreakIsB ? " *" : ""),  fmtPrice(row.tradeB), tradeBreakIsB  ? "#f0b429" : "#8899aa", false, tradeBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
-          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? "Active break level — invalidates trend on close through" : null],
+          ["Trade C" + (!tradeBreakIsB ? " *" : ""), fmtPrice(row.tradeC), !tradeBreakIsB ? "#f0b429" : "#8899aa", false, !tradeBreakIsB ? (row.tradeExtended ? "Active break level — C walked above B (EXTENDED)" : "Active break level — invalidates trend on close through") : null],
 
           // ── TREND ────────────────────────────────────────────────────────
           SECTION("TREND"),
@@ -1257,7 +1265,7 @@ function Dashboard() {
             ["Trend Level", `${fmtPrice(row.trendLRR)}${row.trendLrrWarn ? " ⚠" : ""}`, dirRangeColor(row.trendDir, row.trendLrrWarn), false, row.trendLrrWarn ? warnTip(row.trendDir, "lrr", row.trendC, row.trendB, trendBreakIsB) : null],
           ] : []),
           ["Trend B" + (trendBreakIsB ? " *" : ""),  fmtPrice(row.trendB), trendBreakIsB  ? "#f0b429" : "#8899aa", false, trendBreakIsB  ? "Active break level (EXTENDED) — B replaces C as invalidation pivot" : null],
-          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? "Active break level — invalidates trend on close through" : null],
+          ["Trend C" + (!trendBreakIsB ? " *" : ""), fmtPrice(row.trendC), !trendBreakIsB ? "#f0b429" : "#8899aa", false, !trendBreakIsB ? (row.trendExtended ? "Active break level — C walked above B (EXTENDED)" : "Active break level — invalidates trend on close through") : null],
           ["Trend State",  row.trendState || "—",                                                          stateColor(row.trendState),                                true],
 
           // ── TAIL ─────────────────────────────────────────────────────────

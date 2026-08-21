@@ -215,9 +215,13 @@ def run_pivots(db: Session) -> dict:
 
                     if prior_was_valid and not same_valid:
                         prior_dir = "uptrend" if prior_state == "UPTREND_VALID" else "downtrend"
-                        prior_break_level = (
-                            existing.pivot_b if existing.d_extended else existing.pivot_c
-                        )
+                        if existing.d_extended and existing.pivot_b is not None:
+                            if prior_dir == "uptrend":
+                                prior_break_level = max(existing.pivot_b, existing.pivot_c) if existing.pivot_c is not None else existing.pivot_b
+                            else:
+                                prior_break_level = min(existing.pivot_b, existing.pivot_c) if existing.pivot_c is not None else existing.pivot_b
+                        else:
+                            prior_break_level = existing.pivot_c
                         current_price = _get_current_price(ticker, db)
 
                         if prior_break_level is not None and current_price is not None:
@@ -265,9 +269,13 @@ def run_pivots(db: Session) -> dict:
                             prior_dir = "uptrend" if existing.pivot_c > existing.pivot_a else "downtrend"
                         else:
                             prior_dir = "uptrend"
-                        prior_break_level = (
-                            existing.pivot_b if existing.d_extended else existing.pivot_c
-                        )
+                        if existing.d_extended and existing.pivot_b is not None:
+                            if prior_dir == "uptrend":
+                                prior_break_level = max(existing.pivot_b, existing.pivot_c) if existing.pivot_c is not None else existing.pivot_b
+                            else:
+                                prior_break_level = min(existing.pivot_b, existing.pivot_c) if existing.pivot_c is not None else existing.pivot_b
+                        else:
+                            prior_break_level = existing.pivot_c
                         current_price = _get_current_price(ticker, db)
 
                         if prior_break_level is not None and current_price is not None:
