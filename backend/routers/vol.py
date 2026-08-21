@@ -541,3 +541,147 @@ def hy_credit_history(db: Session = Depends(get_db)):
         "stats":   stats,
         "updated": hy_updated,
     }
+
+
+# ── Market Volume & Breadth ─────────────────────────────────────────────────
+
+_VOL_TICKERS    = ["TVOL", "UVOL", "DVOL"]
+_BREADTH_TICKERS = ["ADD", "ADVN", "DECN"]
+_MKT_VOL_LABELS = {
+    "TVOL": "NYSE Total Volume",
+    "UVOL": "NYSE Up Volume",
+    "DVOL": "NYSE Down Volume",
+    "ADD":  "NYSE Net A/D",
+    "ADVN": "NYSE Advancing",
+    "DECN": "NYSE Declining",
+}
+
+
+@router.get("/api/vol/market-volume")
+def market_volume_history(db: Session = Depends(get_db)):
+    """
+    Returns NYSE market volume & breadth data for the MKT VOLUME dashboard.
+    Sources: $TVOL/$UVOL/$DVOL (volume), $ADD/$ADVN/$DECN (breadth) — all
+    from Schwab get_price_history(), stored in price_cache.
+    """
+    all_tickers = _VOL_TICKERS + _BREADTH_TICKERS
+    rows = (
+        db.query(PriceCache)
+        .filter(PriceCache.ticker.in_(all_tickers))
+        .all()
+    )
+    row_map = {r.ticker: r for r in rows}
+
+    if not row_map:
+        return {
+            "volume": {}, "breadth": {},
+            "volume_table": {}, "breadth_table": {},
+            "ad_cumulative": [], "ad_cumulative_dates": [],
+            "updated": None,
+        }
+
+    def _parse(row):
+        if not row or not row.history_json or not row.history_dates_json:
+            return [], []
+        closes = json.loads(row.history_json)
+        dates  = json.loads(row.history_dates_json)
+        if len(closes) != len(dates):
+            return [], []
+        return dates, closes
+
+    # Build per-ticker series
+    volume = {}
+    for t in _VOL_TICKERS:
+        dates, closes = _parse(row_map.get(t))
+        if dates:
+            volume[t] = {"dates": dates, "closes": [round(c, 2) for c in closes]}
+
+    breadth = {}
+    for t in _BREADTH_TICKERS:
+        dates, closes = _parse(row_map.get(t))
+        if dates:
+            breadth[t] = {"dates": dates, "closes": [round(c, 2) for c in closes]}
+
+    # Volume table — % vs averages (Hedgeye-style)
+    def _vol_pct_vs_avg(closes, n):
+        if len(closes) < n + 1:
+            return None
+        avg = np.mean(closes[-(n + 1):-1])
+        if avg == 0:
+            return None
+        return round((closes[-1] - avg) / avg * 100, 1)
+
+    volume_table = {}
+    for t in _VOL_TICKERS:
+        if t not in volume:
+            continue
+        closes = volume[t]["closes"]
+        if len(closes) < 2:
+            continue
+        prev = closes[-2]
+        last = closes[-1]
+        prior_day = round((last - prev) / prev * 100, 1) if prev != 0 else None
+        volume_table[t] = {
+            "label": _MKT_VOL_LABELS[t],
+            "last": last,
+            "prior_day": prior_day,
+            "avg_1m": _vol_pct_vs_avg(closes, 21),
+            "avg_3m": _vol_pct_vs_avg(closes, 63),
+            "avg_1y": _vol_pct_vs_avg(closes, 252),
+        }
+
+    # Breadth table
+    breadth_table = {}
+    advn_last = None
+    decn_last = None
+    for t in _BREADTH_TICKERS:
+        if t not in breadth:
+            continue
+        closes = breadth[t]["closes"]
+        if not closes:
+            continue
+        last = closes[-1]
+        breadth_table[t] = {"label": _MKT_VOL_LABELS[t], "last": last}
+        if t == "ADVN":
+            advn_last = last
+        elif t == "DECN":
+            decn_last = last
+
+    if advn_last is not None and decn_last is not None:
+        total = advn_last + decn_last
+        if total > 0:
+            breadth_table["ADVN"]["pct"] = round(advn_last / total * 100, 1)
+            breadth_table["DECN"]["pct"] = round(decn_last / total * 100, 1)
+        breadth_table["ADD"]["ratio"] = round(advn_last / decn_last, 2) if decn_last != 0 else None
+
+    # Cumulative A/D line
+    ad_cumulative = []
+    ad_cumulative_dates = []
+    if "ADD" in breadth:
+        ad_dates = breadth["ADD"]["dates"]
+        ad_closes = breadth["ADD"]["closes"]
+        running = 0.0
+        for i, v in enumerate(ad_closes):
+            running += v
+            ad_cumulative.append(round(running, 2))
+            ad_cumulative_dates.append(ad_dates[i])
+
+    # Updated timestamp
+    updated_at = None
+    for t in all_tickers:
+        r = row_map.get(t)
+        if r and r.updated_at:
+            if updated_at is None or r.updated_at > updated_at:
+                updated_at = r.updated_at
+
+    updated_str = updated_at.strftime("%m/%d/%y %H:%M") if updated_at else None
+
+    return {
+        "volume":       volume,
+        "breadth":      breadth,
+        "volume_table": volume_table,
+        "breadth_table": breadth_table,
+        "ad_cumulative":       ad_cumulative,
+        "ad_cumulative_dates": ad_cumulative_dates,
+        "updated": updated_str,
+    }

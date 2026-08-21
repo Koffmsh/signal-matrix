@@ -138,6 +138,17 @@ export async function fetchHyCreditHistory() {
   }
 }
 
+export async function fetchMarketVolumeHistory() {
+  try {
+    const response = await apiFetch(`/api/vol/market-volume`);
+    if (!response || !response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.warn("[API] fetchMarketVolumeHistory failed", err);
+    return null;
+  }
+}
+
 export async function fetchYieldCurveHistory() {
   try {
     const response = await apiFetch(`/api/vol/yield-curve-history`);

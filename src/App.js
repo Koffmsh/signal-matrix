@@ -11,6 +11,7 @@ import SpxVolChart from "./components/Vol/SpxVolChart";
 import MacroVolChart from "./components/Vol/MacroVolChart";
 import BondVolChart from "./components/Vol/BondVolChart";
 import HyCreditChart from "./components/Vol/HyCreditChart";
+import MarketVolumeChart from "./components/Vol/MarketVolumeChart";
 import YieldCurveChart from "./components/Vol/YieldCurveChart";
 import SpxImpactDashboard from "./components/SpxImpact/SpxImpactDashboard";
 import SectorPerformance from "./components/Macro/SectorPerformance";
@@ -98,6 +99,7 @@ function AppLayout() {
             <Route path="/vol/macro"      element={<MacroVolChart />} />
             <Route path="/vol/bond"       element={<BondVolChart />} />
             <Route path="/vol/hy-credit" element={<HyCreditChart />} />
+            <Route path="/vol/market-volume" element={<MarketVolumeChart />} />
             <Route path="/macro/yield-curve" element={<YieldCurveChart />} />
             <Route path="/macro/correlations" element={<KeyCorrelations />} />
             <Route path="/spx-impact"     element={<SpxImpactDashboard />} />

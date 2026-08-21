@@ -69,6 +69,8 @@ SCHWAB_UNSUPPORTED = {
     "DXY", "JPY", "/CL", "/ZN", "/GC", "/HG", "SPX", "NDX", "$DJI", "VIX", "RUT", "VVIX",
     # Macro vol indices — batch quotes don't work; history API with $ prefix does
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    # NYSE market breadth — Schwab history API only, no batch quotes
+    "TVOL", "UVOL", "DVOL", "ADD", "ADVN", "DECN",
     # Precious metals ETFs — Schwab history returns pre-restructuring prices creating
     # a discontinuity vs current post-restructuring quotes; Yahoo history is correct.
     "PALL", "PPLT",
@@ -85,6 +87,13 @@ SCHWAB_INDEX_HISTORY_MAP = {
     "GVZ":  "$GVZ",   # CBOE Gold ETF Volatility Index
     "OVX":  "$OVX",   # CBOE Crude Oil ETF Volatility Index
     "MOVE": "$MOVE",  # ICE BofA MOVE Index (bond market vol)
+    # NYSE market breadth
+    "TVOL": "$TVOL",  # NYSE Total Volume
+    "UVOL": "$UVOL",  # NYSE Up Volume (advancing stocks)
+    "DVOL": "$DVOL",  # NYSE Down Volume (declining stocks)
+    "ADD":  "$ADD",   # NYSE Net Advance/Decline Issues
+    "ADVN": "$ADVN",  # NYSE Advancing Issues
+    "DECN": "$DECN",  # NYSE Declining Issues
 }
 
 

@@ -120,6 +120,7 @@ const NAV_ITEMS = [
       { label: "MACRO VOL", path: "/vol/macro",  exact: true },
       { label: "BOND VOL",  path: "/vol/bond",   exact: true },
       { label: "HY CREDIT", path: "/vol/hy-credit", exact: true },
+      { label: "MKT VOLUME", path: "/vol/market-volume", exact: true },
     ],
   },
   {

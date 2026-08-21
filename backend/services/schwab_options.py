@@ -42,6 +42,8 @@ IV_INELIGIBLE = {
     "VIX", "$DJI", "SPX", "NDX", "RUT", "/CL", "/ZN", "/GC", "/HG", "VVIX",
     # Macro vol indices — no standard options chains
     "VXN", "RVX", "GVZ", "OVX", "MOVE",
+    # NYSE market breadth — not tradeable instruments
+    "TVOL", "UVOL", "DVOL", "ADD", "ADVN", "DECN",
     # Treasury yield indices — no options chains
     "TNX", "FVX", "TYX", "TWO",
 }
