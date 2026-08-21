@@ -511,6 +511,11 @@ def schwab_fetch_all(db: Session, force: bool = False) -> dict:
                 unsupported  = [t for t in tickers if t in SCHWAB_UNSUPPORTED]
                 yahoo_only   = [t for t in unsupported if t not in SCHWAB_INDEX_HISTORY_MAP]
                 schwab_index = [t for t in unsupported if t in SCHWAB_INDEX_HISTORY_MAP]
+                # Include data-only SCHWAB_INDEX_HISTORY_MAP tickers not in active list
+                all_active = set(tickers)
+                for idx_ticker in SCHWAB_INDEX_HISTORY_MAP:
+                    if idx_ticker not in all_active and idx_ticker not in schwab_index:
+                        schwab_index.append(idx_ticker)
                 if yahoo_only:
                     _yahoo_fetch_subset(db, yahoo_only, data_source="yahoo")
                 if schwab_index:
@@ -973,6 +978,12 @@ def _schwab_fetch(db: Session, client, tickers: list) -> dict:
     # Split unsupported: index vol tickers go to Schwab history API; rest go to Yahoo
     yahoo_only   = [t for t in unsupported if t not in SCHWAB_INDEX_HISTORY_MAP]
     schwab_index = [t for t in unsupported if t in SCHWAB_INDEX_HISTORY_MAP]
+    # Include data-only SCHWAB_INDEX_HISTORY_MAP tickers not in the active tickers list
+    # (e.g. NYSE breadth: TVOL, UVOL, DVOL, ADD, ADVN, DECN)
+    all_active = set(tickers)
+    for idx_ticker in SCHWAB_INDEX_HISTORY_MAP:
+        if idx_ticker not in all_active and idx_ticker not in schwab_index:
+            schwab_index.append(idx_ticker)
 
     if yahoo_only:
         _yahoo_fetch_subset(db, yahoo_only, data_source="yahoo")
