@@ -48,6 +48,45 @@ Linked rule: CLAUDE.md "<rule heading or number>"
 
 <!-- Newest at top (highest ADR number first). New entries via "Log this change." -->
 
+## ADR-042 — Break level uses max(B,C) / min(B,C) when d_extended and C walks past B
+Date: 2026-08-20
+Status: Active
+Component: pivot_engine.py, conviction_engine.py, signals.py, debug.py, intraday_monitor.py, App.js, SecurityAnalysis.js
+
+Context:
+  When `d_extended=True`, the break level was unconditionally set to B. But C-walking
+  (`update_c_dynamically`) can advance C above B in an uptrend (or below B in a
+  downtrend). Example: AAPL Trend Feb 2026 — C walked to 266.25 while B remained at
+  239.78. The break level stayed at 239.78, meaning price could drop below the
+  meaningful structural level (C=266.25) without triggering a break. The structure
+  appeared "valid" with a break level 26 points below the actual invalidation point.
+
+Decision:
+  When `d_extended=True`, break level = `max(B, C)` for uptrend / `min(B, C)` for
+  downtrend. This ensures the break level always tracks the higher/lower of the two
+  pivots. When C has NOT walked past B (the common case), the formula still selects B
+  (the original behavior). Only when C advances past B does the break level rise/fall
+  to C.
+
+  Updated in 7 backend locations: `_price_on_correct_side`, `compute_d_and_state`,
+  `is_warning`, `_compute_warn_flags`, Trend Level computation, persistence layer (×2
+  in signals.py), debug break_level, intraday BREAK_OF_TRADE. Plus 2 frontend
+  locations: `_breakIsB` helper in App.js (popup tooltip logic), SecurityAnalysis.js
+  warn tooltips.
+
+  Secondary benefit: breaks fire earlier → old structure gets invalidated sooner →
+  engine rebuilds with a naturally higher A pivot (organic A-walking without explicit
+  implementation). The stale B was keeping zombie structures alive too long.
+
+Why (regression guard):
+  Never revert to unconditional `break_level = B` when d_extended. The C > B scenario
+  is real and recurring — any uptrend where C walks (higher lows advancing above B)
+  makes the old B stale. The AAPL Trend case: break should fire at 266.25 (C), not
+  239.78 (B). Verified in debug tool: 2026-01-06 close 262.36 correctly triggered
+  BREAK_OF_TREND at C=266.25; previously would have stayed UPTREND_VALID.
+
+Linked rule: CLAUDE.md rules #39, #53, #60, #134
+
 ## ADR-041 — Design tokens file + font split (sans-serif labels, monospace values)
 Date: 2026-08-18
 Status: Active
