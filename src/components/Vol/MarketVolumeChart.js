@@ -92,10 +92,17 @@ function ADTooltip({ active, payload, label }) {
 }
 
 // ── Hedgeye-style Volume Table ───────────────────────────────────────────────
-function VolumeTable({ volumeTable }) {
+function VolumeTable({ volumeTable, volumeDate }) {
   if (!volumeTable || Object.keys(volumeTable).length === 0) return null;
 
-  const tickers = ["TVOL", "UVOL", "DVOL"].filter(t => volumeTable[t]);
+  const tickers = ["TVOL", "UVOL", "DVOL", "NET"].filter(t => volumeTable[t]);
+
+  // Format date as MM/DD for header
+  let dateLabel = "";
+  if (volumeDate) {
+    const parts = volumeDate.split("-");
+    if (parts.length === 3) dateLabel = parts[1] + "/" + parts[2] + " ";
+  }
   const cols = [
     { key: "prior_day", label: "Prior Day" },
     { key: "avg_1m",    label: "1M Ave" },
@@ -145,7 +152,7 @@ function VolumeTable({ volumeTable }) {
               letterSpacing: "0.08em",
               color: LABEL,
             }}>
-              VOLUME vs.
+              {dateLabel}VOLUME vs.
             </th>
           </tr>
           <tr>
@@ -285,7 +292,7 @@ function LegendDot({ color, label }) {
 function RangeToggle({ range, setRange }) {
   return (
     <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-      {["2y", "max"].map(r => (
+      {["1y", "2y", "max"].map(r => (
         <button
           key={r}
           onClick={() => setRange(r)}
@@ -302,7 +309,7 @@ function RangeToggle({ range, setRange }) {
             fontFamily: "inherit",
           }}
         >
-          {r === "2y" ? "2Y" : "MAX"}
+          {r.toUpperCase()}
         </button>
       ))}
     </div>
@@ -364,7 +371,8 @@ export default function MarketVolumeChart() {
   const filterByRange = useCallback((data) => {
     if (range === "max" || data.length === 0) return data;
     const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - 2);
+    if (range === "1y") cutoff.setFullYear(cutoff.getFullYear() - 1);
+    else cutoff.setFullYear(cutoff.getFullYear() - 2);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     return data.filter(r => r.date >= cutoffStr);
   }, [range]);
@@ -419,7 +427,7 @@ export default function MarketVolumeChart() {
       {!loading && !error && rawData && (
         <div>
           {/* Section A: Hedgeye-style volume table */}
-          <VolumeTable volumeTable={rawData.volume_table} />
+          <VolumeTable volumeTable={rawData.volume_table} volumeDate={rawData.volume_date} />
 
           {/* Section B: Up/Down Volume Chart */}
           {displayVolData.length > 0 && (
