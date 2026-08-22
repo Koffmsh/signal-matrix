@@ -616,9 +616,41 @@ def schwab_fetch_intraday_quotes(db: Session) -> dict:
             # NOTE: cache_date intentionally NOT updated — preserves EOD idempotency
             fetched += 1
 
+    # ── Single-symbol get_quote() for vol indices ──────────────────────────
+    # Schwab batch get_quotes() silently drops $-symbol indices. Individual
+    # get_quote() works for vol indices (confirmed live). Breadth symbols
+    # ($TVOL/$UVOL/$DVOL/$ADD) return garbage — excluded.
+    _VOL_INDEX_QUOTE_MAP = {
+        "VIX": "$VIX", "VXN": "$VXN", "RVX": "$RVX",
+        "GVZ": "$GVZ", "OVX": "$OVX", "MOVE": "$MOVE",
+    }
+    vol_fetched = 0
+    for app_ticker, schwab_sym in _VOL_INDEX_QUOTE_MAP.items():
+        try:
+            resp = client.get_quote(schwab_sym)
+            if resp.status_code != 200:
+                logger.debug(f"Intraday vol index: {app_ticker} HTTP {resp.status_code}")
+                continue
+            data = resp.json()
+            q = data.get(schwab_sym, {}).get("quote", {})
+            last_price = q.get("lastPrice")
+            if not last_price:
+                continue
+            close = round(float(last_price), 2)
+            row = db.query(PriceCache).filter(PriceCache.ticker == app_ticker).first()
+            if row:
+                row.close = close
+                row.updated_at = datetime.utcnow()
+                vol_fetched += 1
+        except Exception as e:
+            logger.debug(f"Intraday vol index: {app_ticker} error — {e}")
+
     db.commit()
-    logger.info(f"Intraday quotes: {fetched} updated, {skipped} skipped (no lastPrice)")
-    return {"fetched": fetched, "skipped": skipped}
+    logger.info(
+        f"Intraday quotes: {fetched} updated, {skipped} skipped (no lastPrice)"
+        f", {vol_fetched} vol indices via get_quote()"
+    )
+    return {"fetched": fetched + vol_fetched, "skipped": skipped}
 
 
 def yahoo_fetch_intraday_quotes(db: Session) -> dict:
