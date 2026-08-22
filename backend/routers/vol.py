@@ -630,25 +630,6 @@ def market_volume_history(db: Session = Depends(get_db)):
             "avg_1y": _vol_pct_vs_avg(closes, 252),
         }
 
-    # Net volume = UVOL - DVOL
-    if "UVOL" in volume and "DVOL" in volume:
-        uv_c = volume["UVOL"]["closes"]
-        dv_c = volume["DVOL"]["closes"]
-        min_len = min(len(uv_c), len(dv_c))
-        if min_len >= 2:
-            net_closes = [uv_c[-(min_len) + i] - dv_c[-(min_len) + i] for i in range(min_len)]
-            net_last = net_closes[-1]
-            net_prev = net_closes[-2]
-            net_prior = round((net_last - net_prev) / abs(net_prev) * 100, 1) if net_prev != 0 else None
-            volume_table["NET"] = {
-                "label": "NYSE Net Volume",
-                "last": round(net_last, 2),
-                "prior_day": net_prior,
-                "avg_1m": _vol_pct_vs_avg(net_closes, 21),
-                "avg_3m": _vol_pct_vs_avg(net_closes, 63),
-                "avg_1y": _vol_pct_vs_avg(net_closes, 252),
-            }
-
     # Latest volume date for table header
     volume_date = None
     for t in _VOL_TICKERS:

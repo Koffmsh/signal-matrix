@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
-  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from "recharts";
 import { fetchMarketVolumeHistory } from "../../services/api";
@@ -51,29 +51,6 @@ function XTick({ x, y, payload }) {
   );
 }
 
-// ── Volume Chart Tooltip ─────────────────────────────────────────────────────
-function VolTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  const uvol = payload.find(p => p.dataKey === "UVOL");
-  const dvol = payload.find(p => p.dataKey === "DVOL");
-  const uv = uvol?.value ?? 0;
-  const dv = dvol?.value ?? 0;
-  const total = uv + dv;
-  const ratio = total > 0 ? (uv / dv).toFixed(2) : "—";
-  return (
-    <div style={{
-      background: "#0d1f33", border: "1px solid #1a2a3a",
-      borderRadius: 6, padding: "8px 12px", fontSize: 11,
-    }}>
-      <div style={{ color: LABEL, marginBottom: 6, fontWeight: 600 }}>{label}</div>
-      <div style={{ color: GREEN, marginBottom: 2 }}>Up Vol: {fmtK(uv)}</div>
-      <div style={{ color: RED, marginBottom: 2 }}>Down Vol: {fmtK(dv)}</div>
-      <div style={{ color: GREY, marginBottom: 2 }}>Total: {fmtK(total)}</div>
-      <div style={{ color: LABEL }}>Up/Down: {ratio}</div>
-    </div>
-  );
-}
-
 // ── A/D Line Tooltip ─────────────────────────────────────────────────────────
 function ADTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -95,7 +72,7 @@ function ADTooltip({ active, payload, label }) {
 function VolumeTable({ volumeTable, volumeDate }) {
   if (!volumeTable || Object.keys(volumeTable).length === 0) return null;
 
-  const tickers = ["TVOL", "UVOL", "DVOL", "NET"].filter(t => volumeTable[t]);
+  const tickers = ["TVOL"].filter(t => volumeTable[t]);
 
   // Format date as MM/DD for header
   let dateLabel = "";
@@ -193,6 +170,7 @@ function VolumeTable({ volumeTable, volumeDate }) {
     </div>
   );
 }
+
 
 // ── Breadth Stats Table ──────────────────────────────────────────────────────
 function BreadthTable({ breadthTable }) {
@@ -338,24 +316,6 @@ export default function MarketVolumeChart() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Build up/down volume chart data
-  const volChartData = useMemo(() => {
-    if (!rawData?.volume?.UVOL || !rawData?.volume?.DVOL) return [];
-    const uv = rawData.volume.UVOL;
-    const dv = rawData.volume.DVOL;
-    // Use union of dates (they should be aligned)
-    const dates = uv.dates.length >= dv.dates.length ? uv.dates : dv.dates;
-    const uvMap = {};
-    uv.dates.forEach((d, i) => { uvMap[d] = uv.closes[i]; });
-    const dvMap = {};
-    dv.dates.forEach((d, i) => { dvMap[d] = dv.closes[i]; });
-    return dates.map(d => ({
-      date: d,
-      UVOL: uvMap[d] ?? null,
-      DVOL: dvMap[d] ?? null,
-    }));
-  }, [rawData]);
-
   // Build A/D cumulative chart data
   const adChartData = useMemo(() => {
     if (!rawData?.ad_cumulative_dates?.length) return [];
@@ -377,10 +337,8 @@ export default function MarketVolumeChart() {
     return data.filter(r => r.date >= cutoffStr);
   }, [range]);
 
-  const displayVolData = useMemo(() => filterByRange(volChartData), [volChartData, filterByRange]);
   const displayAdData  = useMemo(() => filterByRange(adChartData), [adChartData, filterByRange]);
 
-  const volJanTicks = useMemo(() => getJanTicks(displayVolData.map(r => r.date)), [displayVolData]);
   const adJanTicks  = useMemo(() => getJanTicks(displayAdData.map(r => r.date)), [displayAdData]);
 
   return (
@@ -403,9 +361,12 @@ export default function MarketVolumeChart() {
           <span style={{ fontSize: 11, color: GREY, letterSpacing: "0.05em" }}>
             NYSE MARKET VOLUME &amp; BREADTH
           </span>
-          {rawData?.updated && (
+          {rawData?.volume_date && (
             <span style={{ fontSize: 10, color: GREY, marginLeft: "auto" }}>
-              EOD &middot; {rawData.updated}
+              EOD &middot; {(() => {
+                const p = rawData.volume_date.split("-");
+                return p.length === 3 ? `${p[1]}/${p[2]}/${p[0].slice(2)}` : rawData.volume_date;
+              })()}
             </span>
           )}
         </div>
@@ -429,73 +390,7 @@ export default function MarketVolumeChart() {
           {/* Section A: Hedgeye-style volume table */}
           <VolumeTable volumeTable={rawData.volume_table} volumeDate={rawData.volume_date} />
 
-          {/* Section B: Up/Down Volume Chart */}
-          {displayVolData.length > 0 && (
-            <>
-              <div style={{
-                display: "flex", alignItems: "center", gap: 16,
-                marginBottom: 10, marginTop: 8,
-              }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: LABEL, letterSpacing: "0.04em" }}>
-                  UP / DOWN VOLUME
-                </span>
-                <LegendDot color={GREEN} label="Up Volume" />
-                <LegendDot color={RED} label="Down Volume" />
-                <RangeToggle range={range} setRange={setRange} />
-              </div>
-              <div style={{
-                border: `1px solid ${GRID}`,
-                borderRadius: 6,
-                padding: "16px 0 8px 0",
-                background: "#07111f",
-              }}>
-                <ResponsiveContainer width="100%" height={320}>
-                  <ComposedChart data={displayVolData} margin={{ top: 8, right: 56, left: 0, bottom: 8 }}>
-                    <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="date"
-                      ticks={volJanTicks}
-                      tick={<XTick />}
-                      tickLine={false}
-                      axisLine={{ stroke: GRID }}
-                      interval={0}
-                    />
-                    <YAxis
-                      orientation="left"
-                      tickFormatter={fmtK}
-                      tick={{ fontSize: 10, fill: GREY }}
-                      tickLine={false}
-                      axisLine={false}
-                      width={60}
-                    />
-                    <Tooltip content={<VolTooltip />} />
-                    <Area
-                      dataKey="UVOL"
-                      stroke={GREEN}
-                      fill={GREEN}
-                      fillOpacity={0.15}
-                      strokeWidth={1.5}
-                      dot={false}
-                      isAnimationActive={false}
-                      connectNulls={false}
-                    />
-                    <Area
-                      dataKey="DVOL"
-                      stroke={RED}
-                      fill={RED}
-                      fillOpacity={0.15}
-                      strokeWidth={1.5}
-                      dot={false}
-                      isAnimationActive={false}
-                      connectNulls={false}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </>
-          )}
-
-          {/* Section C: Cumulative A/D Line */}
+          {/* Section B: Cumulative A/D Line */}
           {displayAdData.length > 0 && (
             <>
               <div style={{
@@ -506,6 +401,7 @@ export default function MarketVolumeChart() {
                   ADVANCE / DECLINE LINE
                 </span>
                 <LegendDot color={COLORS.AD} label="Cumulative A/D" />
+                <RangeToggle range={range} setRange={setRange} />
               </div>
               <div style={{
                 border: `1px solid ${GRID}`,
